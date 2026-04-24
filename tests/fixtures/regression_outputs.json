@@ -1,0 +1,68 @@
+{
+  "standard": {
+    "mode": "standard",
+    "answer": "Standard answer sample.",
+    "citations": [
+      {
+        "chunk_id": "chunk_001",
+        "doc_id": "doc_001",
+        "source": "docs/source.md",
+        "title": "Source"
+      }
+    ],
+    "confidence": 0.63,
+    "status": "answered",
+    "stop_reason": "sufficient_context",
+    "latency_ms": 150
+  },
+  "advanced": {
+    "mode": "advanced",
+    "answer": "Advanced answer sample.",
+    "citations": [
+      {
+        "chunk_id": "chunk_002",
+        "doc_id": "doc_002",
+        "source": "docs/source.md",
+        "title": "Source"
+      }
+    ],
+    "confidence": 0.81,
+    "status": "answered",
+    "stop_reason": "critique_pass",
+    "latency_ms": 280,
+    "loop_count": 1,
+    "trace": [
+      {
+        "step": "critique",
+        "decision": "stop"
+      }
+    ]
+  },
+  "compare": {
+    "mode": "compare",
+    "standard": {
+      "mode": "standard",
+      "answer": "Standard answer sample.",
+      "citations": [],
+      "confidence": 0.63,
+      "status": "answered",
+      "latency_ms": 150
+    },
+    "advanced": {
+      "mode": "advanced",
+      "answer": "Advanced answer sample.",
+      "citations": [],
+      "confidence": 0.81,
+      "status": "answered",
+      "latency_ms": 280,
+      "loop_count": 1,
+      "trace": []
+    },
+    "comparison": {
+      "confidence_delta": 0.18,
+      "latency_delta_ms": 130,
+      "citation_delta": 0,
+      "note": "Advanced mode shows higher confidence in this fixture."
+    }
+  }
+}

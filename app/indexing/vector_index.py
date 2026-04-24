@@ -1,0 +1,94 @@
+"""Vector index abstractions and in-memory implementation."""
+
+from __future__ import annotations
+
+from abc import ABC, abstractmethod
+from typing import Any
+
+from app.schemas.ingestion import DocumentChunk
+
+
+class VectorIndex(ABC):
+    """Abstract vector index contract."""
+
+    @abstractmethod
+    def build(self, chunks: list[DocumentChunk], vectors: list[list[float]]) -> None:
+        """Build index from chunks and pre-computed vectors."""
+
+    @abstractmethod
+    def to_dict(self) -> dict[str, Any]:
+        """Serialize index payload for persistence."""
+
+    @classmethod
+    @abstractmethod
+    def from_dict(cls, payload: dict[str, Any]) -> "VectorIndex":
+        """Restore index instance from persisted payload."""
+
+
+class InMemoryVectorIndex(VectorIndex):
+    """In-memory vector index storing chunk payload + embedding vectors."""
+
+    def __init__(self) -> None:
+        self._chunks: list[DocumentChunk] = []
+        self._vectors: list[list[float]] = []
+        self._dimension: int = 0
+
+    @property
+    def size(self) -> int:
+        return len(self._chunks)
+
+    @property
+    def dimension(self) -> int:
+        return self._dimension
+
+    @property
+    def chunks(self) -> list[DocumentChunk]:
+        return list(self._chunks)
+
+    @property
+    def vectors(self) -> list[list[float]]:
+        return [list(vector) for vector in self._vectors]
+
+    def build(self, chunks: list[DocumentChunk], vectors: list[list[float]]) -> None:
+        if not chunks:
+            raise ValueError("Cannot build vector index from empty chunks")
+        if len(chunks) != len(vectors):
+            raise ValueError("chunks and vectors length mismatch")
+
+        dimension = len(vectors[0])
+        if dimension == 0:
+            raise ValueError("vectors must have non-zero dimension")
+        for vector in vectors:
+            if len(vector) != dimension:
+                raise ValueError("All vectors must share the same dimension")
+
+        self._chunks = [chunk.model_copy(deep=True) for chunk in chunks]
+        self._vectors = [list(vector) for vector in vectors]
+        self._dimension = dimension
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "dimension": self._dimension,
+            "entries": [
+                {
+                    "chunk": chunk.model_dump(),
+                    "vector": vector,
+                }
+                for chunk, vector in zip(self._chunks, self._vectors)
+            ],
+        }
+
+    @classmethod
+    def from_dict(cls, payload: dict[str, Any]) -> "InMemoryVectorIndex":
+        index = cls()
+        entries = payload.get("entries", [])
+
+        chunks: list[DocumentChunk] = []
+        vectors: list[list[float]] = []
+        for entry in entries:
+            chunks.append(DocumentChunk.model_validate(entry["chunk"]))
+            vectors.append([float(value) for value in entry["vector"]])
+
+        if chunks:
+            index.build(chunks, vectors)
+        return index

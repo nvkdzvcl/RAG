@@ -1,0 +1,35 @@
+@import url("https://fonts.googleapis.com/css2?family=Manrope:wght@400;500;600;700&display=swap");
+
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  :root {
+    --background: 38 47% 96%;
+    --foreground: 220 35% 14%;
+    --card: 0 0% 100%;
+    --card-foreground: 220 35% 14%;
+    --muted: 210 30% 92%;
+    --muted-foreground: 217 16% 38%;
+    --primary: 200 85% 28%;
+    --primary-foreground: 210 40% 98%;
+    --accent: 23 86% 60%;
+    --accent-foreground: 220 35% 14%;
+    --border: 212 25% 84%;
+    --input: 212 25% 84%;
+    --ring: 200 85% 28%;
+    --radius: 0.75rem;
+  }
+
+  * {
+    @apply border-border;
+  }
+
+  body {
+    @apply bg-background text-foreground antialiased;
+    font-family: "Manrope", "Segoe UI", sans-serif;
+    background-image: radial-gradient(circle at top left, rgba(255, 171, 113, 0.22), transparent 35%),
+      radial-gradient(circle at bottom right, rgba(84, 181, 215, 0.18), transparent 40%);
+  }
+}
