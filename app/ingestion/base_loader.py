@@ -7,7 +7,7 @@ from hashlib import sha1
 from pathlib import Path
 from typing import Any
 
-from app.schemas.ingestion import LoadedDocument
+from app.schemas.ingestion import DocumentBlock, LoadedDocument
 
 
 class BaseLoader(ABC):
@@ -34,3 +34,38 @@ def build_doc_id(path: Path) -> str:
     digest = sha1(str(path.resolve()).encode("utf-8")).hexdigest()[:10]
     stem = path.stem.lower().replace(" ", "_")
     return f"{stem}_{digest}"
+
+
+def blocks_to_loaded_documents(
+    *,
+    blocks: list[DocumentBlock],
+    file_path: Path,
+    doc_id: str,
+    title: str | None = None,
+    metadata: dict[str, Any] | None = None,
+) -> list[LoadedDocument]:
+    """Convert parser blocks to loader-normalized documents."""
+    base_metadata = dict(metadata or {})
+    resolved_title = title or file_path.stem
+
+    loaded_documents: list[LoadedDocument] = []
+    for block_index, block in enumerate(blocks):
+        merged_metadata = dict(base_metadata)
+        merged_metadata.update(dict(block.metadata))
+        merged_metadata.update({"block_index": block_index})
+
+        loaded_documents.append(
+            LoadedDocument(
+                doc_id=doc_id,
+                source=str(file_path),
+                title=resolved_title,
+                section=block.metadata.get("section"),
+                page=block.metadata.get("page"),
+                content=block.content,
+                block_type=block.type,
+                language=str(block.metadata.get("language", "auto")),
+                metadata=merged_metadata,
+            )
+        )
+
+    return loaded_documents

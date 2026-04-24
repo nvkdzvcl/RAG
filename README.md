@@ -54,6 +54,20 @@ Runtime retrieval behavior:
 
 Vector and BM25 indexes are persisted in `INDEX_DIR` (default `data/indexes/`).
 
+## Ingestion Parsing Strategy
+
+The ingestion pipeline now uses a parser abstraction layer:
+
+- `BaseDocumentParser`
+- `PDFParser` (`pdfplumber`)
+- `DocxParser` (`python-docx`)
+- `TextParser`
+- `MarkdownParser`
+
+Parsers emit structured blocks (`text`, `table`, `image`) with metadata (`page`, `section`, `bbox`).
+Chunking is structure-aware and preserves block metadata (`block_type`, `language`, `section`, `page`).
+Table blocks are kept intact (not split across chunks).
+
 ## API Endpoints
 
 - `GET /api/v1/health`
@@ -83,7 +97,7 @@ curl -X POST http://127.0.0.1:8000/api/v1/documents/upload \
   -F "file=@./sample.md"
 ```
 
-Supported upload types: `pdf`, `txt`, `md`, `markdown`.
+Supported upload types: `pdf`, `docx`, `txt`, `md`, `markdown`.
 
 ## Frontend: Install and Run
 
@@ -130,3 +144,4 @@ pytest
 
 - `requirements.txt` and `requirements-dev.txt` are the canonical dependency files.
 - `requirement.txt` is intentionally not used to avoid installation ambiguity.
+- OCR for images is not enabled yet; image blocks are currently stored as metadata placeholders.

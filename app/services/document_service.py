@@ -10,7 +10,7 @@ from uuid import uuid4
 
 from fastapi import UploadFile
 
-from app.ingestion import BaseLoader, Chunker, MarkdownLoader, PdfLoader, TextCleaner, TextLoader
+from app.ingestion import BaseLoader, Chunker, DocxLoader, MarkdownLoader, PdfLoader, TextCleaner, TextLoader
 from app.ingestion.base_loader import build_doc_id
 from app.schemas.documents import (
     DocumentListResponse,
@@ -27,7 +27,7 @@ logger = logging.getLogger(__name__)
 class DocumentService:
     """Manage uploaded documents and keep runtime retrieval indexes in sync."""
 
-    SUPPORTED_EXTENSIONS = {".pdf", ".txt", ".md", ".markdown"}
+    SUPPORTED_EXTENSIONS = {".pdf", ".docx", ".txt", ".md", ".markdown"}
 
     def __init__(
         self,
@@ -44,7 +44,7 @@ class DocumentService:
         self.index_manager = index_manager
         self.cleaner = TextCleaner()
         self.chunker = Chunker(chunk_size=chunk_size, chunk_overlap=chunk_overlap)
-        self.loaders: list[BaseLoader] = [MarkdownLoader(), TextLoader(), PdfLoader()]
+        self.loaders: list[BaseLoader] = [MarkdownLoader(), TextLoader(), PdfLoader(), DocxLoader()]
         self._lock = RLock()
 
         self.data_dir.mkdir(parents=True, exist_ok=True)
@@ -178,7 +178,7 @@ class DocumentService:
         extension = Path(safe_filename).suffix.lower()
         if extension not in self.SUPPORTED_EXTENSIONS:
             raise ValueError(
-                f"Unsupported file type: {extension}. Supported types: PDF, TXT, Markdown."
+                f"Unsupported file type: {extension}. Supported types: PDF, DOCX, TXT, Markdown."
             )
 
         unique_name = f"{uuid4().hex[:10]}_{safe_filename}"

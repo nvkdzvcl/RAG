@@ -7,7 +7,7 @@ from pathlib import Path
 from threading import RLock
 
 from app.indexing import HashEmbeddingProvider, IndexBuilder, LocalIndexStore
-from app.ingestion import BaseLoader, Chunker, MarkdownLoader, PdfLoader, TextCleaner, TextLoader
+from app.ingestion import BaseLoader, Chunker, DocxLoader, MarkdownLoader, PdfLoader, TextCleaner, TextLoader
 from app.retrieval import DenseRetriever, HybridRetriever, SparseRetriever
 from app.schemas.ingestion import DocumentChunk, LoadedDocument
 from app.schemas.retrieval import RetrievalResult
@@ -44,7 +44,7 @@ class RuntimeIndexManager:
         self.index_store = LocalIndexStore(self.index_dir)
         self.cleaner = TextCleaner()
         self.chunker = Chunker(chunk_size=chunk_size, chunk_overlap=chunk_overlap)
-        self.loaders: list[BaseLoader] = [MarkdownLoader(), TextLoader(), PdfLoader()]
+        self.loaders: list[BaseLoader] = [MarkdownLoader(), TextLoader(), PdfLoader(), DocxLoader()]
 
         self._lock = RLock()
         self._retriever: HybridRetriever | EmptyRetriever = EmptyRetriever()

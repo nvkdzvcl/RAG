@@ -5,12 +5,16 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any
 
-from app.ingestion.base_loader import BaseLoader, build_doc_id
-from app.schemas.ingestion import LoadedDocument
+from app.ingestion.base_loader import BaseLoader, blocks_to_loaded_documents, build_doc_id
+from app.ingestion.parsers import TextParser
+from app.schemas.ingestion import DocumentBlock, LoadedDocument
 
 
 class TextLoader(BaseLoader):
     """Load .txt files as single logical documents."""
+
+    def __init__(self, parser: TextParser | None = None) -> None:
+        self.parser = parser or TextParser()
 
     def supports(self, path: Path) -> bool:
         return path.suffix.lower() == ".txt"
@@ -26,15 +30,27 @@ class TextLoader(BaseLoader):
         if not self.supports(path):
             raise ValueError(f"Unsupported text file: {path}")
 
-        content = path.read_text(encoding="utf-8")
-        base_metadata = dict(metadata or {})
+        resolved_doc_id = doc_id or build_doc_id(path)
+        resolved_title = title or path.stem
 
-        return [
-            LoadedDocument(
-                doc_id=doc_id or build_doc_id(path),
-                source=str(path),
-                title=title or path.stem,
-                content=content,
-                metadata=base_metadata,
-            )
-        ]
+        try:
+            blocks = self.parser.parse(path)
+        except Exception:
+            blocks = [
+                DocumentBlock(
+                    type="text",
+                    content=path.read_text(encoding="utf-8"),
+                    metadata={"page": None, "section": None, "bbox": None, "parser_fallback": True},
+                )
+            ]
+
+        if not blocks:
+            return []
+
+        return blocks_to_loaded_documents(
+            blocks=blocks,
+            file_path=path,
+            doc_id=resolved_doc_id,
+            title=resolved_title,
+            metadata=metadata,
+        )

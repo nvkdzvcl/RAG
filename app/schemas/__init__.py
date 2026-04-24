@@ -18,7 +18,7 @@ from app.schemas.documents import (
     StoredDocumentRecord,
 )
 from app.schemas.generation import GeneratedAnswer, ParsedAnswer
-from app.schemas.ingestion import DocumentChunk, LoadedDocument
+from app.schemas.ingestion import DocumentBlock, DocumentChunk, LoadedDocument
 from app.schemas.retrieval import RetrievalResult
 from app.schemas.workflow import CritiqueResult, WorkflowState
 
@@ -28,6 +28,7 @@ __all__ = [
     "CompareQueryResponse",
     "ComparisonSummary",
     "CritiqueResult",
+    "DocumentBlock",
     "DocumentChunk",
     "DocumentListResponse",
     "DocumentProcessingStatus",

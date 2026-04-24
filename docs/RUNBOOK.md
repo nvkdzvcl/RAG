@@ -68,3 +68,10 @@ The backend exposes these status values for uploads:
 
 When one or more uploaded documents are `ready`, query workflows use uploaded indexes.
 If none are `ready`, workflows fall back to the seeded corpus indexes.
+
+## Mixed-Content Ingestion Notes
+
+- Supported file types: `.pdf`, `.docx`, `.txt`, `.md`, `.markdown`
+- Parser layer extracts structured blocks: `text`, `table`, `image`
+- Tables are preserved as table blocks and chunked without splitting
+- OCR is currently not enabled; images are tracked as metadata/image placeholder blocks

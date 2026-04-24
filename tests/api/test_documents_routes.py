@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from io import BytesIO
 from pathlib import Path
 
 import pytest
@@ -58,6 +59,37 @@ def test_upload_endpoint_returns_document_payload(
     raw_files = sorted((data_dir / "raw").glob("*"))
     assert raw_files
     assert any(path.name.endswith("_uploaded.txt") for path in raw_files)
+
+
+def test_upload_endpoint_accepts_docx(
+    isolated_client: tuple[TestClient, Path],
+) -> None:
+    client, _ = isolated_client
+
+    from docx import Document
+
+    buffer = BytesIO()
+    doc = Document()
+    doc.add_heading("Báo cáo", level=1)
+    doc.add_paragraph("Tài liệu DOCX có bảng và tiếng Việt.")
+    doc.save(buffer)
+    buffer.seek(0)
+
+    response = client.post(
+        "/api/v1/documents/upload",
+        files={
+            "file": (
+                "report.docx",
+                buffer.getvalue(),
+                "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+            )
+        },
+    )
+
+    assert response.status_code == 201
+    body = response.json()
+    assert body["filename"] == "report.docx"
+    assert body["status"] == "ready"
 
 
 def test_document_status_endpoint_returns_saved_state(

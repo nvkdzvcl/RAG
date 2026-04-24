@@ -13,6 +13,11 @@ def test_directory_ingestor_loads_markdown_and_text(tmp_path: Path) -> None:
 
     (corpus / "a.txt").write_text("plain text content", encoding="utf-8")
     (corpus / "guide.md").write_text("# Guide\n\nIntro section.\n", encoding="utf-8")
+    from docx import Document
+
+    doc = Document()
+    doc.add_paragraph("Nội dung DOCX thử nghiệm.")
+    doc.save(str(corpus / "note.docx"))
 
     ingestor = DirectoryIngestor()
     docs = ingestor.ingest_directory(corpus)
@@ -20,6 +25,7 @@ def test_directory_ingestor_loads_markdown_and_text(tmp_path: Path) -> None:
     assert len(docs) >= 2
     assert any(doc.source.endswith("a.txt") for doc in docs)
     assert any(doc.source.endswith("guide.md") for doc in docs)
+    assert any(doc.source.endswith("note.docx") for doc in docs)
     assert all("relative_path" in doc.metadata for doc in docs)
 
 

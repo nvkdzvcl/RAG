@@ -1,4 +1,4 @@
-"""Loader for markdown documents."""
+"""Loader for Word (.docx) documents."""
 
 from __future__ import annotations
 
@@ -6,18 +6,18 @@ from pathlib import Path
 from typing import Any
 
 from app.ingestion.base_loader import BaseLoader, blocks_to_loaded_documents, build_doc_id
-from app.ingestion.parsers import MarkdownParser
+from app.ingestion.parsers import DocxParser
 from app.schemas.ingestion import DocumentBlock, LoadedDocument
 
 
-class MarkdownLoader(BaseLoader):
-    """Load .md/.markdown files and split by heading sections."""
+class DocxLoader(BaseLoader):
+    """Load .docx files with structured text/table extraction."""
 
-    def __init__(self, parser: MarkdownParser | None = None) -> None:
-        self.parser = parser or MarkdownParser()
+    def __init__(self, parser: DocxParser | None = None) -> None:
+        self.parser = parser or DocxParser()
 
     def supports(self, path: Path) -> bool:
-        return path.suffix.lower() in {".md", ".markdown"}
+        return path.suffix.lower() == ".docx"
 
     def load(
         self,
@@ -28,7 +28,7 @@ class MarkdownLoader(BaseLoader):
         metadata: dict[str, Any] | None = None,
     ) -> list[LoadedDocument]:
         if not self.supports(path):
-            raise ValueError(f"Unsupported markdown file: {path}")
+            raise ValueError(f"Unsupported DOCX file: {path}")
 
         resolved_doc_id = doc_id or build_doc_id(path)
         resolved_title = title or path.stem
@@ -36,11 +36,10 @@ class MarkdownLoader(BaseLoader):
         try:
             blocks = self.parser.parse(path)
         except Exception:
-            raw = path.read_text(encoding="utf-8")
             blocks = [
                 DocumentBlock(
                     type="text",
-                    content=raw,
+                    content=path.read_text(encoding="utf-8", errors="ignore"),
                     metadata={"page": None, "section": None, "bbox": None, "parser_fallback": True},
                 )
             ]
@@ -48,22 +47,10 @@ class MarkdownLoader(BaseLoader):
         if not blocks:
             return []
 
-        extracted_heading = next(
-            (
-                block.content.strip()
-                for block in blocks
-                if block.metadata.get("is_heading") and block.content.strip()
-            ),
-            None,
-        )
-        final_title = resolved_title
-        if title is None and extracted_heading:
-            final_title = extracted_heading
-
         return blocks_to_loaded_documents(
             blocks=blocks,
             file_path=path,
             doc_id=resolved_doc_id,
-            title=final_title,
+            title=resolved_title,
             metadata=metadata,
         )
