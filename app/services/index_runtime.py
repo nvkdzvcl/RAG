@@ -6,6 +6,7 @@ import logging
 from pathlib import Path
 from threading import RLock
 
+from app.core.config import get_settings
 from app.indexing import BaseEmbeddingProvider, IndexBuilder, LocalIndexStore, create_embedding_provider
 from app.ingestion import BaseLoader, Chunker, DocxLoader, MarkdownLoader, PdfLoader, TextCleaner, TextLoader
 from app.retrieval import DenseRetriever, HybridRetriever, SparseRetriever
@@ -35,24 +36,32 @@ class RuntimeIndexManager:
         chunk_size: int = 320,
         chunk_overlap: int = 40,
         embedding_provider: BaseEmbeddingProvider | None = None,
-        embedding_provider_name: str = "sentence_transformers",
-        embedding_model: str = "intfloat/multilingual-e5-base",
-        embedding_device: str = "cpu",
-        embedding_batch_size: int = 16,
-        embedding_normalize: bool = True,
-        embedding_dimension: int = 64,
+        embedding_provider_name: str | None = None,
+        embedding_model: str | None = None,
+        embedding_device: str | None = None,
+        embedding_batch_size: int | None = None,
+        embedding_normalize: bool | None = None,
+        embedding_dimension: int | None = None,
     ) -> None:
+        settings = get_settings()
+        resolved_provider_name = embedding_provider_name or settings.embedding_provider
+        resolved_model = embedding_model or settings.embedding_model
+        resolved_device = embedding_device or settings.embedding_device
+        resolved_batch_size = embedding_batch_size or settings.embedding_batch_size
+        resolved_normalize = embedding_normalize if embedding_normalize is not None else settings.embedding_normalize
+        resolved_dimension = embedding_dimension or settings.embedding_hash_dimension
+
         self.corpus_dir = Path(corpus_dir)
         self.index_dir = Path(index_dir)
         self.chunk_size = chunk_size
         self.chunk_overlap = chunk_overlap
         self.embedding_provider = embedding_provider or create_embedding_provider(
-            provider_name=embedding_provider_name,
-            model=embedding_model,
-            device=embedding_device,
-            batch_size=embedding_batch_size,
-            normalize=embedding_normalize,
-            fallback_hash_dimension=embedding_dimension,
+            provider_name=resolved_provider_name,
+            model=resolved_model,
+            device=resolved_device,
+            batch_size=resolved_batch_size,
+            normalize=resolved_normalize,
+            fallback_hash_dimension=resolved_dimension,
         )
         self.index_store = LocalIndexStore(self.index_dir)
         self.cleaner = TextCleaner()

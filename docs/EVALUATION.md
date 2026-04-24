@@ -13,6 +13,7 @@ Define a repeatable evaluation process for:
 Golden dataset path:
 
 - `data/eval/golden_dataset.jsonl`
+- `data/eval/golden.jsonl` (legacy alias kept valid for CLI compatibility)
 
 Each JSONL row contains:
 
@@ -44,11 +45,13 @@ Options:
 - `--dataset`: dataset path (default `data/eval/golden_dataset.jsonl`)
 - `--modes standard advanced compare`
 - `--output-dir data/eval/results`
+- `--predictor workflow|stub` (`stub` is deterministic and does not require live workflow execution)
 
 Example:
 
 ```bash
 python scripts/run_eval.py --dataset data/eval/golden_dataset.jsonl --modes standard advanced compare
+python -m app.evaluation.runner --dataset data/eval/golden.jsonl --predictor stub
 ```
 
 ## Current Regression Checks

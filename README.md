@@ -177,6 +177,12 @@ Run evaluation (including compare mode):
 python scripts/run_eval.py --dataset data/eval/golden_dataset.jsonl --modes standard advanced compare
 ```
 
+Fast offline smoke run (deterministic stub predictor):
+
+```bash
+python -m app.evaluation.runner --dataset data/eval/golden.jsonl --predictor stub
+```
+
 Generated artifacts:
 
 - `data/eval/results/results.json`

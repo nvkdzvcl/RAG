@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from abc import ABC, abstractmethod
 import logging
 from collections.abc import Sequence
 from typing import Any, Protocol, cast
@@ -10,16 +11,18 @@ from app.schemas.retrieval import RetrievalResult
 
 logger = logging.getLogger(__name__)
 
-class BaseReranker(Protocol):
+
+class BaseReranker(ABC):
     """Reranker interface for post-retrieval ordering."""
 
     name: str
 
+    @abstractmethod
     def rerank(self, query: str, docs: list[RetrievalResult], top_k: int | None = None) -> list[RetrievalResult]:
         """Return reranked docs with updated scores."""
 
 
-class ScoreOnlyReranker:
+class ScoreOnlyReranker(BaseReranker):
     """Fallback reranker that preserves retrieval-score ordering."""
 
     name = "score-only-reranker"
@@ -73,7 +76,7 @@ class _CrossEncoderLike(Protocol):
         """Return raw cross-encoder scores."""
 
 
-class CrossEncoderReranker:
+class CrossEncoderReranker(BaseReranker):
     """Cross-encoder reranker using sentence-transformers."""
 
     name = "cross-encoder-reranker"
@@ -92,6 +95,7 @@ class CrossEncoderReranker:
         self.device = device
         self.batch_size = batch_size
         self._model = model or self._load_model(model_name=model_name, device=device)
+        self._fallback = ScoreOnlyReranker()
 
     @staticmethod
     def _load_model(*, model_name: str, device: str) -> _CrossEncoderLike:
@@ -129,15 +133,22 @@ class CrossEncoderReranker:
             return []
         candidates = list(docs[:limit])
 
-        pairs = [(query, doc.content) for doc in candidates]
-        raw_scores = self._model.predict(
-            pairs,
-            batch_size=self.batch_size,
-            show_progress_bar=False,
-        )
-        scores = self._normalize_scores(raw_scores)
-        if len(scores) != len(candidates):
-            raise ValueError("Cross-encoder returned mismatched score count.")
+        try:
+            pairs = [(query, doc.content) for doc in candidates]
+            raw_scores = self._model.predict(
+                pairs,
+                batch_size=self.batch_size,
+                show_progress_bar=False,
+            )
+            scores = self._normalize_scores(raw_scores)
+            if len(scores) != len(candidates):
+                raise ValueError("Cross-encoder returned mismatched score count.")
+        except Exception as exc:
+            logger.warning(
+                "Cross-encoder reranking failed at runtime. Falling back to score-only reranker.",
+                exc_info=exc,
+            )
+            return self._fallback.rerank(query, docs, top_k=top_k)
 
         scored: list[tuple[float, RetrievalResult]] = []
         for doc, rerank_score in zip(candidates, scores):
@@ -160,12 +171,12 @@ SCORE_ONLY_PROVIDER_NAMES = {"score_only", "score-only", "noop", "no_op", "none"
 def create_reranker(
     *,
     provider_name: str,
-    model: str,
-    device: str,
-    batch_size: int,
+    model: str = "BAAI/bge-reranker-v2-m3",
+    device: str = "cpu",
+    batch_size: int = 8,
 ) -> BaseReranker:
     """Create reranker with safe fallback to score-only behavior."""
-    normalized = provider_name.strip().lower()
+    normalized = provider_name.strip().lower() if provider_name else ""
 
     if normalized in CROSS_ENCODER_PROVIDER_NAMES:
         try:

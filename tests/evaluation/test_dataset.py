@@ -25,3 +25,11 @@ def test_golden_dataset_has_vietnamese_examples() -> None:
     dataset = load_eval_dataset(Path("data/eval/golden_dataset.jsonl"))
     vietnamese = [example for example in dataset if example.category == "vietnamese"]
     assert len(vietnamese) >= 2
+
+
+def test_alternate_golden_jsonl_loads_with_category_field() -> None:
+    dataset = load_eval_dataset(Path("data/eval/golden.jsonl"))
+    assert len(dataset) >= 8
+    assert all(hasattr(example, "category") for example in dataset)
+    vietnamese = [example for example in dataset if example.category == "vietnamese"]
+    assert len(vietnamese) >= 2

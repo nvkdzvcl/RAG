@@ -36,6 +36,112 @@ class WorkflowPredictor:
         return dict(response)
 
 
+class StubPredictor:
+    """Deterministic offline predictor for fast local eval plumbing checks."""
+
+    _source = "stub/golden"
+
+    def _standard_payload(self, query: str) -> dict[str, Any]:
+        return {
+            "mode": "standard",
+            "answer": f"Stub standard answer for: {query}",
+            "citations": [{"chunk_id": "stub_c1", "doc_id": "stub_d1", "source": self._source}],
+            "confidence": 0.55,
+            "status": "answered",
+            "stop_reason": "stub_generated",
+            "latency_ms": 12,
+            "trace": [
+                {"step": "retrieve", "count": 2, "chunk_ids": ["stub_c1", "stub_c2"]},
+                {
+                    "step": "rerank",
+                    "count": 2,
+                    "docs": [
+                        {"chunk_id": "stub_c1", "rerank_score": 0.8, "score": 0.8},
+                        {"chunk_id": "stub_c2", "rerank_score": 0.3, "score": 0.3},
+                    ],
+                },
+                {
+                    "step": "context_select",
+                    "count": 1,
+                    "chunk_ids": ["stub_c1"],
+                    "docs": [
+                        {
+                            "chunk_id": "stub_c1",
+                            "doc_id": "stub_d1",
+                            "content": "Stub context for grounded answer generation.",
+                        }
+                    ],
+                },
+            ],
+        }
+
+    def _advanced_payload(self, query: str) -> dict[str, Any]:
+        retry_loop = 2 if "retry" in query.lower() else 1
+        return {
+            "mode": "advanced",
+            "answer": f"Stub advanced answer for: {query}",
+            "citations": [{"chunk_id": "stub_c1", "doc_id": "stub_d1", "source": self._source}],
+            "confidence": 0.72,
+            "status": "answered",
+            "stop_reason": "critique_pass",
+            "latency_ms": 24,
+            "loop_count": retry_loop,
+            "trace": [
+                {"step": "retrieval_gate", "need_retrieval": True, "reason": "stub_default"},
+                {
+                    "step": "loop",
+                    "loop": retry_loop,
+                    "query": query,
+                    "retrieved_count": 2,
+                    "reranked_count": 2,
+                    "reranked_docs": [
+                        {"chunk_id": "stub_c1", "rerank_score": 0.91},
+                        {"chunk_id": "stub_c2", "rerank_score": 0.2},
+                    ],
+                    "selected_count": 1,
+                    "selected_context_docs": [
+                        {
+                            "chunk_id": "stub_c1",
+                            "doc_id": "stub_d1",
+                            "content": "Stub advanced context for critique and refinement.",
+                        }
+                    ],
+                },
+            ],
+        }
+
+    def __call__(self, query: str, mode: Mode) -> dict[str, Any]:
+        if mode == Mode.STANDARD:
+            return self._standard_payload(query)
+        if mode == Mode.ADVANCED:
+            return self._advanced_payload(query)
+        if mode == Mode.COMPARE:
+            standard = self._standard_payload(query)
+            advanced = self._advanced_payload(query)
+            return {
+                "mode": "compare",
+                "standard": standard,
+                "advanced": advanced,
+                "comparison": {
+                    "confidence_delta": advanced["confidence"] - standard["confidence"],
+                    "latency_delta_ms": advanced["latency_ms"] - standard["latency_ms"],
+                    "citation_delta": len(advanced["citations"]) - len(standard["citations"]),
+                    "note": "stub compare",
+                },
+            }
+        raise ValueError(f"Unsupported mode: {mode}")
+
+
+def create_predictor(name: str) -> ModePredictor:
+    """Resolve predictor strategy from CLI/runtime configuration."""
+    normalized = name.strip().lower()
+    if normalized == "workflow":
+        return WorkflowPredictor()
+    if normalized == "stub":
+        return StubPredictor()
+    raise ValueError(f"Unsupported predictor '{name}'.")
+
+
 def _collect_mode_eval_output(
     *,
     example: EvalExample,
@@ -245,7 +351,7 @@ def _parse_modes(raw_modes: list[str]) -> list[Mode]:
     return [Mode(value) for value in raw_modes]
 
 
-def parse_args() -> argparse.Namespace:
+def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     """Parse CLI options for evaluation runs."""
     parser = argparse.ArgumentParser(description="Run practical evaluation for Self-RAG modes.")
     parser.add_argument(
@@ -267,18 +373,28 @@ def parse_args() -> argparse.Namespace:
         default=Path("data/eval/results"),
         help="Directory for JSON/Markdown/CSV outputs.",
     )
-    return parser.parse_args()
+    parser.add_argument(
+        "--predictor",
+        choices=["workflow", "stub"],
+        default="workflow",
+        help="Prediction backend: real workflows or deterministic stub payloads.",
+    )
+    return parser.parse_args(argv)
 
 
-def main() -> None:
+def main(argv: list[str] | None = None) -> None:
     """CLI entrypoint for `python -m app.evaluation.runner`."""
-    args = parse_args()
+    args = parse_args(argv)
     runner = EvaluationRunner(
         dataset_path=args.dataset,
         output_dir=args.output_dir,
+        predictor=create_predictor(args.predictor),
     )
     report = runner.run(modes=_parse_modes(args.modes))
-    print(f"Evaluation complete. Report: {report.artifacts.get('report_md', '')}")
+    print("Evaluation complete.")
+    print(f"- JSON: {report.artifacts.get('results_json', '')}")
+    print(f"- Markdown: {report.artifacts.get('report_md', '')}")
+    print(f"- CSV: {report.artifacts.get('summary_csv', '')}")
 
 
 if __name__ == "__main__":

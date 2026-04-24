@@ -30,6 +30,20 @@ class _FakeCrossEncoderModel:
         return self.scores[: len(sentences)]
 
 
+class _BrokenPredictCrossEncoderModel:
+    def predict(
+        self,
+        sentences: list[tuple[str, str]],
+        *,
+        batch_size: int,
+        show_progress_bar: bool,
+    ) -> list[float]:
+        _ = sentences
+        _ = batch_size
+        _ = show_progress_bar
+        raise RuntimeError("predict failed")
+
+
 def _sample_docs() -> list[RetrievalResult]:
     return [
         RetrievalResult(
@@ -120,3 +134,17 @@ def test_score_only_reranker_fallback_factory(monkeypatch) -> None:
     )
 
     assert isinstance(reranker, ScoreOnlyReranker)
+
+
+def test_cross_encoder_runtime_failure_falls_back_to_score_only() -> None:
+    reranker = CrossEncoderReranker(
+        model_name="BAAI/bge-reranker-v2-m3",
+        device="cpu",
+        batch_size=8,
+        model=_BrokenPredictCrossEncoderModel(),
+    )
+
+    reranked = reranker.rerank("query", _sample_docs(), top_k=3)
+
+    assert [item.chunk_id for item in reranked] == ["c1", "c2", "c3"]
+    assert reranked[0].metadata["pre_rerank_score_type"] == "hybrid"

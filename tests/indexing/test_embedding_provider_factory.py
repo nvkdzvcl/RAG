@@ -73,3 +73,17 @@ def test_sentence_transformer_fallback_to_hash_provider(monkeypatch) -> None:
 
     assert isinstance(provider, HashEmbeddingProvider)
     assert provider.dimension == 77
+
+
+def test_unknown_provider_falls_back_to_hash_provider() -> None:
+    provider = create_embedding_provider(
+        provider_name="unknown-provider",
+        model="unused",
+        device="cpu",
+        batch_size=4,
+        normalize=False,
+        fallback_hash_dimension=19,
+    )
+
+    assert isinstance(provider, HashEmbeddingProvider)
+    assert provider.dimension == 19

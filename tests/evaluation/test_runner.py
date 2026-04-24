@@ -6,7 +6,7 @@ import json
 from pathlib import Path
 from typing import Any
 
-from app.evaluation.runner import EvaluationRunner
+from app.evaluation.runner import EvaluationRunner, create_predictor, parse_args
 from app.schemas.common import Mode
 
 
@@ -139,3 +139,38 @@ def test_evaluation_runner_with_mocked_workflows(tmp_path: Path) -> None:
     first_standard = next(item for item in report.mode_outputs if item.mode == Mode.STANDARD)
     assert "c1" in first_standard.retrieved_chunk_ids
     assert first_standard.rerank_scores["c1"] == 0.88
+
+
+def test_stub_predictor_runs_without_workflow_stack(tmp_path: Path) -> None:
+    dataset_path = tmp_path / "golden_dataset.jsonl"
+    output_dir = tmp_path / "results_stub"
+    _write_dataset(dataset_path)
+
+    runner = EvaluationRunner(
+        dataset_path=dataset_path,
+        output_dir=output_dir,
+        predictor=create_predictor("stub"),
+    )
+    report = runner.run(modes=[Mode.STANDARD, Mode.ADVANCED, Mode.COMPARE])
+
+    assert report.dataset_size == 2
+    assert len(report.mode_outputs) == 4
+    assert len(report.compare_outputs) == 2
+    assert Path(report.artifacts["results_json"]).exists()
+    assert Path(report.artifacts["report_md"]).exists()
+
+
+def test_parse_args_accepts_predictor_flag() -> None:
+    args = parse_args(
+        [
+            "--dataset",
+            "data/eval/golden.jsonl",
+            "--predictor",
+            "stub",
+            "--modes",
+            "standard",
+            "advanced",
+        ]
+    )
+    assert args.predictor == "stub"
+    assert str(args.dataset).endswith("data/eval/golden.jsonl")

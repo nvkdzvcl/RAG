@@ -1,6 +1,7 @@
 # Evaluation Dataset Format
 
 The practical golden evaluation dataset is stored as JSONL in [`golden_dataset.jsonl`](./golden_dataset.jsonl).
+A compatible alias dataset is also kept in [`golden.jsonl`](./golden.jsonl).
 
 Each line must include:
 
@@ -40,4 +41,5 @@ Run evaluation:
 ```bash
 python scripts/run_eval.py --dataset data/eval/golden_dataset.jsonl --modes standard advanced
 python scripts/run_eval.py --dataset data/eval/golden_dataset.jsonl --modes standard advanced compare
+python -m app.evaluation.runner --dataset data/eval/golden.jsonl --predictor stub
 ```
