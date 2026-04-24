@@ -19,6 +19,9 @@ function SourceList({ sources }: { sources: SourceReference[] }) {
             {source.source} • chunk {source.chunkId}
             {source.section ? ` • ${source.section}` : ""}
             {source.page ? ` • p.${source.page}` : ""}
+            {source.rerankScore !== null && source.rerankScore !== undefined
+              ? ` • rerank ${source.rerankScore.toFixed(4)}`
+              : ""}
           </p>
         </li>
       ))}

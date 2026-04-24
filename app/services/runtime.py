@@ -31,6 +31,12 @@ def build_app_services(settings: Settings) -> AppServices:
     index_manager = RuntimeIndexManager(
         corpus_dir=settings.corpus_dir,
         index_dir=settings.index_dir,
+        embedding_provider_name=settings.embedding_provider,
+        embedding_model=settings.embedding_model,
+        embedding_device=settings.embedding_device,
+        embedding_batch_size=settings.embedding_batch_size,
+        embedding_normalize=settings.embedding_normalize,
+        embedding_dimension=settings.embedding_hash_dimension,
     )
     document_service = DocumentService(
         data_dir=data_dir,

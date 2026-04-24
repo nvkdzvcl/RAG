@@ -1,208 +1,284 @@
-"""Evaluation runner for schema and behavior regressions."""
+"""Practical evaluation runner for standard, advanced, and compare modes."""
 
 from __future__ import annotations
 
 import argparse
-import json
-from collections.abc import Callable
+from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any
-
-from pydantic import ValidationError
+from typing import Any, Protocol
 
 from app.evaluation.dataset import load_eval_dataset
-from app.evaluation.schemas import EvalCaseResult, EvalReport
-from app.schemas.api import CompareQueryResponse, validate_query_response
-from app.schemas.common import Mode
+from app.evaluation.metrics import compute_metrics, extract_trace_fields
+from app.evaluation.reporting import build_comparative_summary, write_report_artifacts
+from app.evaluation.schemas import CompareEvalOutput, EvalExample, EvalReport, ModeEvalOutput
+from app.schemas.api import CompareQueryResponse, QueryResponse, validate_query_response
+from app.schemas.common import Citation, Mode
 from app.workflows.runner import WorkflowRunner
 
-Predictor = Callable[[str, Mode], dict[str, Any]]
+
+class ModePredictor(Protocol):
+    """Callable predictor contract for one query/mode pair."""
+
+    def __call__(self, query: str, mode: Mode) -> dict[str, Any]:
+        """Return query response payload as dict."""
 
 
-def _status_matches(expected_behavior: str, status: str | None) -> bool:
-    normalized = (status or "answered").lower()
-    if expected_behavior == "abstain":
-        return normalized in {"abstained", "insufficient_evidence"}
-    if expected_behavior == "partial":
-        return normalized in {"partial", "answered"}
-    return normalized in {"answered", "partial"}
+class WorkflowPredictor:
+    """Predictor backed by real workflow execution."""
+
+    def __init__(self, workflow_runner: WorkflowRunner | None = None) -> None:
+        self.workflow_runner = workflow_runner or WorkflowRunner()
+
+    def __call__(self, query: str, mode: Mode) -> dict[str, Any]:
+        response = self.workflow_runner.run(query=query, mode=mode, chat_history=None)
+        if hasattr(response, "model_dump"):
+            return response.model_dump()  # type: ignore[no-any-return]
+        return dict(response)
 
 
-def stub_predictor(query: str, mode: Mode) -> dict[str, Any]:
-    """Deterministic predictor used before workflow implementation is complete."""
-    standard = {
-        "mode": "standard",
-        "answer": f"Stub standard answer for: {query}",
-        "citations": [
-            {
-                "chunk_id": "chunk_stub_001",
-                "doc_id": "doc_stub",
-                "source": "docs/stub.md",
-                "title": "Stub Document",
-            }
-        ],
-        "confidence": 0.6,
-        "status": "answered",
-        "stop_reason": "stub",
-        "latency_ms": 120,
-    }
+def _collect_mode_eval_output(
+    *,
+    example: EvalExample,
+    mode: Mode,
+    response: QueryResponse,
+    run_source: str = "direct",
+) -> ModeEvalOutput:
+    if mode not in {Mode.STANDARD, Mode.ADVANCED}:
+        raise ValueError("Mode output collection only supports standard/advanced.")
 
-    advanced = {
-        "mode": "advanced",
-        "answer": f"Stub advanced answer for: {query}",
-        "citations": [
-            {
-                "chunk_id": "chunk_stub_001",
-                "doc_id": "doc_stub",
-                "source": "docs/stub.md",
-                "title": "Stub Document",
-            }
-        ],
-        "confidence": 0.72,
-        "status": "answered",
-        "stop_reason": "stub",
-        "latency_ms": 220,
-        "loop_count": 1,
-        "trace": [{"step": "critique", "decision": "stop"}],
-    }
+    answer = getattr(response, "answer", "") if response is not None else ""
+    citations = list(getattr(response, "citations", []))
+    confidence = getattr(response, "confidence", None)
+    status = getattr(response, "status", None)
+    loop_count = getattr(response, "loop_count", None)
+    stop_reason = getattr(response, "stop_reason", None)
+    latency_ms = getattr(response, "latency_ms", None)
+    trace = list(getattr(response, "trace", []))
 
-    if mode == Mode.STANDARD:
-        return standard
-    if mode == Mode.ADVANCED:
-        return advanced
-    if mode == Mode.COMPARE:
-        return {
-            "mode": "compare",
-            "standard": standard,
-            "advanced": advanced,
-            "comparison": {
-                "confidence_delta": 0.12,
-                "latency_delta_ms": 100,
-                "citation_delta": 0,
-                "note": "Advanced has higher confidence in stub mode.",
-            },
-        }
-    raise ValueError(f"Unsupported mode: {mode}")
+    trace_fields = extract_trace_fields(trace)
+    metrics = compute_metrics(
+        expected_behavior=example.expected_behavior,
+        answer=answer,
+        citations=citations,
+        confidence=confidence,
+        status=status,
+        loop_count=loop_count,
+        stop_reason=stop_reason,
+        latency_ms=latency_ms,
+        trace_fields=trace_fields,
+        reference_answer=example.reference_answer,
+        gold_sources=example.gold_sources,
+    )
+
+    return ModeEvalOutput(
+        example_id=example.id,
+        mode=mode,
+        question=example.question,
+        category=example.category,
+        expected_behavior=example.expected_behavior,
+        answer=answer,
+        citations=[Citation.model_validate(citation) for citation in citations],
+        confidence=confidence,
+        status=status,
+        retrieved_chunk_ids=trace_fields.retrieved_chunk_ids,
+        rerank_scores=trace_fields.rerank_scores,
+        loop_count=loop_count,
+        stop_reason=stop_reason,
+        latency_ms=latency_ms,
+        retrieved_count=trace_fields.retrieved_count,
+        selected_context_count=trace_fields.selected_context_count,
+        metrics=metrics,
+        trace=trace,
+        run_source=run_source,  # type: ignore[arg-type]
+    )
 
 
-def workflow_predictor(query: str, mode: Mode) -> dict[str, Any]:
-    """Predict using the real workflow runner."""
-    runner = WorkflowRunner()
-    response = runner.run(query=query, mode=mode, chat_history=None)
-    if hasattr(response, "model_dump"):
-        return response.model_dump()  # type: ignore[no-any-return]
-    return dict(response)
+def _error_mode_output(example: EvalExample, mode: Mode, error: str, run_source: str = "direct") -> ModeEvalOutput:
+    trace_fields = extract_trace_fields([])
+    metrics = compute_metrics(
+        expected_behavior=example.expected_behavior,
+        answer="",
+        citations=[],
+        confidence=None,
+        status="error",
+        loop_count=None,
+        stop_reason="evaluation_error",
+        latency_ms=None,
+        trace_fields=trace_fields,
+        reference_answer=example.reference_answer,
+        gold_sources=example.gold_sources,
+    )
+    return ModeEvalOutput(
+        example_id=example.id,
+        mode=mode,
+        question=example.question,
+        category=example.category,
+        expected_behavior=example.expected_behavior,
+        answer="",
+        citations=[],
+        confidence=None,
+        status="error",
+        retrieved_chunk_ids=[],
+        rerank_scores={},
+        loop_count=None,
+        stop_reason="evaluation_error",
+        latency_ms=None,
+        retrieved_count=0,
+        selected_context_count=0,
+        metrics=metrics,
+        trace=[],
+        run_source=run_source,  # type: ignore[arg-type]
+        error=error,
+    )
 
 
 class EvaluationRunner:
-    """Runs evaluation examples across one or more modes."""
+    """Runs repeatable mode evaluations and writes report artifacts."""
 
-    def __init__(self, dataset_path: Path, predictor: Predictor) -> None:
+    def __init__(
+        self,
+        *,
+        dataset_path: Path,
+        output_dir: Path = Path("data/eval/results"),
+        predictor: ModePredictor | None = None,
+    ) -> None:
         self.dataset_path = dataset_path
-        self.predictor = predictor
+        self.output_dir = output_dir
+        self.predictor = predictor or WorkflowPredictor()
+
+    def _run_mode(self, example: EvalExample, mode: Mode) -> dict[str, Any]:
+        payload = self.predictor(example.question, mode)
+        parsed = validate_query_response(payload)
+        return {"payload": payload, "parsed": parsed}
 
     def run(self, modes: list[Mode] | None = None) -> EvalReport:
-        selected_modes = modes or [Mode.STANDARD, Mode.ADVANCED, Mode.COMPARE]
+        selected_modes = modes or [Mode.STANDARD, Mode.ADVANCED]
         dataset = load_eval_dataset(self.dataset_path)
 
-        results: list[EvalCaseResult] = []
-        invalid_payloads = 0
-        behavior_matches = 0
+        mode_outputs: list[ModeEvalOutput] = []
+        compare_outputs: list[CompareEvalOutput] = []
 
         for example in dataset:
             for mode in selected_modes:
                 try:
-                    payload = self.predictor(example.question, mode)
-                    parsed = validate_query_response(payload)
-                    valid_schema = True
-                    status = None
-                    if isinstance(parsed, CompareQueryResponse):
-                        status = "answered"
-                    else:
-                        status = parsed.status
-                    behavior_match = _status_matches(example.expected_behavior, status)
-                except (ValidationError, ValueError, TypeError, NotImplementedError) as exc:
-                    valid_schema = False
-                    behavior_match = False
-                    status = None
-                    invalid_payloads += 1
-                    results.append(
-                        EvalCaseResult(
-                            example_id=example.id,
+                    result = self._run_mode(example, mode)
+                    parsed = result["parsed"]
+                except Exception as exc:
+                    if mode == Mode.COMPARE:
+                        compare_outputs.append(
+                            CompareEvalOutput(
+                                example_id=example.id,
+                                question=example.question,
+                                category=example.category,
+                                expected_behavior=example.expected_behavior,
+                                standard=_error_mode_output(
+                                    example,
+                                    Mode.STANDARD,
+                                    error=f"Compare mode failed: {exc}",
+                                    run_source="compare_branch",
+                                ),
+                                advanced=_error_mode_output(
+                                    example,
+                                    Mode.ADVANCED,
+                                    error=f"Compare mode failed: {exc}",
+                                    run_source="compare_branch",
+                                ),
+                                comparison={"error": str(exc)},
+                            )
+                        )
+                    elif mode in {Mode.STANDARD, Mode.ADVANCED}:
+                        mode_outputs.append(_error_mode_output(example, mode, error=str(exc)))
+                    continue
+
+                if mode in {Mode.STANDARD, Mode.ADVANCED}:
+                    mode_outputs.append(
+                        _collect_mode_eval_output(
+                            example=example,
                             mode=mode,
-                            valid_schema=False,
-                            behavior_match=False,
-                            error=str(exc),
+                            response=parsed,
+                            run_source="direct",
                         )
                     )
                     continue
 
-                if behavior_match:
-                    behavior_matches += 1
-
-                results.append(
-                    EvalCaseResult(
-                        example_id=example.id,
-                        mode=mode,
-                        valid_schema=valid_schema,
-                        behavior_match=behavior_match,
-                        status=status,
+                if mode == Mode.COMPARE and isinstance(parsed, CompareQueryResponse):
+                    standard_eval = _collect_mode_eval_output(
+                        example=example,
+                        mode=Mode.STANDARD,
+                        response=parsed.standard,
+                        run_source="compare_branch",
                     )
-                )
+                    advanced_eval = _collect_mode_eval_output(
+                        example=example,
+                        mode=Mode.ADVANCED,
+                        response=parsed.advanced,
+                        run_source="compare_branch",
+                    )
+                    compare_outputs.append(
+                        CompareEvalOutput(
+                            example_id=example.id,
+                            question=example.question,
+                            category=example.category,
+                            expected_behavior=example.expected_behavior,
+                            standard=standard_eval,
+                            advanced=advanced_eval,
+                            comparison=parsed.comparison.model_dump(),
+                        )
+                    )
 
-        mode_runs = len(dataset) * len(selected_modes)
-        valid_runs = sum(1 for item in results if item.valid_schema)
-
-        return EvalReport(
+        summary = build_comparative_summary(mode_outputs, compare_outputs)
+        report = EvalReport(
+            dataset_path=str(self.dataset_path),
+            generated_at=datetime.now(timezone.utc),
+            modes=selected_modes,
             dataset_size=len(dataset),
-            mode_runs=mode_runs,
-            schema_valid_rate=(valid_runs / mode_runs) if mode_runs else 0.0,
-            behavior_match_rate=(behavior_matches / mode_runs) if mode_runs else 0.0,
-            invalid_payloads=invalid_payloads,
-            results=results,
+            output_count=len(mode_outputs) + len(compare_outputs),
+            standard_advanced_summary=summary,
+            mode_outputs=mode_outputs,
+            compare_outputs=compare_outputs,
+            artifacts={},
         )
+        return write_report_artifacts(report, self.output_dir)
 
 
-def run_evaluation(dataset_path: Path, predictor: Predictor, modes: list[Mode] | None = None) -> EvalReport:
-    """Convenience function for running an evaluation sweep."""
-    return EvaluationRunner(dataset_path=dataset_path, predictor=predictor).run(modes=modes)
+def _parse_modes(raw_modes: list[str]) -> list[Mode]:
+    return [Mode(value) for value in raw_modes]
 
 
-def _parse_args() -> argparse.Namespace:
-    parser = argparse.ArgumentParser(description="Run Self-RAG evaluation checks.")
+def parse_args() -> argparse.Namespace:
+    """Parse CLI options for evaluation runs."""
+    parser = argparse.ArgumentParser(description="Run practical evaluation for Self-RAG modes.")
     parser.add_argument(
         "--dataset",
         type=Path,
-        default=Path("data/eval/golden.jsonl"),
+        default=Path("data/eval/golden_dataset.jsonl"),
         help="Path to JSONL evaluation dataset.",
-    )
-    parser.add_argument(
-        "--predictor",
-        choices=["stub", "workflow"],
-        default="stub",
-        help="Predictor backend used for evaluation.",
     )
     parser.add_argument(
         "--modes",
         nargs="+",
         choices=[mode.value for mode in Mode],
-        default=[mode.value for mode in Mode],
-        help="Modes to evaluate (default: standard advanced compare).",
+        default=[Mode.STANDARD.value, Mode.ADVANCED.value],
+        help="Modes to evaluate. Add 'compare' to evaluate compare mode as well.",
+    )
+    parser.add_argument(
+        "--output-dir",
+        type=Path,
+        default=Path("data/eval/results"),
+        help="Directory for JSON/Markdown/CSV outputs.",
     )
     return parser.parse_args()
 
 
 def main() -> None:
-    """CLI entrypoint."""
-    args = _parse_args()
-    predictor = stub_predictor if args.predictor == "stub" else workflow_predictor
-    selected_modes = [Mode(mode) for mode in args.modes]
-    report = run_evaluation(
+    """CLI entrypoint for `python -m app.evaluation.runner`."""
+    args = parse_args()
+    runner = EvaluationRunner(
         dataset_path=args.dataset,
-        predictor=predictor,
-        modes=selected_modes,
+        output_dir=args.output_dir,
     )
-    print(json.dumps(report.model_dump(), indent=2))
+    report = runner.run(modes=_parse_modes(args.modes))
+    print(f"Evaluation complete. Report: {report.artifacts.get('report_md', '')}")
 
 
 if __name__ == "__main__":

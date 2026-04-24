@@ -6,7 +6,7 @@ import logging
 from pathlib import Path
 from threading import RLock
 
-from app.indexing import HashEmbeddingProvider, IndexBuilder, LocalIndexStore
+from app.indexing import BaseEmbeddingProvider, IndexBuilder, LocalIndexStore, create_embedding_provider
 from app.ingestion import BaseLoader, Chunker, DocxLoader, MarkdownLoader, PdfLoader, TextCleaner, TextLoader
 from app.retrieval import DenseRetriever, HybridRetriever, SparseRetriever
 from app.schemas.ingestion import DocumentChunk, LoadedDocument
@@ -34,13 +34,26 @@ class RuntimeIndexManager:
         index_dir: Path | str,
         chunk_size: int = 320,
         chunk_overlap: int = 40,
+        embedding_provider: BaseEmbeddingProvider | None = None,
+        embedding_provider_name: str = "sentence_transformers",
+        embedding_model: str = "intfloat/multilingual-e5-base",
+        embedding_device: str = "cpu",
+        embedding_batch_size: int = 16,
+        embedding_normalize: bool = True,
         embedding_dimension: int = 64,
     ) -> None:
         self.corpus_dir = Path(corpus_dir)
         self.index_dir = Path(index_dir)
         self.chunk_size = chunk_size
         self.chunk_overlap = chunk_overlap
-        self.embedding_provider = HashEmbeddingProvider(dimension=embedding_dimension)
+        self.embedding_provider = embedding_provider or create_embedding_provider(
+            provider_name=embedding_provider_name,
+            model=embedding_model,
+            device=embedding_device,
+            batch_size=embedding_batch_size,
+            normalize=embedding_normalize,
+            fallback_hash_dimension=embedding_dimension,
+        )
         self.index_store = LocalIndexStore(self.index_dir)
         self.cleaner = TextCleaner()
         self.chunker = Chunker(chunk_size=chunk_size, chunk_overlap=chunk_overlap)
@@ -50,6 +63,14 @@ class RuntimeIndexManager:
         self._retriever: HybridRetriever | EmptyRetriever = EmptyRetriever()
         self._active_source = "none"
         self._active_chunk_count = 0
+
+        logger.info(
+            "Initialized runtime embedding provider",
+            extra={
+                "embedding_provider": self.embedding_provider.name,
+                "embedding_dimension": self.embedding_provider.dimension,
+            },
+        )
 
     def _resolve_loader(self, path: Path) -> BaseLoader | None:
         for loader in self.loaders:

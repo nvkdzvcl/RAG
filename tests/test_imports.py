@@ -6,9 +6,21 @@ def test_import_app_modules() -> None:
     from app.api.router import api_router  # noqa: F401
     from app.core.config import get_settings  # noqa: F401
     from app.generation import BaselineGenerator, CitationBuilder, StructuredOutputParser  # noqa: F401
-    from app.indexing import BM25Index, HashEmbeddingProvider, IndexBuilder  # noqa: F401
+    from app.indexing import (  # noqa: F401
+        BM25Index,
+        BaseEmbeddingProvider,
+        HashEmbeddingProvider,
+        IndexBuilder,
+        SentenceTransformerEmbeddingProvider,
+    )
     from app.ingestion import Chunker, MarkdownLoader, TextCleaner, TextLoader  # noqa: F401
-    from app.retrieval import DenseRetriever, HybridRetriever, SparseRetriever  # noqa: F401
+    from app.retrieval import (  # noqa: F401
+        CrossEncoderReranker,
+        DenseRetriever,
+        HybridRetriever,
+        ScoreOnlyReranker,
+        SparseRetriever,
+    )
     from app.services import QueryService  # noqa: F401
     from app.schemas import GeneratedAnswer, LoadedDocument, QueryRequest, RetrievalResult, WorkflowState  # noqa: F401
     from app.workflows.advanced import AdvancedWorkflow  # noqa: F401

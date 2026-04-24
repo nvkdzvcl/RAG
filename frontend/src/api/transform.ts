@@ -13,7 +13,41 @@ function citationToUi(citation: ApiCitation, index: number): Citation {
   };
 }
 
-function citationsToSources(citations: Citation[]): SourceReference[] {
+function extractRerankScoreMap(traceItems: Array<Record<string, unknown>>): Map<string, number> {
+  const scores = new Map<string, number>();
+
+  for (const item of traceItems) {
+    if (!isObject(item) || typeof item.step !== "string") {
+      continue;
+    }
+
+    let docs: unknown = null;
+    if (item.step === "rerank") {
+      docs = item.docs;
+    } else if (item.step === "loop") {
+      docs = item.reranked_docs;
+    }
+
+    if (!Array.isArray(docs)) {
+      continue;
+    }
+
+    for (const doc of docs) {
+      if (!isObject(doc) || typeof doc.chunk_id !== "string") {
+        continue;
+      }
+      const value = doc.rerank_score;
+      if (typeof value !== "number") {
+        continue;
+      }
+      scores.set(doc.chunk_id, value);
+    }
+  }
+
+  return scores;
+}
+
+function citationsToSources(citations: Citation[], rerankScores: Map<string, number>): SourceReference[] {
   const map = new Map<string, SourceReference>();
   for (const citation of citations) {
     const key = `${citation.docId}:${citation.chunkId}:${citation.source}`;
@@ -26,6 +60,7 @@ function citationsToSources(citations: Citation[]): SourceReference[] {
         title: citation.title,
         section: citation.section,
         page: citation.page,
+        rerankScore: rerankScores.get(citation.chunkId) ?? null,
       });
     }
   }
@@ -79,6 +114,7 @@ function traceToUi(item: unknown): TraceEntry {
 
 function modeToUi(result: ApiModeResponse): ModeResult {
   const citations = result.citations.map(citationToUi);
+  const rerankScores = extractRerankScoreMap(result.trace);
   return {
     mode: result.mode,
     answer: result.answer,
@@ -88,7 +124,7 @@ function modeToUi(result: ApiModeResponse): ModeResult {
     stopReason: result.stop_reason ?? null,
     latencyMs: result.latency_ms ?? null,
     loopCount: result.loop_count ?? null,
-    sources: citationsToSources(citations),
+    sources: citationsToSources(citations, rerankScores),
     trace: result.trace.map(traceToUi),
   };
 }

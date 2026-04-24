@@ -1,0 +1,57 @@
+"""Tests for runtime index embedding provider integration."""
+
+from __future__ import annotations
+
+from pathlib import Path
+
+from app.indexing import BaseEmbeddingProvider
+from app.services.index_runtime import RuntimeIndexManager
+
+
+class _CountingEmbeddingProvider(BaseEmbeddingProvider):
+    def __init__(self, dimension: int = 6) -> None:
+        self.name = "counting-provider"
+        self.dimension = dimension
+        self.document_inputs: list[str] = []
+        self.query_inputs: list[str] = []
+
+    def _vectorize(self, text: str) -> list[float]:
+        base = sum(ord(char) for char in text) % 997
+        return [float((base + index) % 97) for index in range(self.dimension)]
+
+    def embed_documents(self, texts: list[str]) -> list[list[float]]:
+        self.document_inputs.extend(texts)
+        return [self._vectorize(text) for text in texts]
+
+    def embed_query(self, text: str) -> list[float]:
+        self.query_inputs.append(text)
+        return self._vectorize(text)
+
+
+def test_runtime_index_build_uses_embedding_provider_interface(tmp_path: Path) -> None:
+    corpus_dir = tmp_path / "corpus"
+    index_dir = tmp_path / "indexes"
+    corpus_dir.mkdir(parents=True, exist_ok=True)
+    (corpus_dir / "vi.txt").write_text(
+        "Tài liệu tiếng Việt mô tả hệ thống truy hồi thông tin cho câu hỏi hỗn hợp Việt-Anh.",
+        encoding="utf-8",
+    )
+
+    provider = _CountingEmbeddingProvider(dimension=6)
+    manager = RuntimeIndexManager(
+        corpus_dir=corpus_dir,
+        index_dir=index_dir,
+        embedding_provider=provider,
+    )
+
+    chunk_count = manager.activate_from_seeded_corpus()
+    results = manager.get_retriever().retrieve("Truy hoi thong tin la gi?", top_k=3)
+
+    assert chunk_count > 0
+    assert manager.get_active_source() == "seeded"
+    assert manager.get_active_chunk_count() == chunk_count
+    assert provider.document_inputs
+    assert provider.query_inputs
+    assert results
+    assert (index_dir / "vector_index.json").exists()
+    assert (index_dir / "bm25_index.json").exists()

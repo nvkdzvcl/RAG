@@ -12,46 +12,43 @@ Define a repeatable evaluation process for:
 
 Golden dataset path:
 
-- `data/eval/golden.jsonl`
+- `data/eval/golden_dataset.jsonl`
 
 Each JSONL row contains:
 
 - `id` (required)
 - `question` (required)
-- `expected_behavior` (required): `answer`, `abstain`, or `partial`
+- `expected_behavior` (required): `answer`, `abstain`, or `retry`
 - `reference_answer` (optional)
 - `gold_sources` (optional)
-- `tags` (optional)
+- `category` (required): `simple`, `multi_hop`, `ambiguous`, `insufficient_context`, `conflicting_sources`, `vietnamese`
 - `notes` (optional)
 
 ## Required Coverage Categories
 
-- factual
+- simple
 - multi_hop
 - ambiguous
-- insufficient_evidence
+- insufficient_context
 - conflicting_sources
-- follow_up
+- vietnamese
 
 ## Runner
 
 CLI module:
 
-- `python3 -m app.evaluation.runner`
+- `python scripts/run_eval.py`
 
 Options:
 
-- `--dataset`: dataset path (default `data/eval/golden.jsonl`)
-- `--predictor stub|workflow`
+- `--dataset`: dataset path (default `data/eval/golden_dataset.jsonl`)
 - `--modes standard advanced compare`
-
-`stub` predictor validates contract-level behavior before full workflow implementation.
-`workflow` predictor runs actual workflow code when available.
+- `--output-dir data/eval/results`
 
 Example:
 
 ```bash
-python3 -m app.evaluation.runner --predictor workflow --modes standard advanced compare
+python scripts/run_eval.py --dataset data/eval/golden_dataset.jsonl --modes standard advanced compare
 ```
 
 ## Current Regression Checks
@@ -59,12 +56,19 @@ python3 -m app.evaluation.runner --predictor workflow --modes standard advanced 
 Automated tests validate:
 
 - dataset load/shape
-- schema compliance for `standard`, `advanced`, `compare` payloads (fixture + workflow predictor)
-- compare-mode branch structure
+- metric computation
+- report generation
+- evaluation runner with mocked workflows
 
 ## Metrics Reported
 
-- schema valid rate
-- expected behavior match rate
-- invalid payload count
-- per-case per-mode status
+- citation count and citation rate
+- abstain match and abstain rate
+- retry usage and advanced retry rate
+- confidence and latency summaries
+- retrieved/selected context counts
+- heuristic proxies:
+  - answer non-empty
+  - reference keyword overlap
+  - gold source overlap
+  - groundedness proxy via lexical overlap with selected context

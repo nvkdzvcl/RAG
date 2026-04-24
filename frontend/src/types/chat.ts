@@ -19,6 +19,7 @@ export type SourceReference = {
   title?: string | null;
   section?: string | null;
   page?: number | null;
+  rerankScore?: number | null;
 };
 
 export type TraceStatus = "info" | "success" | "warning";

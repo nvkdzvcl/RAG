@@ -159,3 +159,37 @@ def test_query_uses_uploaded_document_chunks_when_available(
     assert citations
     assert any(citation["doc_id"] == uploaded_document_id for citation in citations)
     assert body["trace"][0]["index_source"] == "uploaded"
+
+
+def test_standard_mode_retrieves_vietnamese_uploaded_chunks(
+    isolated_client: tuple[TestClient, Path],
+) -> None:
+    client, _ = isolated_client
+
+    upload_response = client.post(
+        "/api/v1/documents/upload",
+        files={
+            "file": (
+                "vi-knowledge.txt",
+                "Hệ thống truy hồi thông tin dùng cụm từ khóa độc nhất: baobietviet42.".encode("utf-8"),
+                "text/plain",
+            )
+        },
+    )
+    assert upload_response.status_code == 201
+    uploaded_document_id = upload_response.json()["document_id"]
+
+    query_response = client.post(
+        "/api/v1/query",
+        json={
+            "query": "baobietviet42 có ý nghĩa gì trong tài liệu?",
+            "mode": "standard",
+            "chat_history": [],
+        },
+    )
+    assert query_response.status_code == 200
+
+    body = query_response.json()
+    citations = body["citations"]
+    assert citations
+    assert any(citation["doc_id"] == uploaded_document_id for citation in citations)

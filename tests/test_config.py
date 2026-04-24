@@ -10,6 +10,16 @@ def test_settings_defaults() -> None:
     settings = Settings()
     assert settings.app_name == "Self-RAG"
     assert settings.max_advanced_loops == 2
+    assert settings.embedding_provider == "sentence_transformers"
+    assert settings.embedding_model == "intfloat/multilingual-e5-base"
+    assert settings.embedding_device == "cpu"
+    assert settings.embedding_batch_size == 16
+    assert settings.embedding_normalize is True
+    assert settings.reranker_provider == "cross_encoder"
+    assert settings.reranker_model == "BAAI/bge-reranker-v2-m3"
+    assert settings.reranker_device == "cpu"
+    assert settings.reranker_batch_size == 8
+    assert settings.reranker_top_n == 6
 
 
 def test_query_request_mode_default() -> None:

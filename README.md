@@ -54,6 +54,55 @@ Runtime retrieval behavior:
 
 Vector and BM25 indexes are persisted in `INDEX_DIR` (default `data/indexes/`).
 
+## Embedding Backend (Vietnamese + Multilingual)
+
+Default embedding backend is sentence-transformers with:
+
+- provider: `sentence_transformers`
+- model: `intfloat/multilingual-e5-base`
+- device: `cpu`
+- batch size: `16`
+- normalized vectors: `true`
+
+E5 formatting is applied internally:
+
+- document chunks -> `passage: {text}`
+- user queries -> `query: {text}`
+
+If sentence-transformers is unavailable or model loading fails, the backend logs a warning and falls back to deterministic `hash-embedding` so API startup still succeeds.
+
+CPU expectation (rough guidance):
+
+- first startup can be slower while loading/downloading model artifacts
+- retrieval quality is improved for Vietnamese and mixed Vietnamese-English text compared with hash embeddings
+- indexing latency is higher than hash mode, especially for large uploads
+
+## Reranker Backend (Post-Retrieval)
+
+Default reranker backend is a sentence-transformers cross-encoder:
+
+- provider: `cross_encoder`
+- model: `BAAI/bge-reranker-v2-m3`
+- device: `cpu`
+- batch size: `8`
+- reranked candidate limit: `6`
+
+Reranker role:
+
+- takes `query + retrieved candidate chunks`
+- scores each query-chunk pair
+- sorts by rerank score to improve final context quality
+
+Trade-off:
+
+- better context quality and grounding robustness
+- higher per-query latency than score-only fallback, especially on CPU
+
+Fallback:
+
+- if cross-encoder model loading fails, backend logs warning and falls back to score-only reranking
+- API startup and query workflows continue without crashing
+
 ## Ingestion Parsing Strategy
 
 The ingestion pipeline now uses a parser abstraction layer:
@@ -114,25 +163,38 @@ By default, frontend requests go to `VITE_API_BASE_URL=/api/v1` and Vite proxies
 
 ## Evaluation
 
-Golden dataset: `data/eval/golden.jsonl`
+Golden dataset: `data/eval/golden_dataset.jsonl`
 
-Run evaluation (stub predictor):
-
-```bash
-python3 -m app.evaluation.runner --dataset data/eval/golden.jsonl --predictor stub
-```
-
-Run evaluation (real workflows):
+Run evaluation (standard + advanced):
 
 ```bash
-python3 -m app.evaluation.runner --dataset data/eval/golden.jsonl --predictor workflow
+python scripts/run_eval.py --dataset data/eval/golden_dataset.jsonl --modes standard advanced
 ```
 
-Run evaluation for selected modes only:
+Run evaluation (including compare mode):
 
 ```bash
-python3 -m app.evaluation.runner --predictor workflow --modes standard advanced compare
+python scripts/run_eval.py --dataset data/eval/golden_dataset.jsonl --modes standard advanced compare
 ```
+
+Generated artifacts:
+
+- `data/eval/results/results.json`
+- `data/eval/results/report.md`
+- `data/eval/results/summary.csv`
+
+How to add evaluation samples:
+
+1. Append one JSON line to `data/eval/golden_dataset.jsonl`.
+2. Include required fields: `id`, `question`, `expected_behavior`, `category`.
+3. Optionally include: `reference_answer`, `gold_sources`, `notes`.
+4. Keep category coverage balanced, including Vietnamese samples.
+
+How to interpret results:
+
+- Compare `avg_latency_delta_ms` and `avg_confidence_delta` for standard vs advanced.
+- Check `advanced_retry_rate`, `abstain_rate`, and `citation_rate` in `report.md`.
+- Treat `groundedness_proxy` as a heuristic indicator, not a definitive factuality score.
 
 ## Tests
 

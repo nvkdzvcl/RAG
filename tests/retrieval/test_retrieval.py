@@ -3,7 +3,7 @@
 from app.indexing import HashEmbeddingProvider, IndexBuilder
 from app.ingestion.chunker import Chunker
 from app.ingestion.cleaner import TextCleaner
-from app.retrieval import DenseRetriever, HybridRetriever, KeywordOverlapReranker, SparseRetriever
+from app.retrieval import DenseRetriever, HybridRetriever, ScoreOnlyReranker, SparseRetriever
 from app.schemas.ingestion import DocumentChunk, LoadedDocument
 from app.schemas.retrieval import RetrievalResult
 
@@ -93,8 +93,8 @@ def test_hybrid_retrieval_merging() -> None:
     assert len(set(chunk_ids)) == len(chunk_ids)
 
 
-def test_reranker_orders_by_overlap() -> None:
-    reranker = KeywordOverlapReranker()
+def test_score_only_reranker_output_shape() -> None:
+    reranker = ScoreOnlyReranker()
     docs = [
         RetrievalResult(
             chunk_id="c1",
@@ -124,6 +124,7 @@ def test_reranker_orders_by_overlap() -> None:
 
     reranked = reranker.rerank("alpha beta", docs)
 
-    assert reranked[0].chunk_id == "c2"
+    assert reranked[0].chunk_id == "c3"
     assert all(item.score_type == "rerank" for item in reranked)
+    assert all(item.rerank_score is not None for item in reranked)
     assert reranked[0].score >= reranked[1].score

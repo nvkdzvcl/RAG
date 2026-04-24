@@ -1,0 +1,17 @@
+example_id,mode,category,expected_behavior,status,latency_ms,confidence,citation_count,has_citations,abstain_match,retry_used,retrieved_count,selected_context_count,answer_non_empty,answer_contains_reference_keywords,cited_gold_source_overlap,groundedness_proxy
+eval_001,standard,simple,answer,answered,4,0.5,4,True,True,False,8,4,True,False,1.0,0.0
+eval_001,advanced,simple,answer,answered,18,0.2,4,True,True,True,8,4,True,False,1.0,0.0
+eval_002,standard,multi_hop,answer,answered,4,0.5,4,True,True,False,8,4,True,False,0.0,0.0
+eval_002,advanced,multi_hop,answer,answered,27,0.2,4,True,True,True,8,4,True,False,0.0,0.0
+eval_003,standard,ambiguous,answer,answered,5,0.5,4,True,True,False,8,4,True,True,,0.0
+eval_003,advanced,ambiguous,answer,answered,9,0.2,4,True,True,True,8,4,True,True,,0.0
+eval_004,standard,insufficient_context,abstain,answered,11,0.5,4,True,False,False,8,4,True,,,0.0
+eval_004,advanced,insufficient_context,abstain,answered,18,0.2,4,True,False,True,8,4,True,,,0.0
+eval_005,standard,conflicting_sources,answer,answered,12,0.5,4,True,True,False,8,4,True,False,0.0,0.0
+eval_005,advanced,conflicting_sources,answer,answered,19,0.2,4,True,True,True,8,4,True,False,0.0,0.0
+eval_006,standard,vietnamese,answer,answered,7,0.5,4,True,True,False,8,4,True,False,1.0,0.0
+eval_006,advanced,vietnamese,answer,answered,11,0.2,4,True,True,True,8,4,True,False,1.0,0.0
+eval_007,standard,vietnamese,abstain,answered,13,0.5,4,True,False,False,8,4,True,False,,0.0
+eval_007,advanced,vietnamese,abstain,answered,8,0.82,4,True,False,True,8,4,True,False,,0.3333333333333333
+eval_008,standard,multi_hop,retry,answered,4,0.5,4,True,True,False,8,4,True,False,,0.0
+eval_008,advanced,multi_hop,retry,answered,15,0.82,4,True,True,True,8,4,True,False,,0.3333333333333333

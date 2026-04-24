@@ -67,6 +67,18 @@ Implemented end-to-end MVP layers:
 - frontend integration with mode selection and mode-specific rendering panels
 - evaluation dataset + runner + regression checks for standard/advanced/compare payloads
 
+Embedding backend notes:
+
+- default dense embeddings use sentence-transformers (`intfloat/multilingual-e5-base`) with E5-style prefixes (`passage:` for chunks, `query:` for user queries)
+- runtime provider selection is config-driven
+- if sentence-transformers import/model loading fails, runtime falls back to deterministic hash embeddings without crashing API startup
+
+Reranker backend notes:
+
+- default reranking uses cross-encoder (`BAAI/bge-reranker-v2-m3`) over top retrieved candidates
+- reranker scores are attached to retrieval outputs (`rerank_score`) while original retrieval scores are preserved in metadata
+- if cross-encoder initialization fails, workflow falls back to score-only reranking and keeps API/query flows available
+
 Known MVP gaps:
 
 - retrieval/generation are deterministic baseline implementations intended for local development and testing

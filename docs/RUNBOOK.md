@@ -30,9 +30,55 @@
    - `GET /api/v1/documents/{document_id}/status`
 3. run queries across all 3 modes (`standard`, `advanced`, `compare`)
 4. run evaluation set:
-   `python3 -m app.evaluation.runner --predictor workflow`
+   `python scripts/run_eval.py --dataset data/eval/golden_dataset.jsonl --modes standard advanced compare`
 5. run tests:
    `pytest`
+
+## Embedding Configuration
+
+Recommended multilingual/Vietnamese embedding setup:
+
+- `EMBEDDING_PROVIDER=sentence_transformers`
+- `EMBEDDING_MODEL=intfloat/multilingual-e5-base`
+- `EMBEDDING_DEVICE=cpu`
+- `EMBEDDING_BATCH_SIZE=16`
+- `EMBEDDING_NORMALIZE=true`
+
+Fallback behavior:
+
+- if `sentence-transformers` is not installed, or model initialization fails, the app logs a warning and automatically falls back to `HashEmbeddingProvider`
+- API startup continues (no hard crash), so local development is still possible
+
+CPU performance expectations:
+
+- first run may spend noticeable time loading/downloading model assets
+- indexing throughput on CPU is lower than hash embeddings
+- retrieval quality for Vietnamese and mixed Vietnamese-English documents is significantly better than hash fallback
+
+## Reranker Configuration
+
+Recommended production-style reranker setup:
+
+- `RERANKER_PROVIDER=cross_encoder`
+- `RERANKER_MODEL=BAAI/bge-reranker-v2-m3`
+- `RERANKER_DEVICE=cpu`
+- `RERANKER_BATCH_SIZE=8`
+- `RERANKER_TOP_N=6`
+
+Reranker role:
+
+- reranks top retrieved candidates using query-document pair scoring
+- improves context quality before answer generation
+
+Latency trade-off:
+
+- cross-encoder reranking is slower than score-only ordering
+- keep `RERANKER_TOP_N` small (for example `4-8`) on local CPU machines with 16GB RAM
+
+Fallback behavior:
+
+- if cross-encoder model initialization fails, backend logs warning and uses score-only reranker
+- standard, advanced, and compare query modes continue to run
 
 ## Before Opening a Pull Request
 

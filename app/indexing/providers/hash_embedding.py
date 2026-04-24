@@ -6,9 +6,11 @@ import math
 import re
 from hashlib import sha1
 
+from app.indexing.embeddings import BaseEmbeddingProvider
 
-class HashEmbeddingProvider:
-    """Simple deterministic embedding provider with no external model dependency."""
+
+class HashEmbeddingProvider(BaseEmbeddingProvider):
+    """Deterministic fallback provider with no external model dependency."""
 
     token_pattern = re.compile(r"\w+")
 
@@ -19,7 +21,8 @@ class HashEmbeddingProvider:
         self.name = "hash-embedding"
 
     def _tokenize(self, text: str) -> list[str]:
-        return self.token_pattern.findall(text.lower())
+        # Keep original Unicode characters (including Vietnamese diacritics).
+        return self.token_pattern.findall(text)
 
     def _embed(self, text: str) -> list[float]:
         vector = [0.0] * self.dimension

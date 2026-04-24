@@ -10,9 +10,9 @@ from app.core.config import get_settings
 from app.generation import BaselineGenerator, StubLLMClient
 from app.indexing.bm25_index import BM25Index
 from app.indexing.vector_index import VectorIndex
-from app.indexing import HashEmbeddingProvider, IndexBuilder, LocalIndexStore
+from app.indexing import BaseEmbeddingProvider, IndexBuilder, LocalIndexStore, create_embedding_provider
 from app.ingestion import Chunker, DirectoryIngestor, TextCleaner
-from app.retrieval import ContextSelector, DenseRetriever, HybridRetriever, KeywordOverlapReranker, SparseRetriever
+from app.retrieval import BaseReranker, ContextSelector, DenseRetriever, HybridRetriever, SparseRetriever, create_reranker
 from app.schemas.api import StandardQueryResponse
 from app.schemas.common import Mode
 from app.schemas.generation import GeneratedAnswer
@@ -40,7 +40,7 @@ class StandardWorkflow:
         self,
         *,
         hybrid_top_k: int = 8,
-        rerank_top_k: int = 5,
+        rerank_top_k: int | None = None,
         context_top_k: int = 4,
         context_max_chars: int = 4000,
         corpus_dir: str | Path | None = None,
@@ -49,10 +49,12 @@ class StandardWorkflow:
         chunk_overlap: int = 40,
         persist_indexes: bool = False,
         index_manager: RuntimeIndexManager | None = None,
+        embedding_provider: BaseEmbeddingProvider | None = None,
+        reranker: BaseReranker | None = None,
     ) -> None:
         settings = get_settings()
         self.hybrid_top_k = hybrid_top_k
-        self.rerank_top_k = rerank_top_k
+        self.rerank_top_k = rerank_top_k if rerank_top_k is not None else settings.reranker_top_n
         self.context_top_k = context_top_k
         self.chunk_size = chunk_size
         self.chunk_overlap = chunk_overlap
@@ -64,18 +66,30 @@ class StandardWorkflow:
         self._fallback_retriever: HybridRetriever | EmptyRetriever | None = None
 
         if self.index_manager is None:
-            embedding_provider = HashEmbeddingProvider(dimension=64)
+            resolved_provider = embedding_provider or create_embedding_provider(
+                provider_name=settings.embedding_provider,
+                model=settings.embedding_model,
+                device=settings.embedding_device,
+                batch_size=settings.embedding_batch_size,
+                normalize=settings.embedding_normalize,
+                fallback_hash_dimension=settings.embedding_hash_dimension,
+            )
             chunks = self._build_chunks_from_corpus()
 
-            built = IndexBuilder(embedding_provider=embedding_provider).build(chunks)
+            built = IndexBuilder(embedding_provider=resolved_provider).build(chunks)
             if self.persist_indexes:
                 self._save_indexes(built.vector_index, built.bm25_index)
 
-            dense = DenseRetriever(built.vector_index, embedding_provider)
+            dense = DenseRetriever(built.vector_index, resolved_provider)
             sparse = SparseRetriever(built.bm25_index)
             self._fallback_retriever = HybridRetriever(dense, sparse)
 
-        self.reranker = KeywordOverlapReranker()
+        self.reranker = reranker or create_reranker(
+            provider_name=settings.reranker_provider,
+            model=settings.reranker_model,
+            device=settings.reranker_device,
+            batch_size=settings.reranker_batch_size,
+        )
         self.context_selector = ContextSelector(max_chunks=context_top_k, max_chars=context_max_chars)
         self.generator = BaselineGenerator(llm_client=StubLLMClient())
 
@@ -114,7 +128,8 @@ class StandardWorkflow:
     def run_pipeline(self, query: str, mode: Mode = Mode.STANDARD) -> StandardPipelineResult:
         """Run one retrieval-generation pass and return intermediate artifacts."""
         normalized_query = normalize_query(query)
-        retrieved = self._get_retriever().retrieve(normalized_query, top_k=self.hybrid_top_k)
+        retrieval_top_k = max(self.hybrid_top_k, self.rerank_top_k)
+        retrieved = self._get_retriever().retrieve(normalized_query, top_k=retrieval_top_k)
         reranked = self.reranker.rerank(normalized_query, retrieved, top_k=self.rerank_top_k)
         selected_context = self.context_selector.select(reranked, top_k=self.context_top_k)
         generated = self.generator.generate_answer(
@@ -152,13 +167,34 @@ class StandardWorkflow:
             },
             {
                 "step": "rerank",
+                "provider": getattr(self.reranker, "name", self.reranker.__class__.__name__),
                 "count": len(pipeline.reranked),
                 "chunk_ids": [item.chunk_id for item in pipeline.reranked],
+                "docs": [
+                    {
+                        "chunk_id": item.chunk_id,
+                        "doc_id": item.doc_id,
+                        "rank": item.rank,
+                        "rerank_score": item.rerank_score,
+                        "score": item.score,
+                        "dense_score": item.dense_score,
+                        "sparse_score": item.sparse_score,
+                    }
+                    for item in pipeline.reranked
+                ],
             },
             {
                 "step": "context_select",
                 "count": len(pipeline.selected_context),
                 "chunk_ids": [item.chunk_id for item in pipeline.selected_context],
+                "docs": [
+                    {
+                        "chunk_id": item.chunk_id,
+                        "doc_id": item.doc_id,
+                        "content": item.content,
+                    }
+                    for item in pipeline.selected_context
+                ],
             },
             {
                 "step": "generate",

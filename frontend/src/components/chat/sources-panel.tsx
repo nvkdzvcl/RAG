@@ -34,6 +34,9 @@ export function SourcesPanel({ sources, title = "Sources Panel" }: SourcesPanelP
                 {source.source} • doc: {source.docId} • chunk: {source.chunkId}
                 {source.section ? ` • section: ${source.section}` : ""}
                 {source.page ? ` • page: ${source.page}` : ""}
+                {source.rerankScore !== null && source.rerankScore !== undefined
+                  ? ` • rerank: ${source.rerankScore.toFixed(4)}`
+                  : ""}
               </p>
             </li>
           ))}

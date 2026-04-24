@@ -143,7 +143,27 @@ class AdvancedWorkflow:
                     "query": current_query,
                     "retrieved_count": len(pipeline.retrieved),
                     "reranked_count": len(pipeline.reranked),
+                    "reranked_docs": [
+                        {
+                            "chunk_id": item.chunk_id,
+                            "doc_id": item.doc_id,
+                            "rank": item.rank,
+                            "rerank_score": item.rerank_score,
+                            "score": item.score,
+                            "dense_score": item.dense_score,
+                            "sparse_score": item.sparse_score,
+                        }
+                        for item in pipeline.reranked
+                    ],
                     "selected_count": len(pipeline.selected_context),
+                    "selected_context_docs": [
+                        {
+                            "chunk_id": item.chunk_id,
+                            "doc_id": item.doc_id,
+                            "content": item.content,
+                        }
+                        for item in pipeline.selected_context
+                    ],
                     "critique": critique_result.model_dump(),
                 }
             )
