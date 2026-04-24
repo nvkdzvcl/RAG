@@ -1,6 +1,6 @@
 {
   "dataset_path": "data/eval/golden.jsonl",
-  "generated_at": "2026-04-24T15:53:01.813524Z",
+  "generated_at": "2026-04-24T16:05:11.973527Z",
   "modes": [
     "standard",
     "advanced"

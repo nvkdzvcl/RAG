@@ -44,12 +44,12 @@ class RuntimeIndexManager:
         embedding_dimension: int | None = None,
     ) -> None:
         settings = get_settings()
-        resolved_provider_name = embedding_provider_name or settings.embedding_provider
-        resolved_model = embedding_model or settings.embedding_model
-        resolved_device = embedding_device or settings.embedding_device
-        resolved_batch_size = embedding_batch_size or settings.embedding_batch_size
+        resolved_provider_name = embedding_provider_name if embedding_provider_name is not None else settings.embedding_provider
+        resolved_model = embedding_model if embedding_model is not None else settings.embedding_model
+        resolved_device = embedding_device if embedding_device is not None else settings.embedding_device
+        resolved_batch_size = embedding_batch_size if embedding_batch_size is not None else settings.embedding_batch_size
         resolved_normalize = embedding_normalize if embedding_normalize is not None else settings.embedding_normalize
-        resolved_dimension = embedding_dimension or settings.embedding_hash_dimension
+        resolved_dimension = embedding_dimension if embedding_dimension is not None else settings.embedding_hash_dimension
 
         self.corpus_dir = Path(corpus_dir)
         self.index_dir = Path(index_dir)

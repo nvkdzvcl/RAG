@@ -1,6 +1,6 @@
 # Evaluation Report
 
-- Generated at: `2026-04-24T15:53:01.813524+00:00`
+- Generated at: `2026-04-24T16:05:11.973527+00:00`
 - Dataset: `data/eval/golden.jsonl`
 - Modes: `standard, advanced`
 - Dataset size: `8`

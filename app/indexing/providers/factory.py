@@ -33,7 +33,7 @@ def create_embedding_provider(
     fallback_hash_dimension: int = 64,
 ) -> BaseEmbeddingProvider:
     """Create embedding provider with safe fallback to hash embeddings."""
-    normalized = provider_name.strip().lower()
+    normalized = provider_name.strip().lower() if provider_name else ""
 
     if normalized in SENTENCE_TRANSFORMER_PROVIDER_NAMES:
         try:
