@@ -6,18 +6,19 @@ import { AppShell } from "@/components/dashboard/app-shell";
 import { ChatComposer } from "@/components/dashboard/chat-composer";
 import { ChatPanel } from "@/components/dashboard/chat-panel";
 import { DocumentUploadCard } from "@/components/dashboard/document-upload-card";
-import { MetricCards } from "@/components/dashboard/metric-cards";
 import { ModeSelector } from "@/components/dashboard/mode-selector";
 import { Sidebar, type RecentChat } from "@/components/dashboard/sidebar";
 import { SourcesPanel } from "@/components/dashboard/sources-panel";
 import { WorkflowTrace } from "@/components/dashboard/workflow-trace";
+import { SettingsModal } from "@/components/dashboard/settings-modal";
+import { AlertDialog } from "@/components/ui/alert-dialog";
 import { useDocumentIngestion } from "@/hooks/use-document-ingestion";
 import type { Mode, QueryResult } from "@/types/chat";
 
 const RECENT_CHAT_SEED: RecentChat[] = [
-  { id: "recent-1", title: "Compare grounding quality across modes", mode: "compare", timeLabel: "12m ago" },
-  { id: "recent-2", title: "How does advanced retry loop work?", mode: "advanced", timeLabel: "38m ago" },
-  { id: "recent-3", title: "What is baseline RAG?", mode: "standard", timeLabel: "1h ago" },
+  { id: "recent-1", title: "So sánh chất lượng grounding giữa các chế độ", mode: "compare", timeLabel: "12 phút trước" },
+  { id: "recent-2", title: "Vòng lặp retry của chế độ nâng cao hoạt động như thế nào?", mode: "advanced", timeLabel: "38 phút trước" },
+  { id: "recent-3", title: "RAG cơ bản là gì?", mode: "standard", timeLabel: "1 giờ trước" },
 ];
 
 export function ChatPage() {
@@ -29,6 +30,13 @@ export function ChatPage() {
   const [error, setError] = useState<string | null>(null);
   const [chatHistory, setChatHistory] = useState<Array<Record<string, string>>>([]);
   const [recentChats, setRecentChats] = useState<RecentChat[]>(RECENT_CHAT_SEED);
+  const [chunkSize, setChunkSize] = useState(1000);
+  const [chunkOverlap, setChunkOverlap] = useState(100);
+  const [topK, setTopK] = useState(10);
+  const [showClearHistoryDialog, setShowClearHistoryDialog] = useState(false);
+  const [showClearVectorDialog, setShowClearVectorDialog] = useState(false);
+  const [showSettingsModal, setShowSettingsModal] = useState(false);
+  
   const {
     documents,
     activeDocument,
@@ -62,7 +70,7 @@ export function ChatPage() {
       return;
     }
     if (!canQuery) {
-      setError(queryDisabledReason || "Upload and process a document before querying.");
+      setError(queryDisabledReason || "Vui lòng tải lên và xử lý tài liệu trước khi đặt câu hỏi.");
       return;
     }
 
@@ -80,12 +88,12 @@ export function ChatPage() {
       setResult(mapped);
       upsertRecentChat(normalized, mode);
 
-      const assistantMessage = mapped.mode === "compare" ? mapped.comparison.note || "Compare run completed." : mapped.answer;
+      const assistantMessage = mapped.mode === "compare" ? mapped.comparison.note || "Hoàn tất so sánh." : mapped.answer;
       setChatHistory((previous) =>
         [...previous, { role: "user", content: normalized }, { role: "assistant", content: assistantMessage }].slice(-12),
       );
     } catch (requestError) {
-      const message = requestError instanceof Error ? requestError.message : "Unknown request error";
+      const message = requestError instanceof Error ? requestError.message : "Lỗi yêu cầu không xác định";
       setError(message);
     } finally {
       setIsLoading(false);
@@ -100,6 +108,25 @@ export function ChatPage() {
     setChatHistory([]);
   };
 
+  const handleClearHistory = () => {
+    setRecentChats([]);
+    resetConversation();
+  };
+
+  const handleClearVectorStore = async () => {
+    // TODO: Call API to clear vector store
+    console.log("Clear vector store - to be implemented");
+    // For now, just show a message
+    alert("Tính năng xóa vector store sẽ được triển khai trong phiên bản tiếp theo");
+  };
+
+  const handleChunkSettingsChange = (newChunkSize: number, newChunkOverlap: number, newTopK: number) => {
+    setChunkSize(newChunkSize);
+    setChunkOverlap(newChunkOverlap);
+    setTopK(newTopK);
+    console.log(`Settings updated: chunkSize=${newChunkSize}, chunkOverlap=${newChunkOverlap}, topK=${newTopK}`);
+  };
+
   const handleSelectRecent = (chat: RecentChat) => {
     setMode(chat.mode);
     setQuery(chat.title);
@@ -108,7 +135,6 @@ export function ChatPage() {
   const mainContent = (
     <div className="mx-auto flex w-full max-w-5xl flex-col gap-4">
       <ModeSelector mode={mode} onModeChange={setMode} disabled={isLoading} />
-      <MetricCards mode={mode} result={result} isLoading={isLoading} />
       <DocumentUploadCard
         documents={documents}
         activeDocument={activeDocument}
@@ -138,17 +164,53 @@ export function ChatPage() {
   );
 
   return (
-    <AppShell
-      sidebar={
-        <Sidebar
-          mode={mode}
-          onNewChat={resetConversation}
-          recentChats={recentChats}
-          onSelectRecent={handleSelectRecent}
-        />
-      }
-      main={mainContent}
-      inspect={inspectPanel}
-    />
+    <>
+      <AppShell
+        sidebar={
+          <Sidebar
+            mode={mode}
+            onNewChat={resetConversation}
+            recentChats={recentChats}
+            onSelectRecent={handleSelectRecent}
+            onClearHistory={() => setShowClearHistoryDialog(true)}
+            onClearVectorStore={() => setShowClearVectorDialog(true)}
+            onOpenSettings={() => setShowSettingsModal(true)}
+          />
+        }
+        main={mainContent}
+        inspect={inspectPanel}
+      />
+      
+      <SettingsModal
+        open={showSettingsModal}
+        onOpenChange={setShowSettingsModal}
+        chunkSize={chunkSize}
+        chunkOverlap={chunkOverlap}
+        topK={topK}
+        onSettingsChange={handleChunkSettingsChange}
+      />
+      
+      <AlertDialog
+        open={showClearHistoryDialog}
+        onOpenChange={setShowClearHistoryDialog}
+        title="Xóa lịch sử chat"
+        description="Bạn có chắc chắn muốn xóa toàn bộ lịch sử chat? Hành động này không thể hoàn tác."
+        onConfirm={handleClearHistory}
+        confirmText="Xóa"
+        cancelText="Hủy"
+        variant="destructive"
+      />
+      
+      <AlertDialog
+        open={showClearVectorDialog}
+        onOpenChange={setShowClearVectorDialog}
+        title="Xóa tài liệu đã tải"
+        description="Bạn có chắc chắn muốn xóa toàn bộ tài liệu và vector store? Hành động này không thể hoàn tác."
+        onConfirm={handleClearVectorStore}
+        confirmText="Xóa"
+        cancelText="Hủy"
+        variant="destructive"
+      />
+    </>
   );
 }

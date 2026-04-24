@@ -1,5 +1,6 @@
 import type { Mode } from "@/types/chat";
 import { cn } from "@/lib/utils";
+import { translations } from "@/lib/translations";
 
 type ModeSelectorProps = {
   mode: Mode;
@@ -8,9 +9,9 @@ type ModeSelectorProps = {
 };
 
 const modeTabs: Array<{ value: Mode; label: string; subtitle: string }> = [
-  { value: "standard", label: "Standard", subtitle: "Fast baseline" },
-  { value: "advanced", label: "Advanced", subtitle: "Self-RAG loop" },
-  { value: "compare", label: "Compare", subtitle: "Side-by-side" },
+  { value: "standard", label: translations.modes.standard, subtitle: translations.modeDescriptions.standard },
+  { value: "advanced", label: translations.modes.advanced, subtitle: translations.modeDescriptions.advanced },
+  { value: "compare", label: translations.modes.compare, subtitle: translations.modeDescriptions.compare },
 ];
 
 export function ModeSelector({ mode, onModeChange, disabled = false }: ModeSelectorProps) {
@@ -29,7 +30,7 @@ export function ModeSelector({ mode, onModeChange, disabled = false }: ModeSelec
                 "rounded-xl border px-4 py-3 text-left transition",
                 "disabled:cursor-not-allowed disabled:opacity-60",
                 active
-                  ? "border-blue-500/30 bg-gradient-to-r from-blue-50 to-violet-50 text-slate-900 shadow-sm"
+                  ? "border-primary/30 bg-blue-50 text-slate-900 shadow-sm"
                   : "border-slate-200 bg-white text-slate-600 hover:border-slate-300 hover:bg-slate-50",
               )}
             >

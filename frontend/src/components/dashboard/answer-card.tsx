@@ -2,6 +2,7 @@ import { Badge } from "@/components/ui/badge";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { CitationList } from "@/components/dashboard/citation-list";
 import type { ModeResult } from "@/types/chat";
+import { translations } from "@/lib/translations";
 
 type AnswerCardProps = {
   title?: string;
@@ -15,7 +16,7 @@ function confidenceLabel(confidence: number | null): string {
   return `${Math.round(confidence * 100)}%`;
 }
 
-export function AnswerCard({ title = "Assistant Answer", result }: AnswerCardProps) {
+export function AnswerCard({ title = "Câu trả lời", result }: AnswerCardProps) {
   return (
     <Card className="border-slate-200 shadow-sm">
       <CardHeader className="pb-3">
@@ -24,12 +25,12 @@ export function AnswerCard({ title = "Assistant Answer", result }: AnswerCardPro
       <CardContent className="space-y-4">
         <div className="flex flex-wrap gap-2">
           <Badge variant="outline" className="capitalize">
-            {result.mode}
+            {translations.modes[result.mode]}
           </Badge>
           <Badge variant="outline">{result.status}</Badge>
-          <Badge variant="muted">confidence {confidenceLabel(result.confidence)}</Badge>
-          <Badge variant="muted">latency {result.latencyMs === null ? "n/a" : `${result.latencyMs}ms`}</Badge>
-          <Badge variant="muted">citations {result.citations.length}</Badge>
+          <Badge variant="muted">{translations.metrics.confidence} {confidenceLabel(result.confidence)}</Badge>
+          <Badge variant="muted">{translations.metrics.latency} {result.latencyMs === null ? "n/a" : `${result.latencyMs}ms`}</Badge>
+          <Badge variant="muted">{translations.citations.title} {result.citations.length}</Badge>
         </div>
 
         <div className="rounded-xl border border-slate-200 bg-white px-4 py-3">
@@ -37,7 +38,7 @@ export function AnswerCard({ title = "Assistant Answer", result }: AnswerCardPro
         </div>
 
         <div className="space-y-2">
-          <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">Citations</p>
+          <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">{translations.citations.title}</p>
           <CitationList citations={result.citations} />
         </div>
       </CardContent>

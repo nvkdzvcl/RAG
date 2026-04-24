@@ -12,6 +12,7 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import type { DocumentRecord, ProcessingStage } from "@/types/document";
+import { translations } from "@/lib/translations";
 
 type DocumentUploadCardProps = {
   documents: DocumentRecord[];
@@ -25,10 +26,10 @@ type DocumentUploadCardProps = {
 type StageState = "pending" | "in_progress" | "done";
 
 const STAGES: Array<{ id: ProcessingStage; label: string }> = [
-  { id: "splitting", label: "Splitting document" },
-  { id: "embedding", label: "Creating embeddings" },
-  { id: "indexing", label: "Building index" },
-  { id: "ready", label: "Ready" },
+  { id: "splitting", label: "Chia nhỏ tài liệu" },
+  { id: "embedding", label: "Tạo embeddings" },
+  { id: "indexing", label: "Xây dựng chỉ mục" },
+  { id: "ready", label: "Sẵn sàng" },
 ];
 
 function formatCreatedTime(value: string | null): string {
@@ -114,13 +115,13 @@ export function DocumentUploadCard({
   return (
     <Card className="border-slate-200 shadow-sm">
       <CardHeader className="pb-3">
-        <CardTitle className="text-base">Documents / Upload</CardTitle>
+        <CardTitle className="text-base">{translations.upload.title}</CardTitle>
       </CardHeader>
       <CardContent className="space-y-4">
         <input
           ref={fileInputRef}
           type="file"
-          accept=".pdf,application/pdf"
+          accept=".pdf,.docx,.doc,application/pdf,application/vnd.openxmlformats-officedocument.wordprocessingml.document"
           className="hidden"
           onChange={(event) => {
             void handleFiles(event.target.files);
@@ -145,17 +146,17 @@ export function DocumentUploadCard({
         >
           <div className="flex flex-col items-center gap-2 text-center">
             <UploadCloud className="h-6 w-6 text-blue-600" />
-            <p className="text-sm font-medium text-slate-700">Drag and drop a PDF document here</p>
-            <p className="text-xs text-slate-500">or click browse files</p>
+            <p className="text-sm font-medium text-slate-700">Kéo thả tài liệu PDF hoặc DOCX vào đây</p>
+            <p className="text-xs text-slate-500">hoặc nhấn để chọn tệp</p>
             <Button
               type="button"
               variant="outline"
               size="sm"
-              className="mt-1"
+              className="mt-1 bg-accent hover:bg-accent/90"
               onClick={() => fileInputRef.current?.click()}
               disabled={isUploading}
             >
-              Browse files
+              {translations.upload.button}
             </Button>
           </div>
         </div>
@@ -163,12 +164,12 @@ export function DocumentUploadCard({
         {typeof activeProgress === "number" && (isUploading || activeDocument?.status !== "ready") ? (
           <div className="space-y-2 rounded-lg border border-slate-200 bg-white px-3 py-2">
             <div className="flex items-center justify-between text-xs text-slate-500">
-              <span>Upload progress</span>
+              <span>Tiến trình tải lên</span>
               <span>{activeProgress}%</span>
             </div>
             <div className="h-2 rounded-full bg-slate-200">
               <div
-                className="h-2 rounded-full bg-gradient-to-r from-blue-600 to-violet-600 transition-all"
+                className="h-2 rounded-full bg-primary transition-all"
                 style={{ width: `${Math.max(0, Math.min(100, activeProgress))}%` }}
               />
             </div>
@@ -189,7 +190,7 @@ export function DocumentUploadCard({
         ) : null}
 
         <div className="space-y-2">
-          <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">Processing Stages</p>
+          <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">Các giai đoạn xử lý</p>
           <ul className="space-y-1.5 rounded-lg border border-slate-200 bg-white px-3 py-3">
             {STAGES.map((stage) => {
               const state = stageState(activeDocument, stage.id);
@@ -200,7 +201,7 @@ export function DocumentUploadCard({
                     <span className="text-sm text-slate-700">{stage.label}</span>
                   </div>
                   <span className="text-xs uppercase tracking-wide text-slate-400">
-                    {state === "done" ? "done" : state === "in_progress" ? "running" : "pending"}
+                    {state === "done" ? "hoàn tất" : state === "in_progress" ? "đang chạy" : "chờ"}
                   </span>
                 </li>
               );
@@ -209,10 +210,10 @@ export function DocumentUploadCard({
         </div>
 
         <div className="space-y-2">
-          <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">Processed Documents</p>
+          <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">Tài liệu đã xử lý</p>
           {documents.length === 0 ? (
             <div className="rounded-lg border border-slate-200 bg-white px-3 py-3 text-sm text-slate-500">
-              No documents yet. Upload a PDF to start indexing.
+              {translations.upload.noDocuments}. {translations.upload.uploadFirst}.
             </div>
           ) : (
             <ul className="max-h-44 space-y-2 overflow-y-auto pr-1">
@@ -224,11 +225,11 @@ export function DocumentUploadCard({
                       <p className="line-clamp-1 text-sm font-medium text-slate-700">{document.filename}</p>
                     </div>
                     <Badge variant="outline" className={`capitalize ${statusBadgeClass(document.status)}`}>
-                      {document.status}
+                      {document.status === "ready" ? "sẵn sàng" : document.status === "error" ? "lỗi" : document.status === "uploading" ? "đang tải" : "đang xử lý"}
                     </Badge>
                   </div>
                   <div className="mt-1 text-xs text-slate-500">
-                    chunk count: {document.chunkCount ?? "n/a"} • created: {formatCreatedTime(document.createdAt)}
+                    số đoạn: {document.chunkCount ?? "n/a"} • tạo lúc: {formatCreatedTime(document.createdAt)}
                   </div>
                 </li>
               ))}
