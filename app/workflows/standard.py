@@ -4,57 +4,21 @@ from __future__ import annotations
 
 import time
 from dataclasses import dataclass
+from pathlib import Path
 
+from app.core.config import get_settings
 from app.generation import BaselineGenerator, StubLLMClient
-from app.indexing import HashEmbeddingProvider, IndexBuilder
-from app.ingestion.chunker import Chunker
-from app.ingestion.cleaner import TextCleaner
+from app.indexing.bm25_index import BM25Index
+from app.indexing.vector_index import VectorIndex
+from app.indexing import HashEmbeddingProvider, IndexBuilder, LocalIndexStore
+from app.ingestion import Chunker, DirectoryIngestor, TextCleaner
 from app.retrieval import ContextSelector, DenseRetriever, HybridRetriever, KeywordOverlapReranker, SparseRetriever
 from app.schemas.api import StandardQueryResponse
 from app.schemas.common import Mode
 from app.schemas.generation import GeneratedAnswer
-from app.schemas.ingestion import LoadedDocument
+from app.schemas.ingestion import DocumentChunk
 from app.schemas.retrieval import RetrievalResult
 from app.workflows.shared import normalize_query
-
-_DEFAULT_STANDARD_CORPUS: list[LoadedDocument] = [
-    LoadedDocument(
-        doc_id="std_doc_001",
-        source="memory://standard_overview",
-        title="Standard Workflow Overview",
-        section="Pipeline",
-        page=None,
-        content=(
-            "Standard mode follows a baseline RAG pipeline: retrieve, rerank, "
-            "select context, generate grounded answer, and attach citations."
-        ),
-        metadata={"seed": True},
-    ),
-    LoadedDocument(
-        doc_id="std_doc_002",
-        source="memory://hybrid_retrieval",
-        title="Hybrid Retrieval",
-        section="Retrieval",
-        page=None,
-        content=(
-            "Hybrid retrieval combines dense semantic matching and sparse BM25 matching "
-            "to improve recall across query types."
-        ),
-        metadata={"seed": True},
-    ),
-    LoadedDocument(
-        doc_id="std_doc_003",
-        source="memory://grounded_generation",
-        title="Grounded Generation",
-        section="Generation",
-        page=None,
-        content=(
-            "Grounded generation should rely on selected context and return citations "
-            "for each supporting chunk."
-        ),
-        metadata={"seed": True},
-    ),
-]
 
 
 @dataclass
@@ -78,17 +42,29 @@ class StandardWorkflow:
         rerank_top_k: int = 5,
         context_top_k: int = 4,
         context_max_chars: int = 4000,
+        corpus_dir: str | Path | None = None,
+        index_dir: str | Path | None = None,
+        chunk_size: int = 320,
+        chunk_overlap: int = 40,
+        persist_indexes: bool = False,
     ) -> None:
+        settings = get_settings()
         self.hybrid_top_k = hybrid_top_k
         self.rerank_top_k = rerank_top_k
         self.context_top_k = context_top_k
+        self.chunk_size = chunk_size
+        self.chunk_overlap = chunk_overlap
+        self.corpus_dir = Path(corpus_dir or settings.corpus_dir)
+        self.index_dir = Path(index_dir or settings.index_dir)
+        self.persist_indexes = persist_indexes
 
         embedding_provider = HashEmbeddingProvider(dimension=64)
-        cleaner = TextCleaner()
-        chunker = Chunker(chunk_size=320, chunk_overlap=40)
-        chunks = chunker.chunk_documents(cleaner.clean_documents(_DEFAULT_STANDARD_CORPUS))
+        chunks = self._build_chunks_from_corpus()
 
         built = IndexBuilder(embedding_provider=embedding_provider).build(chunks)
+        if self.persist_indexes:
+            self._save_indexes(built.vector_index, built.bm25_index)
+
         dense = DenseRetriever(built.vector_index, embedding_provider)
         sparse = SparseRetriever(built.bm25_index)
 
@@ -96,6 +72,26 @@ class StandardWorkflow:
         self.reranker = KeywordOverlapReranker()
         self.context_selector = ContextSelector(max_chunks=context_top_k, max_chars=context_max_chars)
         self.generator = BaselineGenerator(llm_client=StubLLMClient())
+
+    def _build_chunks_from_corpus(self) -> list[DocumentChunk]:
+        ingestor = DirectoryIngestor()
+        loaded = ingestor.ingest_directory(
+            self.corpus_dir,
+            metadata={
+                "corpus_dir": str(self.corpus_dir),
+            },
+        )
+        cleaner = TextCleaner()
+        chunker = Chunker(chunk_size=self.chunk_size, chunk_overlap=self.chunk_overlap)
+        chunks = chunker.chunk_documents(cleaner.clean_documents(loaded))
+        if not chunks:
+            raise ValueError(f"No chunks were produced from corpus directory: {self.corpus_dir}")
+        return chunks
+
+    def _save_indexes(self, vector_index: VectorIndex, bm25_index: BM25Index) -> None:
+        store = LocalIndexStore(self.index_dir)
+        store.save_vector_index(vector_index)
+        store.save_bm25_index(bm25_index)
 
     def run_pipeline(self, query: str, mode: Mode = Mode.STANDARD) -> StandardPipelineResult:
         """Run one retrieval-generation pass and return intermediate artifacts."""

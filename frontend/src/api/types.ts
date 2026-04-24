@@ -42,3 +42,19 @@ export type ApiQueryRequest = {
   mode: Mode;
   chat_history: Array<Record<string, string>>;
 };
+
+export type ApiDocument = {
+  id: string;
+  filename: string;
+  status: string;
+  stage?: string | null;
+  chunk_count?: number | null;
+  created_at?: string | null;
+  message?: string | null;
+};
+
+export type ApiUploadDocumentResponse = ApiDocument;
+
+export type ApiDocumentStatusResponse = ApiDocument;
+
+export type ApiListDocumentsResponse = ApiDocument[] | { documents: ApiDocument[] };

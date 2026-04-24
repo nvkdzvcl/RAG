@@ -19,6 +19,16 @@ def test_standard_workflow_run_path() -> None:
     assert response.status in {"answered", "partial", "insufficient_evidence"}
 
 
+def test_standard_workflow_uses_ingested_files_instead_of_memory_corpus() -> None:
+    workflow = StandardWorkflow()
+
+    response = workflow.run(query="What modes are supported?", chat_history=None)
+
+    assert response.trace[0]["step"] == "retrieve"
+    assert response.trace[0]["count"] > 0
+    assert all(not citation.source.startswith("memory://") for citation in response.citations)
+
+
 def test_standard_runner_route_and_contract() -> None:
     runner = WorkflowRunner()
 

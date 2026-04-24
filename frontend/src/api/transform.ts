@@ -73,6 +73,7 @@ function traceToUi(item: unknown): TraceEntry {
     step,
     detail,
     status: inferTraceStatus(item),
+    meta: item,
   };
 }
 

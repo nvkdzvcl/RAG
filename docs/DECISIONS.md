@@ -1,9 +1,3 @@
-
----
-
-## `docs/DECISIONS.md`
-
-```md
 # DECISIONS.md
 
 This document records important architectural and technical decisions.
@@ -19,19 +13,20 @@ The goal is to preserve the rationale behind the project so future contributors 
 
 ---
 
-## DECISION 001 — Build Two Modes in One System
+## DECISION 001 — Build Three Modes in One System
 
 ### Context
-The project needs both a baseline RAG and a more advanced Self-RAG-style workflow.
+The project needs a baseline RAG flow, an advanced Self-RAG flow, and a direct comparison flow.
 
 ### Decision
-Build one shared system with two workflows:
+Build one shared system with three workflows:
 - standard mode
 - advanced mode
+- compare mode
 
 ### Alternatives
 - build only advanced mode
-- build two separate codebases
+- build separate codebases by mode
 - build standard mode first and redesign later
 
 ### Reasoning
@@ -292,7 +287,7 @@ Cons:
 ## DECISION 011 — Use Shared State Schema Across Modes
 
 ### Context
-Both workflows need similar internal state, especially for logging and frontend trace display.
+All workflows need consistent internal state handling, especially for logging and frontend trace display.
 
 ### Decision
 Use one shared workflow state schema, with some fields unused in standard mode.
@@ -410,6 +405,8 @@ Provide:
 - requirements-dev.txt
 - .env.example
 
+Do not keep a separate `requirement.txt` shim because it creates ambiguity for contributors.
+
 ### Alternatives
 - pyproject only
 - undocumented manual install
@@ -460,7 +457,7 @@ Add a compare mode that runs standard and advanced workflows side by side for th
 
 ### Alternatives
 - compare manually outside the system
-- keep only two independent modes
+- keep only standard and advanced modes
 
 ### Reasoning
 This improves demo quality, evaluation visibility, and academic value.

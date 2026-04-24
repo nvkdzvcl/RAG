@@ -6,19 +6,19 @@
 
 @layer base {
   :root {
-    --background: 38 47% 96%;
-    --foreground: 220 35% 14%;
+    --background: 220 40% 98%;
+    --foreground: 224 33% 14%;
     --card: 0 0% 100%;
-    --card-foreground: 220 35% 14%;
-    --muted: 210 30% 92%;
-    --muted-foreground: 217 16% 38%;
-    --primary: 200 85% 28%;
+    --card-foreground: 224 33% 14%;
+    --muted: 220 24% 93%;
+    --muted-foreground: 220 14% 42%;
+    --primary: 226 76% 56%;
     --primary-foreground: 210 40% 98%;
-    --accent: 23 86% 60%;
-    --accent-foreground: 220 35% 14%;
-    --border: 212 25% 84%;
-    --input: 212 25% 84%;
-    --ring: 200 85% 28%;
+    --accent: 260 74% 60%;
+    --accent-foreground: 210 40% 98%;
+    --border: 220 24% 87%;
+    --input: 220 24% 87%;
+    --ring: 226 76% 56%;
     --radius: 0.75rem;
   }
 
@@ -29,7 +29,7 @@
   body {
     @apply bg-background text-foreground antialiased;
     font-family: "Manrope", "Segoe UI", sans-serif;
-    background-image: radial-gradient(circle at top left, rgba(255, 171, 113, 0.22), transparent 35%),
-      radial-gradient(circle at bottom right, rgba(84, 181, 215, 0.18), transparent 40%);
+    background-image: radial-gradient(circle at top right, rgba(99, 102, 241, 0.1), transparent 35%),
+      radial-gradient(circle at bottom left, rgba(59, 130, 246, 0.12), transparent 40%);
   }
 }

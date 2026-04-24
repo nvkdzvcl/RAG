@@ -23,6 +23,7 @@ class Settings(BaseSettings):
     openai_api_key: str | None = Field(default=None, alias="OPENAI_API_KEY")
 
     data_dir: str = Field(default="data", alias="DATA_DIR")
+    corpus_dir: str = Field(default="docs", alias="CORPUS_DIR")
     index_dir: str = Field(default="data/indexes", alias="INDEX_DIR")
     prompt_dir: str = Field(default="prompts", alias="PROMPT_DIR")
 

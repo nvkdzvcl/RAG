@@ -46,6 +46,10 @@ uvicorn app.main:app --reload
 
 Backend default URL: `http://127.0.0.1:8000`
 
+Default document corpus directory: `docs/` (configurable via `CORPUS_DIR`).
+Indexes are built from ingested corpus documents at runtime.
+Optional local persistence is available via `StandardWorkflow(..., persist_indexes=True)` and uses `INDEX_DIR` (default `data/indexes/`).
+
 ## API Endpoints
 
 - `GET /api/v1/health`
@@ -109,4 +113,4 @@ pytest
 ## Notes
 
 - `requirements.txt` and `requirements-dev.txt` are the canonical dependency files.
-- `requirement.txt` is kept as a compatibility shim for older local scripts.
+- `requirement.txt` is intentionally not used to avoid installation ambiguity.

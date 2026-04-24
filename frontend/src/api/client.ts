@@ -1,6 +1,30 @@
-import type { ApiQueryRequest, ApiQueryResponse } from "@/api/types";
+import type {
+  ApiDocument,
+  ApiDocumentStatusResponse,
+  ApiQueryRequest,
+  ApiQueryResponse,
+  ApiUploadDocumentResponse,
+} from "@/api/types";
 
 const API_BASE_URL = (import.meta.env.VITE_API_BASE_URL || "/api/v1").replace(/\/$/, "");
+const DOCUMENTS_BASE_URL = `${API_BASE_URL}/documents`;
+
+export class ApiRequestError extends Error {
+  readonly status: number;
+
+  constructor(status: number, message: string) {
+    super(`API error (${status}): ${message}`);
+    this.name = "ApiRequestError";
+    this.status = status;
+  }
+}
+
+export class ApiFeatureUnavailableError extends ApiRequestError {
+  constructor(status: number, message: string) {
+    super(status, message);
+    this.name = "ApiFeatureUnavailableError";
+  }
+}
 
 async function parseError(response: Response): Promise<string> {
   try {
@@ -14,6 +38,88 @@ async function parseError(response: Response): Promise<string> {
   return response.statusText || "Request failed";
 }
 
+function isFeatureUnavailableStatus(status: number): boolean {
+  return status === 404 || status === 405 || status === 501;
+}
+
+async function parseJsonResponse(response: Response): Promise<unknown> {
+  if (response.status === 204) {
+    return null;
+  }
+  return (await response.json()) as unknown;
+}
+
+async function handleApiFailure(response: Response): Promise<never> {
+  const message = await parseError(response);
+  if (isFeatureUnavailableStatus(response.status)) {
+    throw new ApiFeatureUnavailableError(response.status, message);
+  }
+  throw new ApiRequestError(response.status, message);
+}
+
+function isObject(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+function optionalString(value: unknown): string | null | undefined {
+  if (value === null) {
+    return null;
+  }
+  return typeof value === "string" ? value : undefined;
+}
+
+function optionalNumber(value: unknown): number | null | undefined {
+  if (value === null) {
+    return null;
+  }
+  if (typeof value === "number" && Number.isFinite(value)) {
+    return value;
+  }
+  if (typeof value === "string") {
+    const parsed = Number(value);
+    if (Number.isFinite(parsed)) {
+      return parsed;
+    }
+  }
+  return undefined;
+}
+
+function normalizeDocument(payload: unknown): ApiDocument {
+  if (!isObject(payload)) {
+    throw new Error("Invalid document payload");
+  }
+
+  const idSource = payload.id ?? payload.document_id;
+  const filenameSource = payload.filename ?? payload.name;
+
+  return {
+    id: typeof idSource === "string" && idSource.length > 0 ? idSource : `doc-${Date.now()}`,
+    filename:
+      typeof filenameSource === "string" && filenameSource.length > 0 ? filenameSource : "uploaded-document.pdf",
+    status: typeof payload.status === "string" ? payload.status : "processing",
+    stage: optionalString(payload.stage ?? payload.processing_stage),
+    chunk_count: optionalNumber(payload.chunk_count ?? payload.chunks),
+    created_at: optionalString(payload.created_at ?? payload.created_time),
+    message: optionalString(payload.message),
+  };
+}
+
+function normalizeDocumentList(payload: unknown): ApiDocument[] {
+  if (payload === null) {
+    return [];
+  }
+
+  if (Array.isArray(payload)) {
+    return payload.map(normalizeDocument);
+  }
+
+  if (isObject(payload) && Array.isArray(payload.documents)) {
+    return payload.documents.map(normalizeDocument);
+  }
+
+  throw new Error("Invalid documents list payload");
+}
+
 export async function postQuery(request: ApiQueryRequest): Promise<ApiQueryResponse> {
   const response = await fetch(`${API_BASE_URL}/query`, {
     method: "POST",
@@ -24,9 +130,91 @@ export async function postQuery(request: ApiQueryRequest): Promise<ApiQueryRespo
   });
 
   if (!response.ok) {
-    const message = await parseError(response);
-    throw new Error(`API error (${response.status}): ${message}`);
+    await handleApiFailure(response);
   }
 
-  return (await response.json()) as ApiQueryResponse;
+  return (await parseJsonResponse(response)) as ApiQueryResponse;
+}
+
+export async function uploadDocument(
+  file: File,
+  onProgress?: (progressPercent: number) => void,
+): Promise<ApiUploadDocumentResponse> {
+  // TODO(backend): implement POST /api/v1/documents to accept multipart PDF uploads.
+  return new Promise<ApiUploadDocumentResponse>((resolve, reject) => {
+    const request = new XMLHttpRequest();
+    const formData = new FormData();
+    formData.append("file", file);
+
+    request.open("POST", DOCUMENTS_BASE_URL, true);
+    request.responseType = "json";
+
+    request.upload.onprogress = (event) => {
+      if (!event.lengthComputable || !onProgress) {
+        return;
+      }
+      const percent = Math.max(0, Math.min(100, Math.round((event.loaded / event.total) * 100)));
+      onProgress(percent);
+    };
+
+    request.onerror = () => {
+      reject(new ApiRequestError(0, "Network error while uploading document"));
+    };
+
+    request.onload = () => {
+      const { status } = request;
+      if (status >= 200 && status < 300) {
+        try {
+          const payload = request.response as unknown;
+          const normalized = normalizeDocument(payload);
+          resolve(normalized);
+        } catch {
+          reject(new ApiRequestError(status, "Invalid upload response payload"));
+        }
+        return;
+      }
+
+      const payload = request.response;
+      let message = request.statusText || "Request failed";
+      if (isObject(payload) && typeof payload.detail === "string") {
+        message = payload.detail;
+      }
+
+      if (isFeatureUnavailableStatus(status)) {
+        reject(new ApiFeatureUnavailableError(status, message));
+        return;
+      }
+      reject(new ApiRequestError(status, message));
+    };
+
+    request.send(formData);
+  });
+}
+
+export async function getDocumentStatus(documentId: string): Promise<ApiDocumentStatusResponse> {
+  // TODO(backend): implement GET /api/v1/documents/{document_id} to return processing status.
+  const response = await fetch(`${DOCUMENTS_BASE_URL}/${encodeURIComponent(documentId)}`, {
+    method: "GET",
+  });
+
+  if (!response.ok) {
+    await handleApiFailure(response);
+  }
+
+  const payload = await parseJsonResponse(response);
+  return normalizeDocument(payload);
+}
+
+export async function listDocuments(): Promise<ApiDocument[]> {
+  // TODO(backend): implement GET /api/v1/documents to list uploaded document metadata.
+  const response = await fetch(DOCUMENTS_BASE_URL, {
+    method: "GET",
+  });
+
+  if (!response.ok) {
+    await handleApiFailure(response);
+  }
+
+  const payload = await parseJsonResponse(response);
+  return normalizeDocumentList(payload);
 }

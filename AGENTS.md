@@ -2,7 +2,7 @@
 
 ## Project Overview
 
-Build an open-source **Self-RAG Level 2** application with **two modes**:
+Build an open-source **Self-RAG Level 2** application with **three modes**:
 
 1. **standard mode** = normal RAG
 2. **advanced mode** = practical Self-RAG
@@ -20,9 +20,10 @@ The system must:
 - ingest documents
 - build searchable indexes
 - answer questions with citations
-- support two query modes:
+- support three query modes:
   - standard mode
   - advanced mode
+  - compare mode
 - expose a backend API
 - provide a reasonably polished frontend
 - support local development and open-source collaboration
@@ -30,7 +31,7 @@ The system must:
 
 ---
 
-## Two Modes
+## Three Modes
 
 ### Standard Mode
 Pipeline:
@@ -55,8 +56,18 @@ Characteristics:
 - can retry retrieval
 - can abstain if evidence is insufficient
 
+### Compare Mode
+Pipeline:
+
+query -> run standard + advanced -> aggregate outputs -> return
+
+Characteristics:
+- runs both pipelines for the same query
+- enables direct side-by-side comparison
+- returns both branches and a comparison summary
+
 ### Rule
-Both modes must share the same core infrastructure:
+All modes must share the same core infrastructure:
 - ingestion
 - indexing
 - retrieval
@@ -486,7 +497,7 @@ The MVP is done only if:
 - advanced mode can abstain
 - tests pass
 - docs are understandable
-- frontend can query both modes
+- frontend can query all three modes
 
 ---
 

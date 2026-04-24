@@ -27,6 +27,7 @@ export type TraceEntry = {
   step: string;
   detail: string;
   status: TraceStatus;
+  meta?: Record<string, unknown>;
 };
 
 export type ModeResult = {
