@@ -161,6 +161,27 @@ def test_query_uses_uploaded_document_chunks_when_available(
     assert body["trace"][0]["index_source"] == "uploaded"
 
 
+def test_query_uses_seeded_corpus_when_no_uploaded_documents_ready(
+    isolated_client: tuple[TestClient, Path],
+) -> None:
+    client, _ = isolated_client
+
+    query_response = client.post(
+        "/api/v1/query",
+        json={
+            "query": "What is in the seeded corpus?",
+            "mode": "standard",
+            "chat_history": [],
+        },
+    )
+    assert query_response.status_code == 200
+
+    body = query_response.json()
+    assert body["trace"]
+    assert body["trace"][0]["step"] == "retrieve"
+    assert body["trace"][0]["index_source"] == "seeded"
+
+
 def test_standard_mode_retrieves_vietnamese_uploaded_chunks(
     isolated_client: tuple[TestClient, Path],
 ) -> None:

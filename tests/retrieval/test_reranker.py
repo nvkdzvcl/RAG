@@ -44,6 +44,19 @@ class _BrokenPredictCrossEncoderModel:
         raise RuntimeError("predict failed")
 
 
+class _StubCrossEncoderReranker:
+    def __init__(self, *, model_name: str, device: str, batch_size: int) -> None:
+        self.model_name = model_name
+        self.device = device
+        self.batch_size = batch_size
+        self.name = "stub-cross-encoder"
+
+    def rerank(self, query: str, docs: list[RetrievalResult], top_k: int | None = None) -> list[RetrievalResult]:
+        _ = query
+        _ = top_k
+        return list(docs)
+
+
 def _sample_docs() -> list[RetrievalResult]:
     return [
         RetrievalResult(
@@ -134,6 +147,25 @@ def test_score_only_reranker_fallback_factory(monkeypatch) -> None:
     )
 
     assert isinstance(reranker, ScoreOnlyReranker)
+
+
+def test_create_reranker_selects_cross_encoder_when_configured(monkeypatch) -> None:
+    monkeypatch.setattr(
+        "app.retrieval.reranker.CrossEncoderReranker",
+        _StubCrossEncoderReranker,
+    )
+
+    reranker = create_reranker(
+        provider_name="cross_encoder",
+        model="BAAI/bge-reranker-v2-m3",
+        device="cpu",
+        batch_size=6,
+    )
+
+    assert isinstance(reranker, _StubCrossEncoderReranker)
+    assert reranker.model_name == "BAAI/bge-reranker-v2-m3"
+    assert reranker.device == "cpu"
+    assert reranker.batch_size == 6
 
 
 def test_cross_encoder_runtime_failure_falls_back_to_score_only() -> None:

@@ -163,7 +163,10 @@ By default, frontend requests go to `VITE_API_BASE_URL=/api/v1` and Vite proxies
 
 ## Evaluation
 
-Golden dataset: `data/eval/golden_dataset.jsonl`
+Evaluation datasets:
+
+- primary dataset: `data/eval/golden_dataset.jsonl`
+- compatibility dataset: `data/eval/golden.jsonl`
 
 Run evaluation (standard + advanced):
 
@@ -181,6 +184,12 @@ Fast offline smoke run (deterministic stub predictor):
 
 ```bash
 python -m app.evaluation.runner --dataset data/eval/golden.jsonl --predictor stub
+```
+
+Workflow-backed run with the same compatibility dataset:
+
+```bash
+python -m app.evaluation.runner --dataset data/eval/golden.jsonl --predictor workflow
 ```
 
 Generated artifacts:

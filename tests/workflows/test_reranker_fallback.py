@@ -5,6 +5,7 @@ from __future__ import annotations
 from app.schemas.common import Mode
 from app.schemas.retrieval import RetrievalResult
 from app.retrieval import ScoreOnlyReranker
+from app.workflows.advanced import AdvancedWorkflow
 from app.workflows.runner import WorkflowRunner
 from app.workflows.standard import StandardWorkflow
 
@@ -80,3 +81,46 @@ def test_standard_workflow_uses_create_reranker_from_settings(monkeypatch) -> No
         "device": "cpu",
         "batch_size": 3,
     }
+
+
+def test_advanced_workflow_reuses_standard_workflow_configured_reranker() -> None:
+    class _SpyReranker(ScoreOnlyReranker):
+        def __init__(self) -> None:
+            super().__init__()
+            self.called = 0
+
+        def rerank(self, query: str, docs: list[RetrievalResult], top_k: int | None = None) -> list[RetrievalResult]:
+            self.called += 1
+            return super().rerank(query, docs, top_k=top_k)
+
+    class _FakeRetriever:
+        def retrieve(self, query: str, top_k: int = 5) -> list[RetrievalResult]:
+            _ = query
+            _ = top_k
+            return [
+                RetrievalResult(
+                    chunk_id="c1",
+                    doc_id="d1",
+                    source="seeded://doc",
+                    content="Advanced mode can retry retrieval before finalizing answers.",
+                    score=0.8,
+                    score_type="hybrid",
+                    rank=1,
+                )
+            ]
+
+    class _FakeIndexManager:
+        def get_retriever(self) -> _FakeRetriever:
+            return _FakeRetriever()
+
+        def get_active_source(self) -> str:
+            return "seeded"
+
+    spy_reranker = _SpyReranker()
+    standard = StandardWorkflow(index_manager=_FakeIndexManager(), reranker=spy_reranker)
+    advanced = AdvancedWorkflow(standard_workflow=standard, max_loops=1)
+
+    response = advanced.run("How does advanced mode improve reliability?")
+
+    assert response.mode == "advanced"
+    assert spy_reranker.called >= 1

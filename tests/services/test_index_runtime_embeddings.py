@@ -107,3 +107,49 @@ def test_runtime_index_manager_uses_configured_provider_factory(monkeypatch, tmp
         "normalize": False,
         "fallback_hash_dimension": 79,
     }
+
+
+def test_runtime_index_manager_uses_sentence_transformers_when_configured(monkeypatch, tmp_path: Path) -> None:
+    class _Settings:
+        embedding_provider = "sentence_transformers"
+        embedding_model = "intfloat/multilingual-e5-base"
+        embedding_device = "cpu"
+        embedding_batch_size = 16
+        embedding_normalize = True
+        embedding_hash_dimension = 64
+
+    captured: dict[str, object] = {}
+    configured_provider = _CountingEmbeddingProvider(dimension=12)
+
+    def _fake_factory(
+        *,
+        provider_name: str,
+        model: str,
+        device: str,
+        batch_size: int,
+        normalize: bool,
+        fallback_hash_dimension: int,
+    ) -> BaseEmbeddingProvider:
+        captured.update(
+            {
+                "provider_name": provider_name,
+                "model": model,
+                "device": device,
+                "batch_size": batch_size,
+                "normalize": normalize,
+                "fallback_hash_dimension": fallback_hash_dimension,
+            }
+        )
+        return configured_provider
+
+    monkeypatch.setattr("app.services.index_runtime.get_settings", lambda: _Settings())
+    monkeypatch.setattr("app.services.index_runtime.create_embedding_provider", _fake_factory)
+
+    manager = RuntimeIndexManager(
+        corpus_dir=tmp_path / "corpus",
+        index_dir=tmp_path / "indexes",
+    )
+
+    assert manager.embedding_provider is configured_provider
+    assert captured["provider_name"] == "sentence_transformers"
+    assert captured["model"] == "intfloat/multilingual-e5-base"

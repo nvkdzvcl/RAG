@@ -1,7 +1,7 @@
 # Evaluation Report
 
-- Generated at: `2026-04-24T16:05:11.973527+00:00`
-- Dataset: `data/eval/golden.jsonl`
+- Generated at: `2026-04-24T16:22:46.486857+00:00`
+- Dataset: `data/eval/golden_dataset.jsonl`
 - Modes: `standard, advanced`
 - Dataset size: `8`
 - Mode outputs: `16`
@@ -9,9 +9,9 @@
 ## Standard vs Advanced
 
 - Paired examples: `8`
-- Avg latency delta (advanced - standard, ms): `12.0`
-- Avg confidence delta (advanced - standard): `0.16999999999999993`
-- Advanced retry rate: `0.000`
+- Avg latency delta (advanced - standard, ms): `4.25`
+- Avg confidence delta (advanced - standard): `-0.14500000000000002`
+- Advanced retry rate: `1.000`
 
 ## Rates
 
@@ -24,18 +24,18 @@
 
 | mode | category | count | avg_latency_ms | avg_confidence | citation_rate | abstain_rate | retry_rate |
 | --- | --- | ---: | ---: | ---: | ---: | ---: | ---: |
-| standard | ambiguous | 1 | 12.0 | 0.55 | 1.000 | 0.000 | 0.000 |
-| standard | conflicting_sources | 1 | 12.0 | 0.55 | 1.000 | 0.000 | 0.000 |
-| standard | insufficient_context | 1 | 12.0 | 0.55 | 1.000 | 0.000 | 0.000 |
-| standard | multi_hop | 2 | 12.0 | 0.55 | 1.000 | 0.000 | 0.000 |
-| standard | simple | 1 | 12.0 | 0.55 | 1.000 | 0.000 | 0.000 |
-| standard | vietnamese | 2 | 12.0 | 0.55 | 1.000 | 0.000 | 0.000 |
-| advanced | ambiguous | 1 | 24.0 | 0.72 | 1.000 | 0.000 | 0.000 |
-| advanced | conflicting_sources | 1 | 24.0 | 0.72 | 1.000 | 0.000 | 0.000 |
-| advanced | insufficient_context | 1 | 24.0 | 0.72 | 1.000 | 0.000 | 0.000 |
-| advanced | multi_hop | 2 | 24.0 | 0.72 | 1.000 | 0.000 | 0.000 |
-| advanced | simple | 1 | 24.0 | 0.72 | 1.000 | 0.000 | 0.000 |
-| advanced | vietnamese | 2 | 24.0 | 0.72 | 1.000 | 0.000 | 0.000 |
+| standard | ambiguous | 1 | 3.0 | 0.5 | 1.000 | 0.000 | 0.000 |
+| standard | conflicting_sources | 1 | 3.0 | 0.5 | 1.000 | 0.000 | 0.000 |
+| standard | insufficient_context | 1 | 3.0 | 0.5 | 1.000 | 0.000 | 0.000 |
+| standard | multi_hop | 2 | 3.0 | 0.5 | 1.000 | 0.000 | 0.000 |
+| standard | simple | 1 | 3.0 | 0.5 | 1.000 | 0.000 | 0.000 |
+| standard | vietnamese | 2 | 3.0 | 0.5 | 1.000 | 0.000 | 0.000 |
+| advanced | ambiguous | 1 | 7.0 | 0.2 | 1.000 | 0.000 | 1.000 |
+| advanced | conflicting_sources | 1 | 9.0 | 0.2 | 1.000 | 0.000 | 1.000 |
+| advanced | insufficient_context | 1 | 7.0 | 0.2 | 1.000 | 0.000 | 1.000 |
+| advanced | multi_hop | 2 | 7.0 | 0.51 | 1.000 | 0.000 | 1.000 |
+| advanced | simple | 1 | 7.0 | 0.2 | 1.000 | 0.000 | 1.000 |
+| advanced | vietnamese | 2 | 7.0 | 0.51 | 1.000 | 0.000 | 1.000 |
 
 ## Notes
 
