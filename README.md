@@ -47,13 +47,20 @@ uvicorn app.main:app --reload
 Backend default URL: `http://127.0.0.1:8000`
 
 Default document corpus directory: `docs/` (configurable via `CORPUS_DIR`).
-Indexes are built from ingested corpus documents at runtime.
-Optional local persistence is available via `StandardWorkflow(..., persist_indexes=True)` and uses `INDEX_DIR` (default `data/indexes/`).
+Uploaded documents are stored under `data/raw/` (or `<DATA_DIR>/raw`) and processed into retrieval indexes.
+Runtime retrieval behavior:
+- if at least one uploaded document is in `ready` state, query workflows use uploaded indexes
+- otherwise, workflows fall back to the seeded corpus (`CORPUS_DIR`)
+
+Vector and BM25 indexes are persisted in `INDEX_DIR` (default `data/indexes/`).
 
 ## API Endpoints
 
 - `GET /api/v1/health`
 - `POST /api/v1/query`
+- `POST /api/v1/documents/upload`
+- `GET /api/v1/documents`
+- `GET /api/v1/documents/{document_id}/status`
 
 Example query request:
 
@@ -68,6 +75,15 @@ curl -X POST http://127.0.0.1:8000/api/v1/query \
 ```
 
 Supported `mode` values: `standard`, `advanced`, `compare`.
+
+Example document upload:
+
+```bash
+curl -X POST http://127.0.0.1:8000/api/v1/documents/upload \
+  -F "file=@./sample.md"
+```
+
+Supported upload types: `pdf`, `txt`, `md`, `markdown`.
 
 ## Frontend: Install and Run
 

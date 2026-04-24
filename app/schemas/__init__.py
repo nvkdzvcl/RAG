@@ -11,6 +11,12 @@ from app.schemas.api import (
     validate_query_response,
 )
 from app.schemas.common import Citation, Mode
+from app.schemas.documents import (
+    DocumentListResponse,
+    DocumentProcessingStatus,
+    DocumentResponse,
+    StoredDocumentRecord,
+)
 from app.schemas.generation import GeneratedAnswer, ParsedAnswer
 from app.schemas.ingestion import DocumentChunk, LoadedDocument
 from app.schemas.retrieval import RetrievalResult
@@ -23,6 +29,9 @@ __all__ = [
     "ComparisonSummary",
     "CritiqueResult",
     "DocumentChunk",
+    "DocumentListResponse",
+    "DocumentProcessingStatus",
+    "DocumentResponse",
     "GeneratedAnswer",
     "LoadedDocument",
     "Mode",
@@ -32,6 +41,7 @@ __all__ = [
     "QueryResponse",
     "RetrievalResult",
     "StandardQueryResponse",
+    "StoredDocumentRecord",
     "WorkflowState",
     "validate_query_response",
 ]

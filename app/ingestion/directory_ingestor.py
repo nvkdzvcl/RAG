@@ -1,4 +1,4 @@
-"""Directory-level ingestion pipeline for text and markdown documents."""
+"""Directory-level ingestion pipeline for text, markdown, and PDF documents."""
 
 from __future__ import annotations
 
@@ -7,6 +7,7 @@ from typing import Any
 
 from app.ingestion.base_loader import BaseLoader
 from app.ingestion.markdown_loader import MarkdownLoader
+from app.ingestion.pdf_loader import PdfLoader
 from app.ingestion.text_loader import TextLoader
 from app.schemas.ingestion import LoadedDocument
 
@@ -15,7 +16,7 @@ class DirectoryIngestor:
     """Ingest supported files from a directory tree into normalized documents."""
 
     def __init__(self, loaders: list[BaseLoader] | None = None) -> None:
-        self.loaders = loaders or [MarkdownLoader(), TextLoader()]
+        self.loaders = loaders or [MarkdownLoader(), TextLoader(), PdfLoader()]
 
     def _resolve_loader(self, path: Path) -> BaseLoader | None:
         for loader in self.loaders:

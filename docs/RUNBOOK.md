@@ -24,9 +24,11 @@
 
 ## Typical Developer Flow
 
-1. update ingestion/retrieval/generation/workflow code
-2. run backend API locally
-3. run frontend and test all 3 modes (`standard`, `advanced`, `compare`)
+1. upload one or more documents with `POST /api/v1/documents/upload`
+2. verify processing state via:
+   - `GET /api/v1/documents`
+   - `GET /api/v1/documents/{document_id}/status`
+3. run queries across all 3 modes (`standard`, `advanced`, `compare`)
 4. run evaluation set:
    `python3 -m app.evaluation.runner --predictor workflow`
 5. run tests:
@@ -52,3 +54,17 @@ If output quality or behavior is unexpected, check in this order:
 6. generator output parsing and insufficient-evidence handling
 7. advanced workflow state transitions (gate/rewrite/critique/retry/refine/abstain)
 8. frontend data mapping/rendering assumptions
+
+## Document Processing Statuses
+
+The backend exposes these status values for uploads:
+
+- `uploaded`
+- `splitting`
+- `embedding`
+- `indexing`
+- `ready`
+- `failed`
+
+When one or more uploaded documents are `ready`, query workflows use uploaded indexes.
+If none are `ready`, workflows fall back to the seeded corpus indexes.

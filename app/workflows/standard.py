@@ -18,6 +18,7 @@ from app.schemas.common import Mode
 from app.schemas.generation import GeneratedAnswer
 from app.schemas.ingestion import DocumentChunk
 from app.schemas.retrieval import RetrievalResult
+from app.services.index_runtime import EmptyRetriever, RuntimeIndexManager
 from app.workflows.shared import normalize_query
 
 
@@ -47,6 +48,7 @@ class StandardWorkflow:
         chunk_size: int = 320,
         chunk_overlap: int = 40,
         persist_indexes: bool = False,
+        index_manager: RuntimeIndexManager | None = None,
     ) -> None:
         settings = get_settings()
         self.hybrid_top_k = hybrid_top_k
@@ -57,18 +59,22 @@ class StandardWorkflow:
         self.corpus_dir = Path(corpus_dir or settings.corpus_dir)
         self.index_dir = Path(index_dir or settings.index_dir)
         self.persist_indexes = persist_indexes
+        self.index_manager = index_manager
 
-        embedding_provider = HashEmbeddingProvider(dimension=64)
-        chunks = self._build_chunks_from_corpus()
+        self._fallback_retriever: HybridRetriever | EmptyRetriever | None = None
 
-        built = IndexBuilder(embedding_provider=embedding_provider).build(chunks)
-        if self.persist_indexes:
-            self._save_indexes(built.vector_index, built.bm25_index)
+        if self.index_manager is None:
+            embedding_provider = HashEmbeddingProvider(dimension=64)
+            chunks = self._build_chunks_from_corpus()
 
-        dense = DenseRetriever(built.vector_index, embedding_provider)
-        sparse = SparseRetriever(built.bm25_index)
+            built = IndexBuilder(embedding_provider=embedding_provider).build(chunks)
+            if self.persist_indexes:
+                self._save_indexes(built.vector_index, built.bm25_index)
 
-        self.retriever = HybridRetriever(dense, sparse)
+            dense = DenseRetriever(built.vector_index, embedding_provider)
+            sparse = SparseRetriever(built.bm25_index)
+            self._fallback_retriever = HybridRetriever(dense, sparse)
+
         self.reranker = KeywordOverlapReranker()
         self.context_selector = ContextSelector(max_chunks=context_top_k, max_chars=context_max_chars)
         self.generator = BaselineGenerator(llm_client=StubLLMClient())
@@ -93,10 +99,22 @@ class StandardWorkflow:
         store.save_vector_index(vector_index)
         store.save_bm25_index(bm25_index)
 
+    def _get_retriever(self) -> HybridRetriever | EmptyRetriever:
+        if self.index_manager is not None:
+            return self.index_manager.get_retriever()
+        if self._fallback_retriever is None:
+            return EmptyRetriever()
+        return self._fallback_retriever
+
+    def _get_index_source(self) -> str:
+        if self.index_manager is None:
+            return "seeded"
+        return self.index_manager.get_active_source()
+
     def run_pipeline(self, query: str, mode: Mode = Mode.STANDARD) -> StandardPipelineResult:
         """Run one retrieval-generation pass and return intermediate artifacts."""
         normalized_query = normalize_query(query)
-        retrieved = self.retriever.retrieve(normalized_query, top_k=self.hybrid_top_k)
+        retrieved = self._get_retriever().retrieve(normalized_query, top_k=self.hybrid_top_k)
         reranked = self.reranker.rerank(normalized_query, retrieved, top_k=self.rerank_top_k)
         selected_context = self.context_selector.select(reranked, top_k=self.context_top_k)
         generated = self.generator.generate_answer(
@@ -128,6 +146,7 @@ class StandardWorkflow:
             {
                 "step": "retrieve",
                 "query": pipeline.normalized_query,
+                "index_source": self._get_index_source(),
                 "count": len(pipeline.retrieved),
                 "chunk_ids": [item.chunk_id for item in pipeline.retrieved],
             },
