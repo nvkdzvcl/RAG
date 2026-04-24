@@ -2,6 +2,7 @@ import { SendHorizonal } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
+import { translations } from "@/lib/translations";
 
 type ChatComposerProps = {
   query: string;
@@ -29,7 +30,7 @@ export function ChatComposer({
       <Textarea
         value={query}
         onChange={(event) => onQueryChange(event.target.value)}
-        placeholder={composerDisabled && disabledReason ? disabledReason : "Ask a question about your documents..."}
+        placeholder={composerDisabled && disabledReason ? disabledReason : translations.chat.placeholder}
         disabled={composerDisabled}
         className="min-h-[110px] resize-y border-slate-200 bg-white"
         onKeyDown={(event) => {
@@ -44,16 +45,16 @@ export function ChatComposer({
       />
       <div className="mt-3 flex items-center justify-between">
         <p className="text-xs text-slate-500">
-          {disabled && disabledReason ? disabledReason : "Press Ctrl/Cmd + Enter to submit"}
+          {disabled && disabledReason ? disabledReason : "Nhấn Ctrl/Cmd + Enter để gửi"}
         </p>
         <Button
           type="button"
           onClick={onSubmit}
           disabled={!canSubmit || composerDisabled}
-          className="gap-2 bg-gradient-to-r from-blue-600 to-violet-600 text-white hover:opacity-95"
+          className="gap-2 bg-primary hover:bg-primary/90 text-white"
         >
           <SendHorizonal className="h-4 w-4" />
-          {isLoading ? "Running..." : "Send Query"}
+          {isLoading ? translations.chat.sending : translations.chat.send}
         </Button>
       </div>
     </div>

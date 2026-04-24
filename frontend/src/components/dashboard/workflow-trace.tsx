@@ -1,6 +1,7 @@
 import type { CompareResult, ModeResult, QueryResult, TraceEntry, TraceStatus } from "@/types/chat";
 import { Badge } from "@/components/ui/badge";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { translations } from "@/lib/translations";
 
 type WorkflowTraceProps = {
   result: QueryResult | null;
@@ -27,7 +28,7 @@ function toTitleCase(step: string): string {
 
 function timelineFromStandard(trace: TraceEntry[]): TimelineItem[] {
   if (trace.length === 0) {
-    return [{ label: "Trace", detail: "No trace entries were returned.", status: "info" }];
+    return [{ label: "Luồng xử lý", detail: "Không có dữ liệu luồng xử lý.", status: "info" }];
   }
 
   return trace.map((entry) => {
@@ -56,7 +57,7 @@ function timelineFromStandard(trace: TraceEntry[]): TimelineItem[] {
 
 function timelineFromAdvanced(trace: TraceEntry[]): TimelineItem[] {
   if (trace.length === 0) {
-    return [{ label: "Trace", detail: "No advanced trace entries were returned.", status: "info" }];
+    return [{ label: "Luồng xử lý", detail: "Không có dữ liệu luồng xử lý nâng cao.", status: "info" }];
   }
 
   const timeline: TimelineItem[] = [];
@@ -69,10 +70,10 @@ function timelineFromAdvanced(trace: TraceEntry[]): TimelineItem[] {
     }
 
     if (meta.step === "retrieval_gate") {
-      const needRetrieval = meta.need_retrieval === false ? "skip retrieval" : "retrieve";
-      const reason = typeof meta.reason === "string" ? meta.reason : "no reason provided";
+      const needRetrieval = meta.need_retrieval === false ? "bỏ qua truy xuất" : "truy xuất";
+      const reason = typeof meta.reason === "string" ? meta.reason : "không có lý do";
       timeline.push({
-        label: "Retrieval Gate",
+        label: "Cổng truy xuất",
         detail: `${needRetrieval} | ${reason}`,
         status: meta.need_retrieval === false ? "warning" : "success",
       });
@@ -86,50 +87,50 @@ function timelineFromAdvanced(trace: TraceEntry[]): TimelineItem[] {
       const reranked = typeof meta.reranked_count === "number" ? meta.reranked_count : 0;
 
       timeline.push({
-        label: `Query Rewrite (Loop ${loop})`,
-        detail: loop === 1 ? `initial query=${query}` : `rewritten query=${query}`,
+        label: `Viết lại câu hỏi (Vòng ${loop})`,
+        detail: loop === 1 ? `câu hỏi ban đầu=${query}` : `câu hỏi đã viết lại=${query}`,
         status: loop === 1 ? "info" : "success",
       });
 
       timeline.push({
-        label: `Retrieval (Loop ${loop})`,
-        detail: `retrieved_count=${retrieved}`,
+        label: `Truy xuất (Vòng ${loop})`,
+        detail: `số lượng=${retrieved}`,
         status: retrieved > 0 ? "success" : "warning",
       });
 
       timeline.push({
-        label: `Rerank (Loop ${loop})`,
-        detail: `reranked_count=${reranked}`,
+        label: `Xếp hạng lại (Vòng ${loop})`,
+        detail: `số lượng=${reranked}`,
         status: reranked > 0 ? "success" : "warning",
       });
 
       const critique = isObject(meta.critique) ? meta.critique : undefined;
       const confidence = critique && typeof critique.confidence === "number" ? critique.confidence : null;
-      const note = critique && typeof critique.note === "string" ? critique.note : "no critique note";
+      const note = critique && typeof critique.note === "string" ? critique.note : "không có ghi chú";
       const retry = critique && critique.should_retry_retrieval === true;
       const refine = critique && critique.should_refine_answer === true;
 
       timeline.push({
-        label: `Critique (Loop ${loop})`,
-        detail: `${note}${confidence === null ? "" : ` | confidence=${confidence.toFixed(2)}`}`,
+        label: `Đánh giá (Vòng ${loop})`,
+        detail: `${note}${confidence === null ? "" : ` | độ tin cậy=${confidence.toFixed(2)}`}`,
         status: retry || refine ? "warning" : "success",
       });
 
-      let finalDecision = "finalize answer";
-      if (retry) finalDecision = "retry retrieval";
-      if (refine) finalDecision = "refine answer";
-      if (critique && critique.enough_evidence === false && !retry && !refine) finalDecision = "abstain path";
+      let finalDecision = "hoàn tất câu trả lời";
+      if (retry) finalDecision = "thử lại truy xuất";
+      if (refine) finalDecision = "cải thiện câu trả lời";
+      if (critique && critique.enough_evidence === false && !retry && !refine) finalDecision = "từ chối trả lời";
 
       timeline.push({
-        label: `Final Decision (Loop ${loop})`,
+        label: `Quyết định cuối (Vòng ${loop})`,
         detail: finalDecision,
-        status: retry || finalDecision === "abstain path" ? "warning" : "success",
+        status: retry || finalDecision === "từ chối trả lời" ? "warning" : "success",
       });
     }
   }
 
   if (timeline.length === 0) {
-    return [{ label: "Trace", detail: "Unable to parse advanced trace payload.", status: "warning" }];
+    return [{ label: "Luồng xử lý", detail: "Không thể phân tích dữ liệu luồng xử lý.", status: "warning" }];
   }
   return timeline;
 }
@@ -139,6 +140,13 @@ function isCompare(result: QueryResult): result is CompareResult {
 }
 
 function TimelineList({ items }: { items: TimelineItem[] }) {
+  const statusTranslation: Record<TraceStatus, string> = {
+    success: "thành công",
+    warning: "cảnh báo",
+    error: "lỗi",
+    info: "thông tin",
+  };
+
   return (
     <ul className="space-y-2">
       {items.map((item, index) => (
@@ -146,7 +154,7 @@ function TimelineList({ items }: { items: TimelineItem[] }) {
           <div className="mb-1 flex flex-wrap items-center gap-2">
             <p className="text-sm font-medium text-slate-700">{item.label}</p>
             <Badge variant="outline" className="capitalize">
-              {item.status}
+              {statusTranslation[item.status]}
             </Badge>
           </div>
           <p className="text-xs text-slate-500">{item.detail}</p>
@@ -170,10 +178,10 @@ export function WorkflowTrace({ result }: WorkflowTraceProps) {
   return (
     <Card className="border-slate-200 shadow-sm">
       <CardHeader className="pb-3">
-        <CardTitle className="text-base">Workflow Trace</CardTitle>
+        <CardTitle className="text-base">{translations.trace.title}</CardTitle>
       </CardHeader>
       <CardContent className="space-y-3">
-        {!result ? <p className="text-sm text-slate-500">Run a query to inspect workflow trace steps.</p> : null}
+        {!result ? <p className="text-sm text-slate-500">{translations.trace.runQuery}</p> : null}
 
         {result && !isCompare(result) ? (
           <TimelineList items={result.mode === "advanced" ? timelineFromAdvanced(result.trace) : timelineFromStandard(result.trace)} />
@@ -181,8 +189,8 @@ export function WorkflowTrace({ result }: WorkflowTraceProps) {
 
         {result && isCompare(result) ? (
           <div className="grid gap-3 xl:grid-cols-2">
-            <ModeTrace label="Standard" modeResult={result.standard} />
-            <ModeTrace label="Advanced" modeResult={result.advanced} />
+            <ModeTrace label={translations.compare.standard} modeResult={result.standard} />
+            <ModeTrace label={translations.compare.advanced} modeResult={result.advanced} />
           </div>
         ) : null}
       </CardContent>

@@ -1,7 +1,9 @@
 import type { QueryResult } from "@/types/chat";
 import { AnswerCard } from "@/components/dashboard/answer-card";
 import { CompareView } from "@/components/dashboard/compare-view";
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { Card, CardContent } from "@/components/ui/card";
+import { translations } from "@/lib/translations";
+import { ChatMessage } from "@/components/dashboard/chat-message";
 
 type ChatPanelProps = {
   submittedQuery: string | null;
@@ -15,42 +17,42 @@ function isCompare(result: QueryResult): result is Extract<QueryResult, { mode: 
 }
 
 export function ChatPanel({ submittedQuery, result, isLoading, error }: ChatPanelProps) {
+  // Show chat messages if we have a query
+  const showChatMessages = submittedQuery || result;
+
   return (
     <div className="space-y-4">
-      <Card className="border-slate-200 shadow-sm">
-        <CardHeader className="pb-3">
-          <CardTitle className="text-base">User Query</CardTitle>
-        </CardHeader>
-        <CardContent>
-          <p className="text-sm leading-7 text-slate-700">
-            {submittedQuery || "Submit a query to see mode-specific Self-RAG outputs."}
-          </p>
-        </CardContent>
-      </Card>
-
-      {isLoading ? (
+      {!showChatMessages ? (
         <Card className="border-slate-200 shadow-sm">
-          <CardHeader className="pb-3">
-            <CardTitle className="text-base">Assistant Answer</CardTitle>
-          </CardHeader>
-          <CardContent>
-            <p className="text-sm text-slate-500">Running retrieval, reranking, and generation...</p>
+          <CardContent className="py-12 text-center">
+            <p className="text-sm text-slate-500">Gửi câu hỏi để xem kết quả từ các chế độ Self-RAG.</p>
           </CardContent>
         </Card>
+      ) : null}
+
+      {showChatMessages && submittedQuery ? (
+        <ChatMessage role="user" content={submittedQuery} />
+      ) : null}
+
+      {isLoading ? (
+        <ChatMessage role="assistant" content={translations.answer.loading} />
       ) : null}
 
       {error ? (
         <Card className="border-rose-200 bg-rose-50 shadow-sm">
-          <CardHeader className="pb-3">
-            <CardTitle className="text-base text-rose-700">Request Error</CardTitle>
-          </CardHeader>
-          <CardContent>
-            <p className="text-sm text-rose-700">{error}</p>
+          <CardContent className="py-3">
+            <p className="text-sm text-rose-700">❌ {error}</p>
           </CardContent>
         </Card>
       ) : null}
 
-      {result && !isCompare(result) ? <AnswerCard result={result} /> : null}
+      {result && !isLoading && !isCompare(result) ? (
+        <div className="space-y-3">
+          <ChatMessage role="assistant" content={result.answer} />
+          <AnswerCard result={result} />
+        </div>
+      ) : null}
+      
       {result && isCompare(result) ? <CompareView result={result} /> : null}
     </div>
   );

@@ -12,13 +12,17 @@
     --card-foreground: 224 33% 14%;
     --muted: 220 24% 93%;
     --muted-foreground: 220 14% 42%;
-    --primary: 226 76% 56%;
-    --primary-foreground: 210 40% 98%;
-    --accent: 260 74% 60%;
-    --accent-foreground: 210 40% 98%;
+    /* Primary: Xanh dương #007BFF */
+    --primary: 211 100% 50%;
+    --primary-foreground: 0 0% 100%;
+    /* Secondary/Accent: Hổ phách #FFC107 cho upload buttons */
+    --accent: 45 100% 51%;
+    --accent-foreground: 0 0% 0%;
+    --secondary: 45 100% 51%;
+    --secondary-foreground: 0 0% 0%;
     --border: 220 24% 87%;
     --input: 220 24% 87%;
-    --ring: 226 76% 56%;
+    --ring: 211 100% 50%;
     --radius: 0.75rem;
   }
 
@@ -29,7 +33,7 @@
   body {
     @apply bg-background text-foreground antialiased;
     font-family: "Manrope", "Segoe UI", sans-serif;
-    background-image: radial-gradient(circle at top right, rgba(99, 102, 241, 0.1), transparent 35%),
-      radial-gradient(circle at bottom left, rgba(59, 130, 246, 0.12), transparent 40%);
+    background-image: radial-gradient(circle at top right, rgba(0, 123, 255, 0.1), transparent 35%),
+      radial-gradient(circle at bottom left, rgba(0, 123, 255, 0.12), transparent 40%);
   }
 }
