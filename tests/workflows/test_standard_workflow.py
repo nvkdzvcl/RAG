@@ -1,5 +1,7 @@
 """Tests for standard workflow end-to-end path."""
 
+from app.generation import StubLLMClient
+from app.schemas.retrieval import RetrievalResult
 from app.schemas.api import StandardQueryResponse, validate_query_response
 from app.schemas.common import Mode
 from app.services import QueryService
@@ -46,3 +48,73 @@ def test_query_service_standard_mode() -> None:
 
     assert response.mode == "standard"
     assert response.answer
+
+
+def test_standard_workflow_uses_configured_llm_client_factory(monkeypatch) -> None:
+    class _Settings:
+        corpus_dir = "docs"
+        index_dir = "data/indexes"
+        reranker_provider = "score_only"
+        reranker_model = "stub-reranker"
+        reranker_device = "cpu"
+        reranker_batch_size = 4
+        reranker_top_n = 3
+        prompt_dir = "prompts"
+        llm_provider = "openai_compatible"
+        llm_model = "qwen2.5:3b"
+        llm_api_base = "http://localhost:11434/v1"
+        llm_api_key = "ollama"
+        llm_temperature = 0.2
+        llm_max_tokens = 512
+        llm_timeout_seconds = 10
+
+    class _FakeRetriever:
+        def retrieve(self, query: str, top_k: int = 5) -> list[RetrievalResult]:
+            _ = query
+            _ = top_k
+            return [
+                RetrievalResult(
+                    chunk_id="c-std-001",
+                    doc_id="d-std-001",
+                    source="seeded://doc",
+                    content="This context proves the answer can be grounded.",
+                    score=0.9,
+                    score_type="hybrid",
+                    rank=1,
+                )
+            ]
+
+    class _FakeIndexManager:
+        def get_retriever(self) -> _FakeRetriever:
+            return _FakeRetriever()
+
+        def get_active_source(self) -> str:
+            return "seeded"
+
+    captured: dict[str, object] = {}
+
+    def _fake_create_llm_client_from_settings(settings: object):
+        captured["provider"] = getattr(settings, "llm_provider")
+        captured["model"] = getattr(settings, "llm_model")
+        captured["api_base"] = getattr(settings, "llm_api_base")
+        return StubLLMClient(
+            responder=lambda prompt, system: (
+                '{"answer":"Configured LLM answer.","confidence":0.9,"status":"answered"}'
+            )
+        )
+
+    monkeypatch.setattr("app.workflows.standard.get_settings", lambda: _Settings())
+    monkeypatch.setattr(
+        "app.workflows.standard.create_llm_client_from_settings",
+        _fake_create_llm_client_from_settings,
+    )
+
+    workflow = StandardWorkflow(index_manager=_FakeIndexManager())
+    response = workflow.run(query="Use configured llm", chat_history=None)
+
+    assert response.answer == "Configured LLM answer."
+    assert captured == {
+        "provider": "openai_compatible",
+        "model": "qwen2.5:3b",
+        "api_base": "http://localhost:11434/v1",
+    }

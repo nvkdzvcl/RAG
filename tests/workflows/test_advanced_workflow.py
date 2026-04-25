@@ -98,6 +98,21 @@ def test_query_rewriter_malformed_json_falls_back_to_heuristic() -> None:
     assert any("grounded evidence" in item for item in rewrites)
 
 
+def test_query_rewriter_uses_llm_json_when_valid() -> None:
+    rewriter = QueryRewriter(
+        llm_client=StubLLMClient(
+            responder=lambda prompt, system: (
+                '{"rewrites":["Truy hoi Self-RAG co dan chung","Self-RAG grounded evidence"]}'
+            )
+        )
+    )
+
+    rewrites = rewriter.rewrite("Self-RAG la gi?", loop_count=1)
+
+    assert rewrites
+    assert rewrites[0] == "Truy hoi Self-RAG co dan chung"
+
+
 def test_critic_malformed_json_falls_back_to_heuristic_result() -> None:
     critic = HeuristicCritic(
         llm_client=StubLLMClient(
@@ -115,3 +130,35 @@ def test_critic_malformed_json_falls_back_to_heuristic_result() -> None:
 
     assert isinstance(critique, CritiqueResult)
     assert critique.note
+
+
+def test_critic_uses_llm_json_when_valid() -> None:
+    critic = HeuristicCritic(
+        llm_client=StubLLMClient(
+            responder=lambda prompt, system: (
+                "{"
+                '"grounded": true,'
+                '"enough_evidence": true,'
+                '"has_conflict": false,'
+                '"missing_aspects": ["citations"],'
+                '"should_retry_retrieval": false,'
+                '"should_refine_answer": true,'
+                '"better_queries": ["self-rag citations"],'
+                '"confidence": 0.93,'
+                '"note": "llm_json_used"'
+                "}"
+            )
+        )
+    )
+
+    critique = critic.critique(
+        query="How does advanced retrieval work?",
+        draft_answer="Advanced workflow retries retrieval.",
+        context=_sample_context(),
+        loop_count=1,
+        max_loops=2,
+    )
+
+    assert critique.note == "llm_json_used"
+    assert critique.confidence == 0.93
+    assert critique.should_refine_answer is True

@@ -6,8 +6,39 @@ from app.schemas.common import Mode
 from app.schemas.workflow import CritiqueResult, WorkflowState
 
 
-def test_settings_defaults() -> None:
-    settings = Settings()
+def test_settings_defaults(monkeypatch) -> None:
+    for key in [
+        "ENVIRONMENT",
+        "LOG_LEVEL",
+        "LOG_JSON",
+        "OPENAI_API_KEY",
+        "DATA_DIR",
+        "CORPUS_DIR",
+        "INDEX_DIR",
+        "PROMPT_DIR",
+        "EMBEDDING_PROVIDER",
+        "EMBEDDING_MODEL",
+        "EMBEDDING_DEVICE",
+        "EMBEDDING_BATCH_SIZE",
+        "EMBEDDING_NORMALIZE",
+        "EMBEDDING_HASH_DIMENSION",
+        "RERANKER_PROVIDER",
+        "RERANKER_MODEL",
+        "RERANKER_DEVICE",
+        "RERANKER_BATCH_SIZE",
+        "RERANKER_TOP_N",
+        "LLM_PROVIDER",
+        "LLM_MODEL",
+        "LLM_API_BASE",
+        "LLM_API_KEY",
+        "LLM_TEMPERATURE",
+        "LLM_MAX_TOKENS",
+        "LLM_TIMEOUT_SECONDS",
+        "MAX_ADVANCED_LOOPS",
+    ]:
+        monkeypatch.delenv(key, raising=False)
+
+    settings = Settings(_env_file=None)
     assert settings.app_name == "Self-RAG"
     assert settings.max_advanced_loops == 2
     assert settings.embedding_provider == "sentence_transformers"
