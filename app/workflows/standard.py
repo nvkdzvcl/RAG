@@ -92,11 +92,12 @@ class StandardWorkflow:
             batch_size=settings.reranker_batch_size,
         )
         self.context_selector = ContextSelector(max_chunks=context_top_k, max_chars=context_max_chars)
-        self.llm_client = llm_client or create_llm_client_from_settings(settings)
+        resolved_llm_client = llm_client or create_llm_client_from_settings(settings)
         self.generator = BaselineGenerator(
-            llm_client=self.llm_client,
+            llm_client=resolved_llm_client,
             prompt_dir=settings.prompt_dir,
         )
+        self.llm_client = self.generator.llm_client
 
     def _build_chunks_from_corpus(self) -> list[DocumentChunk]:
         ingestor = DirectoryIngestor()

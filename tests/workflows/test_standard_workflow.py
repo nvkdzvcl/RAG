@@ -1,6 +1,5 @@
 """Tests for standard workflow end-to-end path."""
 
-from app.generation import StubLLMClient
 from app.schemas.retrieval import RetrievalResult
 from app.schemas.api import StandardQueryResponse, validate_query_response
 from app.schemas.common import Mode
@@ -51,6 +50,12 @@ def test_query_service_standard_mode() -> None:
 
 
 def test_standard_workflow_uses_configured_llm_client_factory(monkeypatch) -> None:
+    class _MockConfiguredLLMClient:
+        def complete(self, prompt: str, system_prompt: str | None = None) -> str:
+            _ = prompt
+            _ = system_prompt
+            return '{"answer":"Configured LLM answer.","confidence":0.9,"status":"answered"}'
+
     class _Settings:
         corpus_dir = "docs"
         index_dir = "data/indexes"
@@ -97,11 +102,7 @@ def test_standard_workflow_uses_configured_llm_client_factory(monkeypatch) -> No
         captured["provider"] = getattr(settings, "llm_provider")
         captured["model"] = getattr(settings, "llm_model")
         captured["api_base"] = getattr(settings, "llm_api_base")
-        return StubLLMClient(
-            responder=lambda prompt, system: (
-                '{"answer":"Configured LLM answer.","confidence":0.9,"status":"answered"}'
-            )
-        )
+        return _MockConfiguredLLMClient()
 
     monkeypatch.setattr("app.workflows.standard.get_settings", lambda: _Settings())
     monkeypatch.setattr(
@@ -113,6 +114,8 @@ def test_standard_workflow_uses_configured_llm_client_factory(monkeypatch) -> No
     response = workflow.run(query="Use configured llm", chat_history=None)
 
     assert response.answer == "Configured LLM answer."
+    assert type(workflow.llm_client).__name__ == "_MockConfiguredLLMClient"
+    assert workflow.llm_client is workflow.generator.llm_client
     assert captured == {
         "provider": "openai_compatible",
         "model": "qwen2.5:3b",
