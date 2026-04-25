@@ -270,3 +270,46 @@ def test_pdf_parser_text_extraction_still_works_without_ocr_fallback(monkeypatch
 
     assert any(block.type == "text" for block in blocks)
     assert all(block.metadata.get("block_type") != "ocr_text" for block in blocks)
+
+
+def test_pdf_parser_ocr_runtime_error_does_not_crash(monkeypatch) -> None:
+    class FakePage:
+        images = []
+
+        @staticmethod
+        def extract_text() -> str:
+            return ""
+
+        @staticmethod
+        def extract_tables() -> list[list[list[str]]]:
+            return []
+
+    class FakePDF:
+        def __init__(self) -> None:
+            self.pages = [FakePage()]
+
+        def __enter__(self) -> "FakePDF":
+            return self
+
+        def __exit__(self, exc_type, exc, tb) -> None:
+            _ = exc_type
+            _ = exc
+            _ = tb
+
+    monkeypatch.setattr(
+        "app.ingestion.parsers.pdf_parser.pdfplumber",
+        SimpleNamespace(open=lambda _: FakePDF()),
+    )
+    monkeypatch.setattr("app.ingestion.parsers.pdf_parser.is_tesseract_available", lambda: True)
+
+    def _broken_ocr(*args, **kwargs) -> str:
+        _ = args
+        _ = kwargs
+        raise RuntimeError("missing OCR dependency")
+
+    monkeypatch.setattr("app.ingestion.parsers.pdf_parser.ocr_pdf_page_with_pymupdf", _broken_ocr)
+
+    parser = PDFParser(ocr_enabled=True, ocr_min_text_chars=100)
+    blocks = parser.parse(Path("broken-ocr.pdf"))
+
+    assert blocks == []
