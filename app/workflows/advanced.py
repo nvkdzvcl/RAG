@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import time
 
+from app.core.prompting import PromptRepository
 from app.core.config import get_settings
 from app.schemas.api import AdvancedQueryResponse
 from app.schemas.common import Mode
@@ -14,6 +15,16 @@ from app.workflows.refine import AnswerRefiner
 from app.workflows.retrieval_gate import HeuristicRetrievalGate
 from app.workflows.shared import normalize_query
 from app.workflows.standard import StandardWorkflow
+
+_ADVANCED_DIRECT_ANSWER_FALLBACK = (
+    "You are the advanced Self-RAG assistant.\n"
+    "No retrieval context is available for this turn.\n"
+    "If the question cannot be answered safely without context, set status=insufficient_evidence.\n"
+    "Return strict JSON with keys: answer, confidence, status.\n"
+    "mode: $mode\n"
+    "question: $question\n"
+    "context:\n$context"
+)
 
 
 class AdvancedWorkflow:
@@ -33,19 +44,44 @@ class AdvancedWorkflow:
         self.max_loops = max_loops if max_loops is not None else settings.max_advanced_loops
 
         self.standard_workflow = standard_workflow or StandardWorkflow()
-        self.retrieval_gate = retrieval_gate or HeuristicRetrievalGate()
-        self.query_rewriter = query_rewriter or QueryRewriter()
-        self.critic = critic or HeuristicCritic()
-        self.refiner = refiner or AnswerRefiner()
+        llm_client = self.standard_workflow.generator.llm_client
+        prompt_repository = self.standard_workflow.generator.prompt_repository
+        self._prompt_repository: PromptRepository = prompt_repository
+
+        self.retrieval_gate = retrieval_gate or HeuristicRetrievalGate(
+            llm_client=llm_client,
+            prompt_repository=prompt_repository,
+        )
+        self.query_rewriter = query_rewriter or QueryRewriter(
+            llm_client=llm_client,
+            prompt_repository=prompt_repository,
+        )
+        self.critic = critic or HeuristicCritic(
+            llm_client=llm_client,
+            prompt_repository=prompt_repository,
+        )
+        self.refiner = refiner or AnswerRefiner(
+            llm_client=llm_client,
+            prompt_repository=prompt_repository,
+        )
 
     def _direct_answer_without_retrieval(self, query: str) -> tuple[str, float | None, str, str]:
-        prompt = (
-            "Mode: advanced\n"
-            "Retrieval gate decided retrieval is not required.\n"
-            "Answer briefly in JSON with keys: answer, confidence, status.\n"
-            f"Question: {query}"
+        prompt = self._prompt_repository.render(
+            "advanced_answer.md",
+            fallback=_ADVANCED_DIRECT_ANSWER_FALLBACK,
+            mode="advanced",
+            question=query,
+            context="(No retrieved context. Answer only if still safe and grounded.)",
         )
-        raw = self.standard_workflow.generator.llm_client.complete(prompt)
+        try:
+            raw = self.standard_workflow.llm_client.complete(prompt)
+        except Exception:
+            return (
+                "Insufficient evidence to answer without retrieval.",
+                0.0,
+                "insufficient_evidence",
+                "gate_no_retrieval_llm_error",
+            )
         parsed = self.standard_workflow.generator.parser.parse(raw)
 
         if not parsed.answer.strip() or parsed.status == "insufficient_evidence":

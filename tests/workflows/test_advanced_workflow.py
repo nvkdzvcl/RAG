@@ -4,8 +4,10 @@ from app.schemas.api import AdvancedQueryResponse, validate_query_response
 from app.schemas.common import Mode
 from app.schemas.retrieval import RetrievalResult
 from app.schemas.workflow import CritiqueResult
+from app.generation import StubLLMClient
 from app.workflows.advanced import AdvancedWorkflow
 from app.workflows.critique import HeuristicCritic
+from app.workflows.query_rewrite import QueryRewriter
 from app.workflows.runner import WorkflowRunner
 
 
@@ -81,3 +83,35 @@ def test_advanced_mode_run_path() -> None:
     assert parsed.mode == "advanced"
     assert parsed.loop_count <= 2
     assert parsed.answer
+
+
+def test_query_rewriter_malformed_json_falls_back_to_heuristic() -> None:
+    rewriter = QueryRewriter(
+        llm_client=StubLLMClient(
+            responder=lambda prompt, system: "```json\n{bad json}\n```"
+        )
+    )
+
+    rewrites = rewriter.rewrite("Truy hoi thong tin cho Self-RAG", loop_count=1)
+
+    assert rewrites
+    assert any("grounded evidence" in item for item in rewrites)
+
+
+def test_critic_malformed_json_falls_back_to_heuristic_result() -> None:
+    critic = HeuristicCritic(
+        llm_client=StubLLMClient(
+            responder=lambda prompt, system: "```json\nthis is not valid json\n```"
+        )
+    )
+
+    critique = critic.critique(
+        query="How does advanced retrieval work?",
+        draft_answer="Advanced workflow retries retrieval.",
+        context=_sample_context(),
+        loop_count=1,
+        max_loops=2,
+    )
+
+    assert isinstance(critique, CritiqueResult)
+    assert critique.note

@@ -103,6 +103,67 @@ Fallback:
 - nếu load model cross-encoder lỗi, backend log cảnh báo và fallback sang score-only reranking
 - API và các workflow query vẫn chạy, không crash
 
+## Run Với Qwen (OpenAI-Compatible)
+
+Backend hỗ trợ client OpenAI-compatible, dùng được với:
+
+- Ollama
+- vLLM
+- SGLang
+
+Biến môi trường chính:
+
+- `LLM_PROVIDER=openai_compatible`
+- `LLM_MODEL=qwen2.5:3b` (hoặc model Qwen khác)
+- `LLM_API_BASE=http://localhost:11434/v1` (Ollama)
+- `LLM_API_KEY=ollama`
+- `LLM_TEMPERATURE=0.2`
+- `LLM_MAX_TOKENS=2048`
+- `LLM_TIMEOUT_SECONDS=120`
+
+### Ollama (mặc định dễ chạy local)
+
+```bash
+ollama pull qwen2.5:3b
+ollama serve
+```
+
+Thiết lập trong `.env`:
+
+```bash
+LLM_PROVIDER=openai_compatible
+LLM_MODEL=qwen2.5:3b
+LLM_API_BASE=http://localhost:11434/v1
+LLM_API_KEY=ollama
+```
+
+### vLLM (GPU)
+
+Ví dụ endpoint OpenAI-compatible:
+
+```bash
+LLM_PROVIDER=openai_compatible
+LLM_MODEL=Qwen/Qwen2.5-7B-Instruct
+LLM_API_BASE=http://localhost:8000/v1
+LLM_API_KEY=EMPTY
+```
+
+### SGLang (GPU)
+
+Ví dụ endpoint OpenAI-compatible:
+
+```bash
+LLM_PROVIDER=openai_compatible
+LLM_MODEL=Qwen/Qwen2.5-7B-Instruct
+LLM_API_BASE=http://localhost:30000/v1
+LLM_API_KEY=EMPTY
+```
+
+Lưu ý fallback:
+
+- nếu endpoint/model Qwen lỗi hoặc trả dữ liệu không hợp lệ, workflow vẫn chạy nhờ fallback heuristic + stub client
+- `standard`, `advanced`, `compare` không crash chỉ vì LLM lỗi runtime
+
 ## Chiến Lược Parsing Ingestion
 
 Pipeline ingestion hiện dùng parser abstraction:

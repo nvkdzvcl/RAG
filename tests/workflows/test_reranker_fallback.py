@@ -41,6 +41,14 @@ def test_standard_workflow_uses_create_reranker_from_settings(monkeypatch) -> No
         reranker_device = "cpu"
         reranker_batch_size = 3
         reranker_top_n = 2
+        prompt_dir = "prompts"
+        llm_provider = "stub"
+        llm_model = "qwen2.5:3b"
+        llm_api_base = "http://localhost:11434/v1"
+        llm_api_key = "ollama"
+        llm_temperature = 0.2
+        llm_max_tokens = 256
+        llm_timeout_seconds = 5
 
     class _FakeRetriever:
         def retrieve(self, query: str, top_k: int = 5) -> list[RetrievalResult]:

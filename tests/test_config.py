@@ -20,6 +20,13 @@ def test_settings_defaults() -> None:
     assert settings.reranker_device == "cpu"
     assert settings.reranker_batch_size == 8
     assert settings.reranker_top_n == 6
+    assert settings.llm_provider == "stub"
+    assert settings.llm_model == "qwen2.5:3b"
+    assert settings.llm_api_base == "http://localhost:11434/v1"
+    assert settings.llm_api_key == "ollama"
+    assert settings.llm_temperature == 0.2
+    assert settings.llm_max_tokens == 2048
+    assert settings.llm_timeout_seconds == 120
 
 
 def test_query_request_mode_default() -> None:

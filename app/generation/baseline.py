@@ -2,6 +2,11 @@
 
 from __future__ import annotations
 
+import logging
+from pathlib import Path
+
+from app.core.config import get_settings
+from app.core.prompting import PromptRepository
 from app.generation.citations import CitationBuilder
 from app.generation.interfaces import Generator
 from app.generation.llm_client import LLMClient
@@ -9,6 +14,30 @@ from app.generation.parser import StructuredOutputParser
 from app.schemas.common import Mode
 from app.schemas.generation import GeneratedAnswer
 from app.schemas.retrieval import RetrievalResult
+
+logger = logging.getLogger(__name__)
+
+
+_STANDARD_PROMPT_FALLBACK = (
+    "You are a grounded RAG assistant.\n"
+    "Answer in the same language as the question when possible (including Vietnamese).\n"
+    "Use only the provided context; do not invent unsupported facts.\n"
+    "If evidence is insufficient, set status to insufficient_evidence.\n"
+    "Return strict JSON with keys: answer, confidence, status.\n"
+    "mode: $mode\n"
+    "question: $question\n"
+    "context:\n$context"
+)
+
+_ADVANCED_PROMPT_FALLBACK = (
+    "You are the advanced Self-RAG answerer.\n"
+    "Answer in the same language as the question when possible (including Vietnamese).\n"
+    "Ground every claim in the context. If evidence is weak, abstain with status=insufficient_evidence.\n"
+    "Return strict JSON with keys: answer, confidence, status.\n"
+    "mode: $mode\n"
+    "question: $question\n"
+    "context:\n$context"
+)
 
 
 class BaselineGenerator(Generator):
@@ -19,21 +48,28 @@ class BaselineGenerator(Generator):
         llm_client: LLMClient,
         parser: StructuredOutputParser | None = None,
         citation_builder: CitationBuilder | None = None,
+        prompt_repository: PromptRepository | None = None,
+        prompt_dir: str | Path | None = None,
     ) -> None:
         self.llm_client = llm_client
         self.parser = parser or StructuredOutputParser()
         self.citation_builder = citation_builder or CitationBuilder()
+        settings = get_settings()
+        resolved_prompt_dir = prompt_dir or settings.prompt_dir
+        self.prompt_repository = prompt_repository or PromptRepository(resolved_prompt_dir)
 
     def _build_prompt(self, query: str, context: list[RetrievalResult], mode: Mode) -> str:
         joined_context = "\n\n".join(
             f"[chunk_id={doc.chunk_id}] {doc.content}" for doc in context
         )
-        return (
-            f"Mode: {mode.value}\n"
-            f"Question: {query}\n"
-            "Use only the provided context. If evidence is weak, respond with status=insufficient_evidence.\n"
-            "Return strict JSON with keys: answer, confidence, status.\n"
-            f"Context:\n{joined_context}"
+        prompt_name = "advanced_answer.md" if mode == Mode.ADVANCED else "standard_answer.md"
+        prompt_fallback = _ADVANCED_PROMPT_FALLBACK if mode == Mode.ADVANCED else _STANDARD_PROMPT_FALLBACK
+        return self.prompt_repository.render(
+            prompt_name,
+            fallback=prompt_fallback,
+            mode=mode.value,
+            question=query,
+            context=joined_context,
         )
 
     def _insufficient(self, reason: str, raw_output: str | None = None) -> GeneratedAnswer:
@@ -57,7 +93,11 @@ class BaselineGenerator(Generator):
             return self._insufficient("no_context")
 
         prompt = self._build_prompt(query, non_empty_context, mode)
-        raw_output = self.llm_client.complete(prompt)
+        try:
+            raw_output = self.llm_client.complete(prompt)
+        except Exception as exc:
+            logger.warning("LLM completion failed in BaselineGenerator.", exc_info=exc)
+            return self._insufficient("llm_error")
         parsed = self.parser.parse(raw_output)
 
         if parsed.status == "insufficient_evidence" or not parsed.answer.strip():

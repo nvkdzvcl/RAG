@@ -38,6 +38,14 @@ class Settings(BaseSettings):
     reranker_batch_size: int = Field(default=8, alias="RERANKER_BATCH_SIZE")
     reranker_top_n: int = Field(default=6, alias="RERANKER_TOP_N")
 
+    llm_provider: str = Field(default="stub", alias="LLM_PROVIDER")
+    llm_model: str = Field(default="qwen2.5:3b", alias="LLM_MODEL")
+    llm_api_base: str = Field(default="http://localhost:11434/v1", alias="LLM_API_BASE")
+    llm_api_key: str | None = Field(default="ollama", alias="LLM_API_KEY")
+    llm_temperature: float = Field(default=0.2, alias="LLM_TEMPERATURE")
+    llm_max_tokens: int = Field(default=2048, alias="LLM_MAX_TOKENS")
+    llm_timeout_seconds: int = Field(default=120, alias="LLM_TIMEOUT_SECONDS")
+
     max_advanced_loops: int = Field(default=2, alias="MAX_ADVANCED_LOOPS")
 
 

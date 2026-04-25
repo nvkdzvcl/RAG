@@ -7,7 +7,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from app.core.config import get_settings
-from app.generation import BaselineGenerator, StubLLMClient
+from app.generation import BaselineGenerator, LLMClient, create_llm_client_from_settings
 from app.indexing.bm25_index import BM25Index
 from app.indexing.vector_index import VectorIndex
 from app.indexing import BaseEmbeddingProvider, IndexBuilder, LocalIndexStore, create_embedding_provider
@@ -51,6 +51,7 @@ class StandardWorkflow:
         index_manager: RuntimeIndexManager | None = None,
         embedding_provider: BaseEmbeddingProvider | None = None,
         reranker: BaseReranker | None = None,
+        llm_client: LLMClient | None = None,
     ) -> None:
         settings = get_settings()
         self.hybrid_top_k = hybrid_top_k
@@ -91,7 +92,11 @@ class StandardWorkflow:
             batch_size=settings.reranker_batch_size,
         )
         self.context_selector = ContextSelector(max_chunks=context_top_k, max_chars=context_max_chars)
-        self.generator = BaselineGenerator(llm_client=StubLLMClient())
+        self.llm_client = llm_client or create_llm_client_from_settings(settings)
+        self.generator = BaselineGenerator(
+            llm_client=self.llm_client,
+            prompt_dir=settings.prompt_dir,
+        )
 
     def _build_chunks_from_corpus(self) -> list[DocumentChunk]:
         ingestor = DirectoryIngestor()
