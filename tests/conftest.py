@@ -32,6 +32,12 @@ TEST_ENV_DEFAULTS: dict[str, str] = {
     "EMBEDDING_HASH_DIMENSION": "64",
     "RERANKER_PROVIDER": "score_only",
     "RERANKER_TOP_N": "6",
+    "OCR_ENABLED": "false",
+    "OCR_LANGUAGE": "vie+eng",
+    "OCR_MIN_TEXT_CHARS": "100",
+    "OCR_RENDER_DPI": "216",
+    "TESSERACT_CMD": "",
+    "OCR_CONFIDENCE_THRESHOLD": "40",
     "LLM_PROVIDER": "stub",
 }
 

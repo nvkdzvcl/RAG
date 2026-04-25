@@ -96,3 +96,177 @@ def test_text_parser_splits_paragraphs_without_losing_utf8(tmp_path: Path) -> No
     assert len(blocks) == 2
     assert blocks[0].content == "Đoạn một."
     assert "Đoạn hai" in blocks[1].content
+
+
+def test_pdf_parser_ocr_disabled_does_not_invoke_ocr(monkeypatch) -> None:
+    class FakePage:
+        images = []
+
+        @staticmethod
+        def extract_text() -> str:
+            return ""
+
+        @staticmethod
+        def extract_tables() -> list[list[list[str]]]:
+            return []
+
+    class FakePDF:
+        def __init__(self) -> None:
+            self.pages = [FakePage()]
+
+        def __enter__(self) -> "FakePDF":
+            return self
+
+        def __exit__(self, exc_type, exc, tb) -> None:
+            _ = exc_type
+            _ = exc
+            _ = tb
+
+    monkeypatch.setattr(
+        "app.ingestion.parsers.pdf_parser.pdfplumber",
+        SimpleNamespace(open=lambda _: FakePDF()),
+    )
+
+    def _unexpected_ocr(*args, **kwargs) -> str:
+        _ = args
+        _ = kwargs
+        raise AssertionError("OCR should not run when OCR is disabled")
+
+    monkeypatch.setattr("app.ingestion.parsers.pdf_parser.ocr_pdf_page_with_pymupdf", _unexpected_ocr)
+
+    parser = PDFParser(ocr_enabled=False, ocr_min_text_chars=100)
+    blocks = parser.parse(Path("sample.pdf"))
+
+    assert blocks == []
+
+
+def test_pdf_parser_missing_tesseract_does_not_crash(monkeypatch) -> None:
+    class FakePage:
+        images = []
+
+        @staticmethod
+        def extract_text() -> str:
+            return ""
+
+        @staticmethod
+        def extract_tables() -> list[list[list[str]]]:
+            return []
+
+    class FakePDF:
+        def __init__(self) -> None:
+            self.pages = [FakePage()]
+
+        def __enter__(self) -> "FakePDF":
+            return self
+
+        def __exit__(self, exc_type, exc, tb) -> None:
+            _ = exc_type
+            _ = exc
+            _ = tb
+
+    monkeypatch.setattr(
+        "app.ingestion.parsers.pdf_parser.pdfplumber",
+        SimpleNamespace(open=lambda _: FakePDF()),
+    )
+    monkeypatch.setattr("app.ingestion.parsers.pdf_parser.is_tesseract_available", lambda: False)
+
+    parser = PDFParser(ocr_enabled=True, ocr_min_text_chars=100)
+    blocks = parser.parse(Path("scan.pdf"))
+
+    assert blocks == []
+
+
+def test_pdf_parser_appends_ocr_text_block_with_metadata(monkeypatch) -> None:
+    class FakePage:
+        images = []
+
+        @staticmethod
+        def extract_text() -> str:
+            return ""
+
+        @staticmethod
+        def extract_tables() -> list[list[list[str]]]:
+            return []
+
+    class FakePDF:
+        def __init__(self) -> None:
+            self.pages = [FakePage()]
+
+        def __enter__(self) -> "FakePDF":
+            return self
+
+        def __exit__(self, exc_type, exc, tb) -> None:
+            _ = exc_type
+            _ = exc
+            _ = tb
+
+    monkeypatch.setattr(
+        "app.ingestion.parsers.pdf_parser.pdfplumber",
+        SimpleNamespace(open=lambda _: FakePDF()),
+    )
+    monkeypatch.setattr("app.ingestion.parsers.pdf_parser.is_tesseract_available", lambda: True)
+    monkeypatch.setattr(
+        "app.ingestion.parsers.pdf_parser.ocr_pdf_page_with_pymupdf",
+        lambda *args, **kwargs: "Nội dung OCR tiếng Việt có dấu.",
+    )
+
+    parser = PDFParser(
+        ocr_enabled=True,
+        ocr_language="vie+eng",
+        ocr_min_text_chars=100,
+        ocr_render_dpi=216,
+        ocr_confidence_threshold=40.0,
+    )
+    blocks = parser.parse(Path("scan.pdf"))
+
+    assert len(blocks) == 1
+    block = blocks[0]
+    assert block.type == "text"
+    assert "OCR tiếng Việt" in block.content
+    assert block.metadata["ocr"] is True
+    assert block.metadata["block_type"] == "ocr_text"
+    assert block.metadata["ocr_language"] == "vie+eng"
+
+
+def test_pdf_parser_text_extraction_still_works_without_ocr_fallback(monkeypatch) -> None:
+    class FakePage:
+        images = []
+
+        @staticmethod
+        def extract_text() -> str:
+            return "This page already has enough digital text to skip OCR fallback."
+
+        @staticmethod
+        def extract_tables() -> list[list[list[str]]]:
+            return []
+
+    class FakePDF:
+        def __init__(self) -> None:
+            self.pages = [FakePage()]
+
+        def __enter__(self) -> "FakePDF":
+            return self
+
+        def __exit__(self, exc_type, exc, tb) -> None:
+            _ = exc_type
+            _ = exc
+            _ = tb
+
+    monkeypatch.setattr(
+        "app.ingestion.parsers.pdf_parser.pdfplumber",
+        SimpleNamespace(open=lambda _: FakePDF()),
+    )
+    monkeypatch.setattr("app.ingestion.parsers.pdf_parser.is_tesseract_available", lambda: True)
+
+    def _unexpected_ocr(*args, **kwargs) -> str:
+        _ = args
+        _ = kwargs
+        raise AssertionError("OCR should be skipped when page already has enough text")
+
+    monkeypatch.setattr("app.ingestion.parsers.pdf_parser.ocr_pdf_page_with_pymupdf", _unexpected_ocr)
+
+    parser = PDFParser(ocr_enabled=True, ocr_min_text_chars=10)
+    blocks = parser.parse(Path("digital.pdf"))
+
+    assert any(block.type == "text" for block in blocks)
+    assert all(block.metadata.get("block_type") != "ocr_text" for block in blocks)

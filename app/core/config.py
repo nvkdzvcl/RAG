@@ -38,6 +38,13 @@ class Settings(BaseSettings):
     reranker_batch_size: int = Field(default=8, alias="RERANKER_BATCH_SIZE")
     reranker_top_n: int = Field(default=6, alias="RERANKER_TOP_N")
 
+    ocr_enabled: bool = Field(default=False, alias="OCR_ENABLED")
+    ocr_language: str = Field(default="vie+eng", alias="OCR_LANGUAGE")
+    ocr_min_text_chars: int = Field(default=100, alias="OCR_MIN_TEXT_CHARS")
+    ocr_render_dpi: int = Field(default=216, alias="OCR_RENDER_DPI")
+    tesseract_cmd: str = Field(default="", alias="TESSERACT_CMD")
+    ocr_confidence_threshold: float = Field(default=40.0, alias="OCR_CONFIDENCE_THRESHOLD")
+
     llm_provider: str = Field(default="stub", alias="LLM_PROVIDER")
     llm_model: str = Field(default="qwen2.5:3b", alias="LLM_MODEL")
     llm_api_base: str = Field(default="http://localhost:11434/v1", alias="LLM_API_BASE")

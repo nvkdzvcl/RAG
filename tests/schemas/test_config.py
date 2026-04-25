@@ -27,6 +27,12 @@ def test_settings_defaults(monkeypatch) -> None:
         "RERANKER_DEVICE",
         "RERANKER_BATCH_SIZE",
         "RERANKER_TOP_N",
+        "OCR_ENABLED",
+        "OCR_LANGUAGE",
+        "OCR_MIN_TEXT_CHARS",
+        "OCR_RENDER_DPI",
+        "TESSERACT_CMD",
+        "OCR_CONFIDENCE_THRESHOLD",
         "LLM_PROVIDER",
         "LLM_MODEL",
         "LLM_API_BASE",
@@ -51,6 +57,12 @@ def test_settings_defaults(monkeypatch) -> None:
     assert settings.reranker_device == "cpu"
     assert settings.reranker_batch_size == 8
     assert settings.reranker_top_n == 6
+    assert settings.ocr_enabled is False
+    assert settings.ocr_language == "vie+eng"
+    assert settings.ocr_min_text_chars == 100
+    assert settings.ocr_render_dpi == 216
+    assert settings.tesseract_cmd == ""
+    assert settings.ocr_confidence_threshold == 40.0
     assert settings.llm_provider == "stub"
     assert settings.llm_model == "qwen2.5:3b"
     assert settings.llm_api_base == "http://localhost:11434/v1"

@@ -178,6 +178,16 @@ Parser phát ra các block có cấu trúc (`text`, `table`, `image`) kèm metad
 Chunking có nhận biết cấu trúc và giữ metadata block (`block_type`, `language`, `section`, `page`).
 Block bảng được giữ nguyên (không tách đôi qua nhiều chunk).
 
+### OCR Tùy Chọn Cho PDF Scan
+
+- OCR mặc định **tắt** (`OCR_ENABLED=false`).
+- Khi bật OCR, parser PDF vẫn ưu tiên text/table từ `pdfplumber`.
+- Nếu trang PDF có quá ít text (`OCR_MIN_TEXT_CHARS`) thì hệ thống thử OCR bằng Tesseract + PyMuPDF.
+- OCR thất bại sẽ chỉ ghi cảnh báo và bỏ qua block OCR, không làm crash upload/query.
+- OCR hiện chỉ áp dụng cho PDF; OCR ảnh trong DOCX được giữ lại cho giai đoạn sau.
+
+Xem hướng dẫn chi tiết tại [docs/OCR.md](docs/OCR.md).
+
 ## API Endpoints
 
 - `GET /api/v1/health`
