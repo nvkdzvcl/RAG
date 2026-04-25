@@ -86,3 +86,37 @@ def test_insufficient_evidence_path() -> None:
     assert result.status == "insufficient_evidence"
     assert result.citations == []
     assert result.stop_reason == "model_insufficient_evidence"
+
+
+def test_title_question_returns_exact_article_title_from_context() -> None:
+    llm = StubLLMClient(
+        responder=lambda prompt, system, model=None: (
+            '{"answer":"Dieu 2 giai thich tu ngu trong luat.","confidence":0.72,"status":"answered"}'
+        )
+    )
+    generator = BaselineGenerator(llm_client=llm)
+    context = [
+        RetrievalResult(
+            chunk_id="chunk_title_002",
+            doc_id="doc_title_002",
+            source="docs/law.md",
+            title="Luật mẫu",
+            content="Điều 2. Giải thích từ ngữ\nCác thuật ngữ được hiểu như sau...",
+            score=0.95,
+            score_type="hybrid",
+            rank=1,
+        )
+    ]
+
+    result = generator.generate_answer(
+        query="tên của điều 2 là gì",
+        context=context,
+        mode=Mode.STANDARD,
+        response_language="vi",
+    )
+
+    assert result.answer == "Tên của Điều 2 là: Giải thích từ ngữ."
+    assert result.status == "answered"
+    assert result.stop_reason == "heuristic_exact_title"
+    assert result.citations
+    assert result.citations[0].chunk_id == "chunk_title_002"

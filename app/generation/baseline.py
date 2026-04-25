@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+import re
 from pathlib import Path
 
 from app.core.config import get_settings
@@ -28,6 +29,9 @@ _STANDARD_PROMPT_FALLBACK = (
     "Answer in the required response language only.\n"
     "If response_language is Vietnamese, write fully in Vietnamese.\n"
     "Do not answer in Chinese unless the user asks in Chinese.\n"
+    "For title/name questions (e.g., \"tên của Điều 2 là gì\"), if context contains the exact heading/title, "
+    "return it exactly as: \"Tên của Điều X là: <exact title>.\"\n"
+    "Do not paraphrase official title text.\n"
     "Use only the provided context; do not invent unsupported facts.\n"
     "If evidence is insufficient, set status to insufficient_evidence.\n"
     "Return strict JSON with keys: answer, confidence, status.\n"
@@ -47,6 +51,9 @@ _ADVANCED_PROMPT_FALLBACK = (
     "Answer in the required response language only.\n"
     "If response_language is Vietnamese, write fully in Vietnamese.\n"
     "Do not answer in Chinese unless the user asks in Chinese.\n"
+    "For title/name questions (e.g., \"tên của Điều 2 là gì\"), if context contains the exact heading/title, "
+    "return it exactly as: \"Tên của Điều X là: <exact title>.\"\n"
+    "Do not paraphrase official title text.\n"
     "Ground every claim in the context. If evidence is weak, abstain with status=insufficient_evidence.\n"
     "Return strict JSON with keys: answer, confidence, status.\n"
     "response_language: $response_language ($response_language_name)\n"
@@ -96,6 +103,82 @@ class BaselineGenerator(Generator):
             response_language_name=response_language_name(response_language),
         )
 
+    @staticmethod
+    def _title_question_article_number(query: str) -> str | None:
+        lowered = query.casefold()
+        has_title_intent = any(keyword in lowered for keyword in ("tên", "ten", "title", "name"))
+        if not has_title_intent:
+            return None
+
+        if not any(token in lowered for token in ("là gì", "la gi", "tên gì", "ten gi", "what is", "name")):
+            return None
+
+        match = re.search(r"\b(?:điều|dieu|article)\s*(\d+[a-z]?)\b", lowered, flags=re.IGNORECASE)
+        if not match:
+            return None
+        return match.group(1).upper()
+
+    @staticmethod
+    def _extract_article_title(
+        article_number: str,
+        context: list[RetrievalResult],
+    ) -> tuple[str, RetrievalResult] | None:
+        escaped_number = re.escape(article_number)
+        line_pattern = re.compile(
+            rf"(?im)^\s*(?:điều|dieu|article)\s*{escaped_number}\s*[\.\:\-]\s*(.+?)\s*$"
+        )
+        fallback_pattern = re.compile(
+            rf"(?im)(?:điều|dieu|article)\s*{escaped_number}\s*[\.\:\-]\s*([^\n]+)"
+        )
+
+        for item in context:
+            for line in item.content.splitlines():
+                matched = line_pattern.match(line.strip())
+                if not matched:
+                    continue
+                title = matched.group(1).strip().rstrip(".")
+                if title:
+                    return title, item
+
+            fallback_match = fallback_pattern.search(item.content)
+            if fallback_match:
+                title = fallback_match.group(1).strip().rstrip(".")
+                if title:
+                    return title, item
+
+        return None
+
+    def _generate_exact_title_answer(
+        self,
+        *,
+        query: str,
+        context: list[RetrievalResult],
+        response_language: str,
+    ) -> GeneratedAnswer | None:
+        article_number = self._title_question_article_number(query)
+        if not article_number:
+            return None
+
+        extracted = self._extract_article_title(article_number, context)
+        if not extracted:
+            return None
+
+        title, supporting_doc = extracted
+        if response_language == "vi":
+            answer = f"Tên của Điều {article_number} là: {title}."
+        else:
+            answer = f"The title of Article {article_number} is: {title}."
+
+        return GeneratedAnswer(
+            answer=answer,
+            citations=self.citation_builder.build([supporting_doc]),
+            confidence=0.95,
+            status="answered",
+            stop_reason="heuristic_exact_title",
+            raw_output=None,
+            llm_fallback_used=False,
+        )
+
     def _insufficient(
         self,
         reason: str,
@@ -128,6 +211,14 @@ class BaselineGenerator(Generator):
                 "no_context",
                 response_language=response_language,
             )
+
+        exact_title_answer = self._generate_exact_title_answer(
+            query=query,
+            context=non_empty_context,
+            response_language=response_language,
+        )
+        if exact_title_answer is not None:
+            return exact_title_answer
 
         llm_fallback_used = False
         prompt = self._build_prompt(

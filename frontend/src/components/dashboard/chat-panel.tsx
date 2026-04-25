@@ -19,7 +19,8 @@ function isCompare(result: QueryResult): result is Extract<QueryResult, { mode: 
 }
 
 export function ChatPanel({ messages, result, isLoading, error, notice = null }: ChatPanelProps) {
-  const showChatMessages = messages.length > 0 || result;
+  const userMessages = messages.filter((message) => message.role === "user");
+  const showChatMessages = userMessages.length > 0 || result;
 
   return (
     <div className="space-y-4">
@@ -31,7 +32,7 @@ export function ChatPanel({ messages, result, isLoading, error, notice = null }:
         </Card>
       ) : null}
 
-      {messages.map((message) => (
+      {userMessages.map((message) => (
         <ChatMessage key={`${message.role}-${message.timestamp}-${message.content.slice(0, 12)}`} role={message.role} content={message.content} />
       ))}
 
@@ -57,7 +58,6 @@ export function ChatPanel({ messages, result, isLoading, error, notice = null }:
 
       {result && !isLoading && !isCompare(result) ? (
         <div className="space-y-3">
-          <ChatMessage role="assistant" content={result.answer} />
           <AnswerCard result={result} />
         </div>
       ) : null}

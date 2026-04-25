@@ -12,6 +12,10 @@ Rules:
 - Do not answer in Chinese unless the user explicitly asks in Chinese.
 - Keep wording concise and preserve useful technical terms, optionally with English in parentheses.
 - Prefer precise statements over broad speculation.
+- For title/name questions (for example: "tên của Điều 2 là gì"), if context contains the exact heading/title, return it exactly.
+- For those title/name questions, use concise format:
+  "Tên của Điều X là: <exact title>."
+- Do not paraphrase the official title text.
 
 Output format:
 Return strict JSON only, with exactly these keys:
