@@ -1,31 +1,31 @@
 # EVALUATION.md
 
-## Purpose
+## Mục Đích
 
-Define a repeatable evaluation process for:
+Định nghĩa quy trình đánh giá có thể lặp lại cho:
 
 - `standard` mode
 - `advanced` mode
 - `compare` mode
 
-## Dataset Format
+## Định Dạng Dataset
 
-Golden dataset path:
+Đường dẫn golden dataset:
 
 - `data/eval/golden_dataset.jsonl`
-- `data/eval/golden.jsonl` (legacy alias kept valid for CLI compatibility)
+- `data/eval/golden.jsonl` (alias cũ vẫn hợp lệ để tương thích CLI)
 
-Each JSONL row contains:
+Mỗi dòng JSONL gồm:
 
-- `id` (required)
-- `question` (required)
-- `expected_behavior` (required): `answer`, `abstain`, or `retry`
-- `reference_answer` (optional)
-- `gold_sources` (optional)
-- `category` (required): `simple`, `multi_hop`, `ambiguous`, `insufficient_context`, `conflicting_sources`, `vietnamese`
-- `notes` (optional)
+- `id` (bắt buộc)
+- `question` (bắt buộc)
+- `expected_behavior` (bắt buộc): `answer`, `abstain`, hoặc `retry`
+- `reference_answer` (tùy chọn)
+- `gold_sources` (tùy chọn)
+- `category` (bắt buộc): `simple`, `multi_hop`, `ambiguous`, `insufficient_context`, `conflicting_sources`, `vietnamese`
+- `notes` (tùy chọn)
 
-## Required Coverage Categories
+## Nhóm Bao Phủ Bắt Buộc
 
 - simple
 - multi_hop
@@ -36,42 +36,42 @@ Each JSONL row contains:
 
 ## Runner
 
-CLI module:
+Module CLI:
 
 - `python scripts/run_eval.py`
 
-Options:
+Tùy chọn:
 
-- `--dataset`: dataset path (default `data/eval/golden_dataset.jsonl`)
+- `--dataset`: đường dẫn dataset (mặc định `data/eval/golden_dataset.jsonl`)
 - `--modes standard advanced compare`
 - `--output-dir data/eval/results`
-- `--predictor workflow|stub` (`stub` is deterministic and does not require live workflow execution)
+- `--predictor workflow|stub` (`stub` chạy theo logic xác định, không cần workflow thực tế)
 
-Example:
+Ví dụ:
 
 ```bash
 python scripts/run_eval.py --dataset data/eval/golden_dataset.jsonl --modes standard advanced compare
 python -m app.evaluation.runner --dataset data/eval/golden.jsonl --predictor stub
 ```
 
-## Current Regression Checks
+## Regression Check Hiện Tại
 
-Automated tests validate:
+Test tự động đang kiểm tra:
 
-- dataset load/shape
-- metric computation
-- report generation
-- evaluation runner with mocked workflows
+- nạp dataset và kiểm tra hình dạng dữ liệu
+- tính toán metric
+- sinh báo cáo
+- chạy evaluation runner với workflow đã mock
 
-## Metrics Reported
+## Các Metric Được Báo Cáo
 
-- citation count and citation rate
-- abstain match and abstain rate
-- retry usage and advanced retry rate
-- confidence and latency summaries
-- retrieved/selected context counts
-- heuristic proxies:
-  - answer non-empty
-  - reference keyword overlap
-  - gold source overlap
-  - groundedness proxy via lexical overlap with selected context
+- số lượng citation và tỉ lệ có citation
+- độ khớp abstain và tỉ lệ abstain
+- mức sử dụng retry và tỉ lệ retry ở advanced
+- tổng hợp confidence và latency
+- số lượng context retrieved/selected
+- các chỉ báo heuristic:
+  - câu trả lời không rỗng
+  - độ trùng từ khóa với `reference_answer`
+  - độ trùng với `gold_sources`
+  - groundedness proxy dựa trên mức chồng lấp từ vựng với selected context

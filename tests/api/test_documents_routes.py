@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from io import BytesIO
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 from fastapi.testclient import TestClient
@@ -25,6 +26,71 @@ def isolated_client(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> tuple[Te
     monkeypatch.setenv("DATA_DIR", str(data_dir))
     monkeypatch.setenv("INDEX_DIR", str(data_dir / "indexes"))
     monkeypatch.setenv("CORPUS_DIR", str(corpus_dir))
+    get_settings.cache_clear()
+
+    app = create_app()
+    client = TestClient(app)
+    try:
+        yield client, data_dir
+    finally:
+        client.close()
+        get_settings.cache_clear()
+
+
+@pytest.fixture
+def isolated_client_ocr_enabled(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> tuple[TestClient, Path]:
+    data_dir = tmp_path / "data"
+    corpus_dir = tmp_path / "corpus"
+    corpus_dir.mkdir(parents=True, exist_ok=True)
+    (corpus_dir / "seed.txt").write_text(
+        "Seeded corpus for OCR-enabled upload fixture.",
+        encoding="utf-8",
+    )
+
+    class FakePage:
+        images = []
+
+        @staticmethod
+        def extract_text() -> str:
+            return ""
+
+        @staticmethod
+        def extract_tables() -> list[list[list[str]]]:
+            return []
+
+    class FakePDF:
+        def __init__(self) -> None:
+            self.pages = [FakePage()]
+
+        def __enter__(self) -> "FakePDF":
+            return self
+
+        def __exit__(self, exc_type, exc, tb) -> None:
+            _ = exc_type
+            _ = exc
+            _ = tb
+
+    monkeypatch.setenv("DATA_DIR", str(data_dir))
+    monkeypatch.setenv("INDEX_DIR", str(data_dir / "indexes"))
+    monkeypatch.setenv("CORPUS_DIR", str(corpus_dir))
+    monkeypatch.setenv("OCR_ENABLED", "true")
+    monkeypatch.setenv("OCR_LANGUAGE", "vie+eng")
+    monkeypatch.setenv("OCR_MIN_TEXT_CHARS", "100")
+    monkeypatch.setenv("OCR_RENDER_DPI", "216")
+    monkeypatch.setenv("OCR_CONFIDENCE_THRESHOLD", "40")
+    monkeypatch.setenv("TESSERACT_CMD", "")
+    monkeypatch.setattr(
+        "app.ingestion.parsers.pdf_parser.pdfplumber",
+        SimpleNamespace(open=lambda _: FakePDF()),
+    )
+    monkeypatch.setattr("app.ingestion.parsers.pdf_parser.is_tesseract_available", lambda: True)
+    monkeypatch.setattr(
+        "app.ingestion.parsers.pdf_parser.ocr_pdf_page_with_pymupdf",
+        lambda *args, **kwargs: "Nội dung OCR tiếng Việt: tokendebugocr-77",
+    )
     get_settings.cache_clear()
 
     app = create_app()
@@ -59,6 +125,25 @@ def test_upload_endpoint_returns_document_payload(
     raw_files = sorted((data_dir / "raw").glob("*"))
     assert raw_files
     assert any(path.name.endswith("_uploaded.txt") for path in raw_files)
+
+
+def test_upload_response_reports_ocr_debug_metadata(
+    isolated_client_ocr_enabled: tuple[TestClient, Path],
+) -> None:
+    client, _ = isolated_client_ocr_enabled
+
+    response = client.post(
+        "/api/v1/documents/upload",
+        files={"file": ("testocr.pdf", b"%PDF-1.4 fake scan", "application/pdf")},
+    )
+
+    assert response.status_code == 201
+    body = response.json()
+    assert body["status"] == "ready"
+    assert body["total_blocks"] >= 1
+    assert body["text_blocks"] >= 1
+    assert body["ocr_blocks"] >= 1
+    assert body["total_chunks"] >= 1
 
 
 def test_upload_endpoint_accepts_docx(

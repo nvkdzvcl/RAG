@@ -3,7 +3,9 @@
 from __future__ import annotations
 
 from pathlib import Path
+from types import SimpleNamespace
 
+from app.core.config import get_settings
 from app.indexing import BaseEmbeddingProvider
 from app.services.index_runtime import RuntimeIndexManager
 
@@ -153,3 +155,81 @@ def test_runtime_index_manager_uses_sentence_transformers_when_configured(monkey
     assert manager.embedding_provider is configured_provider
     assert captured["provider_name"] == "sentence_transformers"
     assert captured["model"] == "intfloat/multilingual-e5-base"
+
+
+def test_runtime_index_manager_indexes_and_retrieves_ocr_chunks(monkeypatch, tmp_path: Path) -> None:
+    class _Settings:
+        embedding_provider = "hash"
+        embedding_model = "intfloat/multilingual-e5-base"
+        embedding_device = "cpu"
+        embedding_batch_size = 16
+        embedding_normalize = True
+        embedding_hash_dimension = 64
+        ocr_enabled = True
+        ocr_language = "vie+eng"
+        ocr_min_text_chars = 100
+        ocr_render_dpi = 216
+        tesseract_cmd = ""
+        ocr_confidence_threshold = 40.0
+
+    class FakePage:
+        images = []
+
+        @staticmethod
+        def extract_text() -> str:
+            return ""
+
+        @staticmethod
+        def extract_tables() -> list[list[list[str]]]:
+            return []
+
+    class FakePDF:
+        def __init__(self) -> None:
+            self.pages = [FakePage()]
+
+        def __enter__(self) -> "FakePDF":
+            return self
+
+        def __exit__(self, exc_type, exc, tb) -> None:
+            _ = exc_type
+            _ = exc
+            _ = tb
+
+    monkeypatch.setattr("app.services.index_runtime.get_settings", lambda: _Settings())
+    monkeypatch.setenv("OCR_ENABLED", "true")
+    monkeypatch.setenv("OCR_LANGUAGE", "vie+eng")
+    monkeypatch.setenv("OCR_MIN_TEXT_CHARS", "100")
+    monkeypatch.setenv("OCR_RENDER_DPI", "216")
+    monkeypatch.setenv("OCR_CONFIDENCE_THRESHOLD", "40")
+    monkeypatch.setenv("TESSERACT_CMD", "")
+    get_settings.cache_clear()
+    monkeypatch.setattr(
+        "app.ingestion.parsers.pdf_parser.pdfplumber",
+        SimpleNamespace(open=lambda _: FakePDF()),
+    )
+    monkeypatch.setattr("app.ingestion.parsers.pdf_parser.is_tesseract_available", lambda: True)
+    monkeypatch.setattr(
+        "app.ingestion.parsers.pdf_parser.ocr_pdf_page_with_pymupdf",
+        lambda *args, **kwargs: "Nội dung OCR thử nghiệm với token duy nhất: ocrtokenviet99",
+    )
+
+    provider = _CountingEmbeddingProvider(dimension=8)
+    manager = RuntimeIndexManager(
+        corpus_dir=tmp_path / "corpus",
+        index_dir=tmp_path / "indexes",
+        embedding_provider=provider,
+    )
+
+    uploaded_pdf = tmp_path / "testocr.pdf"
+    uploaded_pdf.write_bytes(b"%PDF-1.4 fake scan payload")
+
+    indexed = manager.activate_from_uploaded_files([uploaded_pdf])
+    results = manager.get_retriever().retrieve("ocrtokenviet99 la gi?", top_k=3)
+
+    assert indexed > 0
+    assert manager.get_active_source() == "uploaded"
+    assert results
+    assert any(item.metadata.get("block_type") == "ocr_text" for item in results)
+    assert any("ocrtokenviet99" in item.content for item in results)
+    activation_stats = manager.get_last_activation_stats()
+    assert activation_stats["ocr_chunks"] >= 1

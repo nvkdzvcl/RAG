@@ -196,6 +196,8 @@ class AdvancedWorkflow:
                             "chunk_id": item.chunk_id,
                             "doc_id": item.doc_id,
                             "rank": item.rank,
+                            "block_type": item.metadata.get("block_type"),
+                            "ocr": bool(item.metadata.get("ocr")),
                             "rerank_score": item.rerank_score,
                             "score": item.score,
                             "dense_score": item.dense_score,
@@ -208,6 +210,8 @@ class AdvancedWorkflow:
                         {
                             "chunk_id": item.chunk_id,
                             "doc_id": item.doc_id,
+                            "block_type": item.metadata.get("block_type"),
+                            "ocr": bool(item.metadata.get("ocr")),
                             "content": item.content,
                         }
                         for item in pipeline.selected_context

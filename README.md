@@ -185,6 +185,7 @@ Block bảng được giữ nguyên (không tách đôi qua nhiều chunk).
 - Nếu trang PDF có quá ít text (`OCR_MIN_TEXT_CHARS`) thì hệ thống thử OCR bằng Tesseract + PyMuPDF.
 - OCR thất bại sẽ chỉ ghi cảnh báo và bỏ qua block OCR, không làm crash upload/query.
 - OCR hiện chỉ áp dụng cho PDF; OCR ảnh trong DOCX được giữ lại cho giai đoạn sau.
+- Sau khi bật OCR trong `.env`, cần **upload lại tài liệu PDF** để index mới chứa nội dung OCR.
 
 Xem hướng dẫn chi tiết tại [docs/OCR.md](docs/OCR.md).
 

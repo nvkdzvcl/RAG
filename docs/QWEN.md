@@ -1,27 +1,27 @@
 # QWEN.md
 
-## Purpose
+## Mục Đích
 
-This guide explains how to run Qwen models with the backend through an OpenAI-compatible API.
-Supported servers:
+Tài liệu này hướng dẫn cách chạy mô hình Qwen với backend thông qua API tương thích OpenAI.
+Các server được hỗ trợ:
 
 - Ollama
 - vLLM
 - SGLang
 
-## Recommended Models
+## Mô Hình Khuyến Nghị
 
-For local development and quick iteration:
+Cho môi trường local và vòng lặp phát triển nhanh:
 
-- `qwen2.5:3b` (Ollama, low resource)
-- `qwen2.5:7b-instruct` (better quality, higher RAM/VRAM)
+- `qwen2.5:3b` (Ollama, tài nguyên thấp)
+- `qwen2.5:7b-instruct` (chất lượng tốt hơn, cần RAM/VRAM cao hơn)
 
-For stronger quality on GPU servers:
+Cho chất lượng cao hơn trên server GPU:
 
 - `Qwen/Qwen2.5-7B-Instruct`
-- `Qwen/Qwen2.5-14B-Instruct` (requires larger VRAM)
+- `Qwen/Qwen2.5-14B-Instruct` (cần VRAM lớn hơn)
 
-## Environment Variables
+## Biến Môi Trường
 
 ```bash
 LLM_PROVIDER=openai_compatible
@@ -33,56 +33,56 @@ LLM_MAX_TOKENS=2048
 LLM_TIMEOUT_SECONDS=120
 ```
 
-Alternative API base URLs:
+URL `API base` thay thế:
 
 - vLLM: `http://localhost:8000/v1`
 - SGLang: `http://localhost:30000/v1`
 
-## Ollama Setup (CPU/GPU)
+## Cấu Hình Ollama (CPU/GPU)
 
 ```bash
 ollama pull qwen2.5:3b
 ollama serve
 ```
 
-Then run backend normally:
+Sau đó chạy backend như bình thường:
 
 ```bash
 uvicorn app.main:app --reload
 ```
 
-## CPU / RAM Guidance
+## Gợi Ý CPU / RAM
 
-- `qwen2.5:3b` is the most practical default for laptops/CPU-only hosts.
-- Expect lower throughput on CPU and slower responses in advanced mode.
-- First query may be slower due to model warm-up.
+- `qwen2.5:3b` là lựa chọn mặc định thực tế nhất cho laptop/máy chỉ có CPU.
+- Hiệu năng trên CPU sẽ thấp hơn và phản hồi ở advanced mode thường chậm hơn.
+- Truy vấn đầu tiên có thể chậm do thời gian warm-up model.
 
-## GPU / vLLM Guidance
+## Gợi Ý GPU / vLLM
 
-- Use vLLM/SGLang when you need better latency or larger Qwen models.
-- Keep OpenAI-compatible endpoint enabled (`/v1/chat/completions`).
-- Ensure model name in `LLM_MODEL` exactly matches what your server exposes.
+- Dùng vLLM/SGLang khi cần độ trễ tốt hơn hoặc chạy Qwen kích thước lớn.
+- Đảm bảo endpoint tương thích OpenAI được bật (`/v1/chat/completions`).
+- Đảm bảo tên model trong `LLM_MODEL` khớp chính xác với model server đang expose.
 
-## Troubleshooting
+## Khắc Phục Sự Cố
 
-### 1) Connection refused / timeout
+### 1) Lỗi connection refused / timeout
 
-- Verify server is running (`ollama serve`, vLLM, or SGLang process).
-- Check `LLM_API_BASE` and port.
+- Kiểm tra server đã chạy chưa (`ollama serve`, tiến trình vLLM hoặc SGLang).
+- Kiểm tra lại `LLM_API_BASE` và cổng.
 
-### 2) 404 model not found
+### 2) Lỗi 404 không tìm thấy model
 
-- Verify `LLM_MODEL` exists on the server.
-- For Ollama, run `ollama list`.
+- Xác nhận `LLM_MODEL` có tồn tại trên server.
+- Với Ollama, chạy `ollama list`.
 
-### 3) Malformed JSON from model
+### 3) Model trả JSON lỗi định dạng
 
-- System will auto-fallback to heuristic parsing/logic.
-- Standard/advanced/compare workflows should continue without crashing.
+- Hệ thống sẽ tự fallback sang logic parse/heuristic.
+- Workflow `standard`/`advanced`/`compare` vẫn tiếp tục chạy, không crash.
 
-### 4) Works without Qwen?
+### 4) Có chạy được khi không bật Qwen không?
 
-Yes. The app includes safe fallback behavior:
+Có. Ứng dụng có cơ chế fallback an toàn:
 
-- LLM runtime errors fall back to stub output.
-- Advanced critique/rewrite/gate/refine fall back to heuristic logic.
+- Lỗi runtime của LLM sẽ fallback về stub output.
+- Các bước critique/rewrite/gate/refine ở advanced sẽ fallback về heuristic logic.

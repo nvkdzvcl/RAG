@@ -1,44 +1,44 @@
 # RUNBOOK.md
 
-## Local Backend Setup
+## Thiết Lập Backend Local
 
-1. Create and activate a virtual environment:
+1. Tạo và kích hoạt môi trường ảo:
    `python3 -m venv .venv && source .venv/bin/activate`
-2. Install dependencies:
+2. Cài dependencies:
    `pip install -r requirements-dev.txt`
-3. Copy environment template:
+3. Sao chép file mẫu biến môi trường:
    `cp .env.example .env`
-4. Start backend:
+4. Khởi chạy backend:
    `uvicorn app.main:app --reload`
 
-## Local Frontend Setup
+## Thiết Lập Frontend Local
 
-1. Enter frontend folder:
+1. Vào thư mục frontend:
    `cd frontend`
-2. Install dependencies:
+2. Cài dependencies:
    `npm install`
-3. Copy frontend env template:
+3. Sao chép file env mẫu cho frontend:
    `cp .env.example .env`
-4. Start dev server:
+4. Chạy dev server:
    `npm run dev`
 
-## Typical Developer Flow
+## Quy Trình Dev Thường Dùng
 
-1. upload one or more documents with `POST /api/v1/documents/upload`
-2. verify processing state via:
+1. Upload một hoặc nhiều tài liệu bằng `POST /api/v1/documents/upload`
+2. Kiểm tra trạng thái xử lý qua:
    - `GET /api/v1/documents`
    - `GET /api/v1/documents/{document_id}/status`
-3. run queries across all 3 modes (`standard`, `advanced`, `compare`)
-4. run evaluation set:
+3. Chạy truy vấn trên cả 3 mode (`standard`, `advanced`, `compare`)
+4. Chạy evaluation:
    `python scripts/run_eval.py --dataset data/eval/golden_dataset.jsonl --modes standard advanced compare`
-5. run tests:
-   - fast local loop: `pytest -m "not slow and not e2e"` (or `make test-fast`)
-   - integration only: `make test-integration`
-   - full validation: `pytest` (or `make test-full`)
+5. Chạy test:
+   - vòng lặp local nhanh: `pytest -m "not slow and not e2e"` (hoặc `make test-fast`)
+   - chỉ integration: `make test-integration`
+   - kiểm tra đầy đủ: `pytest` (hoặc `make test-full`)
 
-## Embedding Configuration
+## Cấu Hình Embedding
 
-Recommended multilingual/Vietnamese embedding setup:
+Cấu hình embedding đa ngôn ngữ/Vietnamese khuyến nghị:
 
 - `EMBEDDING_PROVIDER=sentence_transformers`
 - `EMBEDDING_MODEL=intfloat/multilingual-e5-base`
@@ -46,20 +46,20 @@ Recommended multilingual/Vietnamese embedding setup:
 - `EMBEDDING_BATCH_SIZE=16`
 - `EMBEDDING_NORMALIZE=true`
 
-Fallback behavior:
+Hành vi fallback:
 
-- if `sentence-transformers` is not installed, or model initialization fails, the app logs a warning and automatically falls back to `HashEmbeddingProvider`
-- API startup continues (no hard crash), so local development is still possible
+- nếu chưa cài `sentence-transformers`, hoặc khởi tạo model thất bại, hệ thống ghi cảnh báo và tự động fallback sang `HashEmbeddingProvider`
+- API vẫn khởi động bình thường (không crash), nên môi trường dev local vẫn dùng được
 
-CPU performance expectations:
+Kỳ vọng hiệu năng trên CPU:
 
-- first run may spend noticeable time loading/downloading model assets
-- indexing throughput on CPU is lower than hash embeddings
-- retrieval quality for Vietnamese and mixed Vietnamese-English documents is significantly better than hash fallback
+- lần chạy đầu có thể mất thời gian để tải/khởi tạo model
+- tốc độ indexing trên CPU chậm hơn hash embedding
+- chất lượng retrieval cho tài liệu tiếng Việt hoặc pha trộn Việt-Anh thường tốt hơn rõ rệt so với hash fallback
 
-## Reranker Configuration
+## Cấu Hình Reranker
 
-Recommended production-style reranker setup:
+Cấu hình reranker theo hướng production khuyến nghị:
 
 - `RERANKER_PROVIDER=cross_encoder`
 - `RERANKER_MODEL=BAAI/bge-reranker-v2-m3`
@@ -67,45 +67,45 @@ Recommended production-style reranker setup:
 - `RERANKER_BATCH_SIZE=8`
 - `RERANKER_TOP_N=6`
 
-Reranker role:
+Vai trò của reranker:
 
-- reranks top retrieved candidates using query-document pair scoring
-- improves context quality before answer generation
+- sắp xếp lại top candidate sau retrieval bằng điểm cặp query-document
+- nâng chất lượng context trước bước generation
 
-Latency trade-off:
+Đánh đổi về độ trễ:
 
-- cross-encoder reranking is slower than score-only ordering
-- keep `RERANKER_TOP_N` small (for example `4-8`) on local CPU machines with 16GB RAM
+- cross-encoder reranking chậm hơn so với sắp xếp chỉ dựa trên điểm ban đầu
+- nên giữ `RERANKER_TOP_N` nhỏ (ví dụ `4-8`) trên máy local CPU 16GB RAM
 
-Fallback behavior:
+Hành vi fallback:
 
-- if cross-encoder model initialization fails, backend logs warning and uses score-only reranker
-- standard, advanced, and compare query modes continue to run
+- nếu khởi tạo model cross-encoder lỗi, backend ghi cảnh báo và dùng score-only reranker
+- các mode `standard`, `advanced`, `compare` vẫn chạy bình thường
 
-## Before Opening a Pull Request
+## Trước Khi Mở Pull Request
 
-- run tests and ensure green
-- run evaluation at least once (`stub` or `workflow` predictor)
-- update docs when architecture or behavior changed
-- keep changes scoped and avoid unrelated refactors
-- ensure no secrets are committed
+- chạy test và đảm bảo pass
+- chạy evaluation ít nhất một lần (`stub` hoặc `workflow` predictor)
+- cập nhật docs khi kiến trúc hoặc hành vi thay đổi
+- giữ phạm vi thay đổi gọn, tránh refactor không liên quan
+- đảm bảo không commit secrets
 
-## Debug Priority Order
+## Thứ Tự Ưu Tiên Khi Debug
 
-If output quality or behavior is unexpected, check in this order:
+Nếu chất lượng output/hành vi chưa đúng kỳ vọng, kiểm tra theo thứ tự:
 
-1. schema request/response mismatches
-2. ingestion metadata and chunking output
-3. index persistence/load state
-4. dense/sparse/hybrid retrieval output
-5. reranker ordering and context selection
-6. generator output parsing and insufficient-evidence handling
-7. advanced workflow state transitions (gate/rewrite/critique/retry/refine/abstain)
-8. frontend data mapping/rendering assumptions
+1. lệch schema request/response
+2. metadata ingestion và đầu ra chunking
+3. trạng thái persistence/load của index
+4. đầu ra retrieval dense/sparse/hybrid
+5. thứ tự reranker và context selection
+6. parse output của generator và xử lý thiếu bằng chứng
+7. chuyển trạng thái advanced workflow (gate/rewrite/critique/retry/refine/abstain)
+8. giả định mapping/render dữ liệu phía frontend
 
-## Document Processing Statuses
+## Trạng Thái Xử Lý Tài Liệu
 
-The backend exposes these status values for uploads:
+Backend trả về các trạng thái upload sau:
 
 - `uploaded`
 - `splitting`
@@ -114,12 +114,12 @@ The backend exposes these status values for uploads:
 - `ready`
 - `failed`
 
-When one or more uploaded documents are `ready`, query workflows use uploaded indexes.
-If none are `ready`, workflows fall back to the seeded corpus indexes.
+Khi có ít nhất một tài liệu `ready`, workflow truy vấn sẽ dùng index của tài liệu đã upload.
+Nếu không có tài liệu nào `ready`, workflow sẽ fallback về index seeded corpus.
 
-## Mixed-Content Ingestion Notes
+## Ghi Chú Về Ingestion Nội Dung Hỗn Hợp
 
-- Supported file types: `.pdf`, `.docx`, `.txt`, `.md`, `.markdown`
-- Parser layer extracts structured blocks: `text`, `table`, `image`
-- Tables are preserved as table blocks and chunked without splitting
-- OCR is currently not enabled; images are tracked as metadata/image placeholder blocks
+- Định dạng file hỗ trợ: `.pdf`, `.docx`, `.txt`, `.md`, `.markdown`
+- Tầng parser trích xuất block có cấu trúc: `text`, `table`, `image`
+- Bảng được giữ ở dạng table block và chunk mà không tách nhỏ
+- OCR hiện chưa bật mặc định; ảnh được theo dõi dưới dạng metadata/image placeholder block

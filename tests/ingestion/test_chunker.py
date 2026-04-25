@@ -79,3 +79,24 @@ def test_chunker_does_not_split_table_blocks() -> None:
     assert len(chunks) == 1
     assert chunks[0].content == table_doc.content
     assert chunks[0].block_type == "table"
+
+
+def test_chunker_preserves_ocr_block_type_in_metadata() -> None:
+    doc = LoadedDocument(
+        doc_id="doc_ocr",
+        source="memory://ocr",
+        title="OCR Doc",
+        section="Page 1",
+        page=1,
+        content="Nội dung OCR tiếng Việt có dấu với token ocr-keep-meta.",
+        block_type="text",
+        language="vi",
+        metadata={"block_type": "ocr_text", "ocr": True},
+    )
+
+    chunks = Chunker(chunk_size=16, chunk_overlap=2).chunk_document(doc)
+
+    assert chunks
+    assert all(chunk.block_type == "text" for chunk in chunks)
+    assert all(chunk.metadata.get("block_type") == "ocr_text" for chunk in chunks)
+    assert all(bool(chunk.metadata.get("ocr")) is True for chunk in chunks)

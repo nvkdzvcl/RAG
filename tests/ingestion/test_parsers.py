@@ -205,9 +205,15 @@ def test_pdf_parser_appends_ocr_text_block_with_metadata(monkeypatch) -> None:
         SimpleNamespace(open=lambda _: FakePDF()),
     )
     monkeypatch.setattr("app.ingestion.parsers.pdf_parser.is_tesseract_available", lambda: True)
+    ocr_calls: list[tuple[tuple[object, ...], dict[str, object]]] = []
+
+    def _fake_ocr(*args, **kwargs) -> str:
+        ocr_calls.append((args, kwargs))
+        return "Nội dung OCR tiếng Việt có dấu."
+
     monkeypatch.setattr(
         "app.ingestion.parsers.pdf_parser.ocr_pdf_page_with_pymupdf",
-        lambda *args, **kwargs: "Nội dung OCR tiếng Việt có dấu.",
+        _fake_ocr,
     )
 
     parser = PDFParser(
@@ -226,6 +232,8 @@ def test_pdf_parser_appends_ocr_text_block_with_metadata(monkeypatch) -> None:
     assert block.metadata["ocr"] is True
     assert block.metadata["block_type"] == "ocr_text"
     assert block.metadata["ocr_language"] == "vie+eng"
+    assert block.metadata["language"] == "vi"
+    assert len(ocr_calls) == 1
 
 
 def test_pdf_parser_text_extraction_still_works_without_ocr_fallback(monkeypatch) -> None:

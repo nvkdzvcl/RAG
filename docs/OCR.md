@@ -58,6 +58,7 @@ PDF parser vẫn chạy luồng bình thường:
    - thêm block text metadata OCR (`block_type=ocr_text`, `ocr=true`)
 
 Nếu OCR fail, parser ghi warning và tiếp tục xử lý tài liệu.
+Sau khi thay đổi `OCR_ENABLED` hoặc tham số OCR, cần upload lại PDF để tái tạo chunks/index theo cấu hình mới.
 
 ## Giới Hạn Hiện Tại
 

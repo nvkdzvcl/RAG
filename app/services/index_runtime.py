@@ -72,6 +72,11 @@ class RuntimeIndexManager:
         self._retriever: HybridRetriever | EmptyRetriever = EmptyRetriever()
         self._active_source = "none"
         self._active_chunk_count = 0
+        self._last_activation_stats: dict[str, int | str] = {
+            "chunk_count": 0,
+            "ocr_chunks": 0,
+            "source": "none",
+        }
 
         logger.info(
             "Initialized runtime embedding provider",
@@ -107,9 +112,36 @@ class RuntimeIndexManager:
     def _build_chunks(self, paths: list[Path], *, source_label: str) -> list[DocumentChunk]:
         loaded = self._ingest_files(paths, source_label=source_label)
         if not loaded:
+            logger.info(
+                "Runtime ingestion stats | source=%s | loaded_blocks=0 | ocr_blocks=0 | total_chunks=0 | ocr_chunks=0",
+                source_label,
+            )
             return []
+
+        ocr_blocks = sum(
+            1
+            for doc in loaded
+            if doc.metadata.get("block_type") == "ocr_text" or bool(doc.metadata.get("ocr"))
+        )
         cleaned = self.cleaner.clean_documents(loaded)
-        return self.chunker.chunk_documents(cleaned)
+        chunks = self.chunker.chunk_documents(cleaned)
+        ocr_chunks = sum(
+            1
+            for chunk in chunks
+            if chunk.metadata.get("block_type") == "ocr_text" or bool(chunk.metadata.get("ocr"))
+        )
+        logger.info(
+            (
+                "Runtime ingestion stats | source=%s | loaded_blocks=%s | ocr_blocks=%s "
+                "| total_chunks=%s | ocr_chunks=%s"
+            ),
+            source_label,
+            len(loaded),
+            ocr_blocks,
+            len(chunks),
+            ocr_chunks,
+        )
+        return chunks
 
     def _activate_chunks(self, chunks: list[DocumentChunk], *, source: str) -> int:
         if not chunks:
@@ -117,8 +149,18 @@ class RuntimeIndexManager:
                 self._retriever = EmptyRetriever()
                 self._active_source = source
                 self._active_chunk_count = 0
+                self._last_activation_stats = {
+                    "chunk_count": 0,
+                    "ocr_chunks": 0,
+                    "source": source,
+                }
             return 0
 
+        ocr_chunk_count = sum(
+            1
+            for chunk in chunks
+            if chunk.metadata.get("block_type") == "ocr_text" or bool(chunk.metadata.get("ocr"))
+        )
         built = IndexBuilder(embedding_provider=self.embedding_provider).build(chunks)
         dense = DenseRetriever(built.vector_index, self.embedding_provider)
         sparse = SparseRetriever(built.bm25_index)
@@ -131,14 +173,21 @@ class RuntimeIndexManager:
             self._retriever = hybrid
             self._active_source = source
             self._active_chunk_count = built.chunk_count
+            self._last_activation_stats = {
+                "chunk_count": built.chunk_count,
+                "ocr_chunks": ocr_chunk_count,
+                "source": source,
+            }
 
         logger.info(
-            "Activated runtime indexes",
-            extra={
-                "source": source,
-                "chunk_count": built.chunk_count,
-                "embedding_provider": built.embedding_provider,
-            },
+            (
+                "Activated runtime indexes | source=%s | chunk_count=%s | indexed_ocr_chunks=%s "
+                "| embedding_provider=%s"
+            ),
+            source,
+            built.chunk_count,
+            ocr_chunk_count,
+            built.embedding_provider,
         )
         return built.chunk_count
 
@@ -170,6 +219,10 @@ class RuntimeIndexManager:
     def get_active_chunk_count(self) -> int:
         with self._lock:
             return self._active_chunk_count
+
+    def get_last_activation_stats(self) -> dict[str, int | str]:
+        with self._lock:
+            return dict(self._last_activation_stats)
 
     def clear_uploaded_indexes(self) -> int:
         """Clear active uploaded indexes and remove persisted local index artifacts.

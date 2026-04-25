@@ -1,373 +1,373 @@
 # DECISIONS.md
 
-This document records important architectural and technical decisions.
+Tài liệu này ghi lại các quyết định kiến trúc và kỹ thuật quan trọng.
 
-Each decision includes:
-- context
-- decision
-- alternatives considered
-- reasoning
-- consequences
+Mỗi quyết định bao gồm:
+- bối cảnh
+- quyết định
+- các phương án đã cân nhắc
+- lý do lựa chọn
+- hệ quả
 
-The goal is to preserve the rationale behind the project so future contributors do not need to guess why certain choices were made.
+Mục tiêu là lưu giữ lập luận kỹ thuật của dự án để người đóng góp sau này không phải đoán vì sao các lựa chọn hiện tại được đưa ra.
 
 ---
 
-## DECISION 001 — Build Three Modes in One System
+## QUYẾT ĐỊNH 001 — Xây Dựng 3 Chế Độ Trong Một Hệ Thống
 
-### Context
-The project needs a baseline RAG flow, an advanced Self-RAG flow, and a direct comparison flow.
+### Bối cảnh
+Dự án cần luồng RAG baseline, luồng Self-RAG nâng cao, và luồng so sánh trực tiếp.
 
-### Decision
-Build one shared system with three workflows:
+### Quyết định
+Xây dựng một hệ thống dùng chung với 3 workflow:
 - standard mode
 - advanced mode
 - compare mode
 
-### Alternatives
-- build only advanced mode
-- build separate codebases by mode
-- build standard mode first and redesign later
+### Các phương án đã cân nhắc
+- chỉ xây advanced mode
+- tách codebase riêng cho từng mode
+- làm standard trước rồi thiết kế lại sau
 
-### Reasoning
-A shared architecture reduces duplication and makes comparison easier.
+### Lý do lựa chọn
+Kiến trúc dùng chung giúp giảm trùng lặp và làm cho việc so sánh trở nên trực tiếp hơn.
 
-### Consequences
-Pros:
-- easier benchmarking
-- cleaner demos
-- less duplicated code
+### Hệ quả
+Ưu điểm:
+- benchmark dễ hơn
+- demo rõ ràng hơn
+- giảm code trùng lặp
 
-Cons:
-- requires better initial architecture discipline
+Nhược điểm:
+- yêu cầu kỷ luật kiến trúc tốt ngay từ đầu
 
 ---
 
-## DECISION 002 — Use Practical Self-RAG Instead of Paper-Level Training
+## QUYẾT ĐỊNH 002 — Dùng Self-RAG Thực Dụng Thay Vì Tái Hiện Mức Paper
 
-### Context
-The original Self-RAG paper uses model-level training and reflection-style behavior.
+### Bối cảnh
+Paper Self-RAG gốc dùng huấn luyện ở mức mô hình và hành vi phản tư (reflection-style).
 
-### Decision
-Implement a system-level Self-RAG workflow with:
+### Quyết định
+Triển khai Self-RAG ở mức hệ thống với các bước:
 - retrieval gate
 - critique
 - retry
 - refine
 - abstain
 
-### Alternatives
-- fully trained Self-RAG reproduction
-- standard RAG only
+### Các phương án đã cân nhắc
+- tái hiện Self-RAG đầy đủ theo paper
+- chỉ dùng standard RAG
 
-### Reasoning
-This is more realistic for an open-source academic software project.
+### Lý do lựa chọn
+Đây là hướng thực tế hơn cho một dự án phần mềm học thuật mã nguồn mở.
 
-### Consequences
-Pros:
-- feasible to implement
-- easier to debug
-- easier to demonstrate
+### Hệ quả
+Ưu điểm:
+- khả thi để triển khai
+- dễ debug
+- dễ trình bày
 
-Cons:
-- not a full paper reproduction
+Nhược điểm:
+- không phải bản tái hiện paper đầy đủ
 
 ---
 
-## DECISION 003 — Use Hybrid Retrieval
+## QUYẾT ĐỊNH 003 — Dùng Hybrid Retrieval
 
-### Context
-Dense-only retrieval can miss keyword-heavy or exact-match queries.
+### Bối cảnh
+Dense-only có thể bỏ sót truy vấn nặng từ khóa hoặc cần khớp chính xác.
 
-### Decision
-Use hybrid retrieval:
+### Quyết định
+Dùng hybrid retrieval:
 - dense retrieval
 - BM25 retrieval
 - fusion
 
-### Alternatives
-- dense-only retrieval
-- sparse-only retrieval
+### Các phương án đã cân nhắc
+- chỉ dense retrieval
+- chỉ sparse retrieval
 
-### Reasoning
-Hybrid retrieval improves recall across different question types.
+### Lý do lựa chọn
+Hybrid retrieval cải thiện recall cho nhiều dạng câu hỏi khác nhau.
 
-### Consequences
-Pros:
-- better retrieval robustness
-- better support for technical/domain terms
+### Hệ quả
+Ưu điểm:
+- độ bền vững truy hồi tốt hơn
+- hỗ trợ tốt hơn cho thuật ngữ kỹ thuật/chuyên ngành
 
-Cons:
-- more components to maintain
-
----
-
-## DECISION 004 — Add a Reranker
-
-### Context
-Initial retrieval results can contain noisy or weakly relevant chunks.
-
-### Decision
-Apply reranking after retrieval.
-
-### Alternatives
-- no reranker
-- basic score sorting only
-
-### Reasoning
-Better-ranked context improves generation quality and reduces noise.
-
-### Consequences
-Pros:
-- stronger context quality
-- better downstream answers
-
-Cons:
-- extra latency
-- extra dependency
+Nhược điểm:
+- tăng số thành phần cần bảo trì
 
 ---
 
-## DECISION 005 — Limit Generation Context
+## QUYẾT ĐỊNH 004 — Bổ Sung Reranker
 
-### Context
-Passing too many chunks can reduce answer quality and increase cost.
+### Bối cảnh
+Kết quả retrieval ban đầu có thể chứa chunk nhiễu hoặc liên quan yếu.
 
-### Decision
-Use only top selected chunks after reranking for generation.
+### Quyết định
+Áp dụng reranking sau retrieval.
 
-### Alternatives
-- pass all retrieved chunks
-- dynamic unlimited context
+### Các phương án đã cân nhắc
+- không dùng reranker
+- chỉ sắp xếp theo điểm cơ bản
 
-### Reasoning
-Focused context tends to produce better grounded answers.
+### Lý do lựa chọn
+Context được xếp hạng tốt hơn sẽ cải thiện chất lượng generation và giảm nhiễu.
 
-### Consequences
-Pros:
-- lower token cost
-- cleaner answers
+### Hệ quả
+Ưu điểm:
+- chất lượng context tốt hơn
+- câu trả lời downstream tốt hơn
 
-Cons:
-- risk of excluding useful evidence if selection is poor
+Nhược điểm:
+- tăng độ trễ
+- thêm phụ thuộc runtime
 
 ---
 
-## DECISION 006 — Separate Standard and Advanced Workflows
+## QUYẾT ĐỊNH 005 — Giới Hạn Context Khi Generation
 
-### Context
-Standard mode and advanced mode share components but differ in control flow.
+### Bối cảnh
+Truyền quá nhiều chunk có thể làm giảm chất lượng trả lời và tăng chi phí.
 
-### Decision
-Implement separate workflow modules:
+### Quyết định
+Chỉ dùng top chunk đã chọn sau reranking cho generation.
+
+### Các phương án đã cân nhắc
+- truyền toàn bộ chunk retrieve được
+- context động không giới hạn
+
+### Lý do lựa chọn
+Context tập trung thường cho câu trả lời grounded tốt hơn.
+
+### Hệ quả
+Ưu điểm:
+- giảm chi phí token
+- câu trả lời gọn hơn
+
+Nhược điểm:
+- có nguy cơ bỏ sót bằng chứng hữu ích nếu chọn context chưa tốt
+
+---
+
+## QUYẾT ĐỊNH 006 — Tách Workflow Standard và Advanced
+
+### Bối cảnh
+Standard và advanced dùng chung nhiều thành phần nhưng khác nhau ở luồng điều khiển.
+
+### Quyết định
+Tách module workflow:
 - standard.py
 - advanced.py
 - shared.py
 - router.py
 
-### Alternatives
-- one giant workflow file with many flags
-- duplicate separate pipelines
+### Các phương án đã cân nhắc
+- một file workflow lớn với nhiều cờ
+- tách pipeline riêng nhưng trùng lặp
 
-### Reasoning
-This keeps orchestration readable and modular.
+### Lý do lựa chọn
+Cách này giúp orchestration dễ đọc và có tính module.
 
-### Consequences
-Pros:
-- easier maintenance
-- easier debugging
-- cleaner testing
+### Hệ quả
+Ưu điểm:
+- dễ bảo trì
+- dễ debug
+- dễ test
 
-Cons:
-- slightly more upfront structure
-
----
-
-## DECISION 007 — Add Retrieval Gate in Advanced Mode
-
-### Context
-Not every query truly requires retrieval.
-
-### Decision
-Add a retrieval-gate step before retrieval in advanced mode.
-
-### Alternatives
-- always retrieve
-- rule-only retrieval decision
-
-### Reasoning
-This more closely matches practical Self-RAG behavior and reduces unnecessary work.
-
-### Consequences
-Pros:
-- lower cost in some cases
-- more flexible system behavior
-
-Cons:
-- risk of incorrect no-retrieval decisions
+Nhược điểm:
+- cần đầu tư cấu trúc ban đầu nhiều hơn một chút
 
 ---
 
-## DECISION 008 — Use Structured Critique Output
+## QUYẾT ĐỊNH 007 — Thêm Retrieval Gate Ở Advanced Mode
 
-### Context
-Free-form critique text is hard to parse and debug.
+### Bối cảnh
+Không phải truy vấn nào cũng thực sự cần retrieval.
 
-### Decision
-Require critique output to follow a structured schema.
+### Quyết định
+Thêm bước retrieval-gate trước retrieval ở advanced mode.
 
-### Alternatives
-- free-text critique
-- rule-only critique
+### Các phương án đã cân nhắc
+- luôn retrieve
+- quyết định retrieve chỉ bằng rule
 
-### Reasoning
-Structured output is easier to validate and consume programmatically.
+### Lý do lựa chọn
+Phù hợp hơn với Self-RAG thực dụng và giảm công việc không cần thiết.
 
-### Consequences
-Pros:
-- more reliable workflow logic
-- easier debugging
-- cleaner logs
+### Hệ quả
+Ưu điểm:
+- có thể giảm chi phí trong một số trường hợp
+- hành vi hệ thống linh hoạt hơn
 
-Cons:
-- requires careful prompt design
-
----
-
-## DECISION 009 — Limit Advanced Retry Loop
-
-### Context
-Unbounded loops cause cost spikes and unpredictable latency.
-
-### Decision
-Set default maximum retry loop count to 2.
-
-### Alternatives
-- unlimited retries
-- no retry
-
-### Reasoning
-Most gains come from one or two retries, not endless looping.
-
-### Consequences
-Pros:
-- bounded complexity
-- predictable runtime
-
-Cons:
-- some hard cases may remain unresolved
+Nhược điểm:
+- có rủi ro quyết định sai ở nhánh không-retrieval
 
 ---
 
-## DECISION 010 — Allow Abstaining
+## QUYẾT ĐỊNH 008 — Dùng Critique Output Có Cấu Trúc
 
-### Context
-The system should not hallucinate when evidence is insufficient.
+### Bối cảnh
+Critique dạng văn bản tự do khó parse và khó debug.
 
-### Decision
-Allow the system to abstain or return a clearly marked insufficient-evidence response.
+### Quyết định
+Yêu cầu critique tuân theo schema có cấu trúc.
 
-### Alternatives
-- always answer
-- silently guess
+### Các phương án đã cân nhắc
+- critique tự do
+- critique chỉ theo rule
 
-### Reasoning
-Trustworthiness is more important than forced completeness.
+### Lý do lựa chọn
+Output có cấu trúc dễ validate và dễ tiêu thụ ở mức lập trình.
 
-### Consequences
-Pros:
-- stronger reliability
-- better user trust
+### Hệ quả
+Ưu điểm:
+- logic workflow đáng tin cậy hơn
+- debug dễ hơn
+- log rõ ràng hơn
 
-Cons:
-- some users may prefer a speculative answer
-
----
-
-## DECISION 011 — Use Shared State Schema Across Modes
-
-### Context
-All workflows need consistent internal state handling, especially for logging and frontend trace display.
-
-### Decision
-Use one shared workflow state schema, with some fields unused in standard mode.
-
-### Alternatives
-- fully separate state models
-- untyped dictionaries
-
-### Reasoning
-Shared state improves consistency and reduces serialization complexity.
-
-### Consequences
-Pros:
-- simpler API integration
-- simpler logging
-- simpler trace rendering
-
-Cons:
-- standard mode may carry a few unused fields
+Nhược điểm:
+- cần thiết kế prompt cẩn thận
 
 ---
 
-## DECISION 012 — Store Prompts in Separate Files
+## QUYẾT ĐỊNH 009 — Giới Hạn Vòng Lặp Retry Ở Advanced
 
-### Context
-Prompt strings embedded directly in code become hard to maintain.
+### Bối cảnh
+Vòng lặp không giới hạn gây tăng chi phí và độ trễ khó dự đoán.
 
-### Decision
-Store prompts under `/prompts`.
+### Quyết định
+Đặt số vòng retry tối đa mặc định là 2.
 
-### Alternatives
-- inline prompt strings
-- hidden constant blocks in code
+### Các phương án đã cân nhắc
+- retry không giới hạn
+- không retry
 
-### Reasoning
-Separate prompt files are easier to version, compare, and improve.
+### Lý do lựa chọn
+Phần lớn lợi ích đến từ 1-2 lần retry, không phải lặp vô hạn.
 
-### Consequences
-Pros:
-- cleaner code
-- easier prompt iteration
-- easier contributor onboarding
+### Hệ quả
+Ưu điểm:
+- độ phức tạp có giới hạn
+- thời gian chạy dễ dự đoán
 
-Cons:
-- one more directory to maintain
-
----
-
-## DECISION 013 — Build a Frontend Early but Keep It Moderate
-
-### Context
-The project needs a demo-friendly interface, but frontend work must not dominate backend work.
-
-### Decision
-Build a reasonably polished frontend after backend baseline stability.
-
-### Alternatives
-- no frontend
-- very heavy frontend first
-
-### Reasoning
-A moderate frontend supports demos and usability without derailing the backend.
-
-### Consequences
-Pros:
-- better presentation
-- easier evaluation and demonstration
-
-Cons:
-- additional coordination between frontend and backend
+Nhược điểm:
+- một số ca khó có thể vẫn chưa giải quyết triệt để
 
 ---
 
-## DECISION 014 — Use React + Vite + Tailwind + shadcn/ui
+## QUYẾT ĐỊNH 010 — Cho Phép Abstain
 
-### Context
-The project needs a frontend that is attractive, practical, and fast to build.
+### Bối cảnh
+Hệ thống không nên hallucinate khi bằng chứng không đủ.
 
-### Decision
-Use:
+### Quyết định
+Cho phép hệ thống abstain hoặc trả về phản hồi "thiếu bằng chứng" rõ ràng.
+
+### Các phương án đã cân nhắc
+- luôn trả lời
+- đoán ngầm không thông báo
+
+### Lý do lựa chọn
+Độ tin cậy quan trọng hơn sự đầy đủ cưỡng ép.
+
+### Hệ quả
+Ưu điểm:
+- độ tin cậy cao hơn
+- tăng niềm tin người dùng
+
+Nhược điểm:
+- một số người dùng có thể thích câu trả lời suy đoán hơn
+
+---
+
+## QUYẾT ĐỊNH 011 — Dùng Schema State Dùng Chung Giữa Các Mode
+
+### Bối cảnh
+Tất cả workflow cần cách quản lý state nhất quán, nhất là cho logging và trace ở frontend.
+
+### Quyết định
+Dùng một workflow state schema chung; một số field có thể không dùng ở standard mode.
+
+### Các phương án đã cân nhắc
+- model state tách biệt hoàn toàn
+- dictionary không typed
+
+### Lý do lựa chọn
+State dùng chung tăng tính nhất quán và giảm độ phức tạp serialization.
+
+### Hệ quả
+Ưu điểm:
+- tích hợp API đơn giản hơn
+- logging đơn giản hơn
+- render trace đơn giản hơn
+
+Nhược điểm:
+- standard mode có thể mang vài field không dùng
+
+---
+
+## QUYẾT ĐỊNH 012 — Lưu Prompt Thành File Riêng
+
+### Bối cảnh
+Prompt nhúng trực tiếp trong code khó bảo trì.
+
+### Quyết định
+Lưu prompt trong thư mục `/prompts`.
+
+### Các phương án đã cân nhắc
+- prompt inline trong code
+- hằng số prompt ẩn trong các module
+
+### Lý do lựa chọn
+Prompt file riêng dễ versioning, so sánh và cải tiến.
+
+### Hệ quả
+Ưu điểm:
+- code gọn hơn
+- vòng lặp chỉnh prompt dễ hơn
+- onboarding cộng tác viên dễ hơn
+
+Nhược điểm:
+- thêm một thư mục cần bảo trì
+
+---
+
+## QUYẾT ĐỊNH 013 — Làm Frontend Sớm Nhưng Ở Mức Vừa Phải
+
+### Bối cảnh
+Dự án cần giao diện để demo, nhưng frontend không được lấn át backend.
+
+### Quyết định
+Xây frontend đủ hoàn thiện sau khi backend baseline ổn định.
+
+### Các phương án đã cân nhắc
+- không làm frontend
+- làm frontend nặng ngay từ đầu
+
+### Lý do lựa chọn
+Frontend mức vừa phải phục vụ demo và khả năng dùng mà không làm lệch ưu tiên backend.
+
+### Hệ quả
+Ưu điểm:
+- trình bày tốt hơn
+- đánh giá và demo dễ hơn
+
+Nhược điểm:
+- cần phối hợp thêm giữa frontend và backend
+
+---
+
+## QUYẾT ĐỊNH 014 — Dùng React + Vite + Tailwind + shadcn/ui
+
+### Bối cảnh
+Dự án cần frontend đẹp, thực dụng và phát triển nhanh.
+
+### Quyết định
+Dùng stack:
 - React
 - Vite
 - Tailwind CSS
@@ -375,99 +375,101 @@ Use:
 - lucide-react
 - recharts
 
-### Alternatives
-- plain React without design system
+### Các phương án đã cân nhắc
+- React thuần không design system
 - Next.js
-- heavier UI frameworks
+- các UI framework nặng hơn
 
-### Reasoning
-This stack is fast to develop, visually strong, and suitable for open-source work.
+### Lý do lựa chọn
+Stack này có tốc độ phát triển nhanh, chất lượng giao diện tốt và phù hợp với dự án mã nguồn mở.
 
-### Consequences
-Pros:
-- attractive UI quickly
-- modern developer experience
-- component flexibility
+### Hệ quả
+Ưu điểm:
+- làm UI đẹp nhanh
+- trải nghiệm dev hiện đại
+- linh hoạt thành phần
 
-Cons:
-- requires frontend setup overhead
+Nhược điểm:
+- có overhead thiết lập frontend
 
 ---
 
-## DECISION 015 — Keep Installation Simple with requirements.txt
+## QUYẾT ĐỊNH 015 — Giữ Cài Đặt Đơn Giản Với requirements.txt
 
-### Context
-Open-source contributors should be able to install backend dependencies quickly.
+### Bối cảnh
+Người đóng góp mã nguồn mở cần cài phụ thuộc backend nhanh và rõ ràng.
 
-### Decision
-Provide:
+### Quyết định
+Cung cấp:
 - requirements.txt
 - requirements-dev.txt
 - .env.example
 
-Do not keep a separate `requirement.txt` shim because it creates ambiguity for contributors.
+Không giữ shim `requirement.txt` riêng để tránh gây mơ hồ.
 
-### Alternatives
-- pyproject only
-- undocumented manual install
+### Các phương án đã cân nhắc
+- chỉ dùng pyproject
+- cài đặt thủ công không tài liệu hóa
 
-### Reasoning
-This lowers setup friction for contributors and evaluators.
+### Lý do lựa chọn
+Giảm ma sát setup cho contributor và người đánh giá.
 
-### Consequences
-Pros:
-- easier onboarding
-- easier local setup
+### Hệ quả
+Ưu điểm:
+- onboarding dễ hơn
+- setup local dễ hơn
 
-Cons:
-- dependencies must be maintained carefully
+Nhược điểm:
+- cần bảo trì phụ thuộc cẩn thận
 
 ---
 
-## DECISION 016 — Prioritize Readability Over Premature Optimization
+## QUYẾT ĐỊNH 016 — Ưu Tiên Tính Dễ Đọc Hơn Tối Ưu Quá Sớm
 
-### Context
-The project is an academic software project and open-source reference.
+### Bối cảnh
+Đây là dự án phần mềm học thuật và tài liệu tham chiếu mã nguồn mở.
 
-### Decision
-Prefer readable modular code over aggressive optimization in the first version.
+### Quyết định
+Ưu tiên code module, dễ đọc hơn là tối ưu mạnh ở phiên bản đầu.
 
-### Alternatives
-- optimize early
-- compress multiple concerns into fewer files
+### Các phương án đã cân nhắc
+- tối ưu sớm
+- gộp nhiều mối quan tâm vào ít file
 
-### Reasoning
-Maintainability and clarity are essential for learning and collaboration.
+### Lý do lựa chọn
+Khả năng bảo trì và tính rõ ràng là nền tảng cho học tập và cộng tác.
 
-### Consequences
-Pros:
-- easier contributor understanding
-- easier grading and demonstration
+### Hệ quả
+Ưu điểm:
+- contributor dễ hiểu hệ thống
+- thuận lợi cho chấm điểm và demo
 
-Cons:
-- some performance optimizations may be deferred
+Nhược điểm:
+- một số tối ưu hiệu năng có thể được dời sang giai đoạn sau
 
-## DECISION 017 — Add Compare Mode
+---
 
-### Context
-The project needs a clear way to compare baseline RAG and Advanced Self-RAG behavior.
+## QUYẾT ĐỊNH 017 — Thêm Compare Mode
 
-### Decision
-Add a compare mode that runs standard and advanced workflows side by side for the same query.
+### Bối cảnh
+Dự án cần cách trực quan để so sánh baseline RAG và Advanced Self-RAG.
 
-### Alternatives
-- compare manually outside the system
-- keep only standard and advanced modes
+### Quyết định
+Thêm compare mode chạy standard và advanced song song cho cùng một truy vấn.
 
-### Reasoning
-This improves demo quality, evaluation visibility, and academic value.
+### Các phương án đã cân nhắc
+- so sánh thủ công ngoài hệ thống
+- chỉ giữ standard và advanced
 
-### Consequences
-Pros:
-- easier benchmarking
-- better demos
-- clearer explanation of trade-offs
+### Lý do lựa chọn
+Nâng chất lượng demo, tăng khả năng quan sát khi evaluation và gia tăng giá trị học thuật.
 
-Cons:
-- additional response schema complexity
-- frontend becomes slightly more complex
+### Hệ quả
+Ưu điểm:
+- benchmark dễ hơn
+- demo tốt hơn
+- giải thích trade-off rõ hơn
+
+Nhược điểm:
+- schema response phức tạp hơn
+- frontend cũng phức tạp hơn một chút

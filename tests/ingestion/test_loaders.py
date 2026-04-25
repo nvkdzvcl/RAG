@@ -129,3 +129,4 @@ def test_pdf_loader_ocr_vietnamese_text_becomes_chunk_and_preserves_metadata(
     chunks = Chunker(chunk_size=40, chunk_overlap=5).chunk_documents(docs)
     assert chunks
     assert any("tiếng Việt" in chunk.content for chunk in chunks)
+    assert any(chunk.metadata.get("block_type") == "ocr_text" for chunk in chunks)

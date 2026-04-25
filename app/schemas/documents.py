@@ -79,11 +79,23 @@ class DocumentResponse(BaseModel):
     status: DocumentProcessingStatus
     stage: DocumentProcessingStatus
     chunk_count: int | None = None
+    total_blocks: int | None = None
+    text_blocks: int | None = None
+    table_blocks: int | None = None
+    image_blocks: int | None = None
+    ocr_blocks: int | None = None
+    total_chunks: int | None = None
     created_at: datetime
     message: str | None = None
 
     @classmethod
-    def from_record(cls, record: StoredDocumentRecord) -> "DocumentResponse":
+    def from_record(
+        cls,
+        record: StoredDocumentRecord,
+        *,
+        debug_stats: dict[str, int] | None = None,
+    ) -> "DocumentResponse":
+        stats = debug_stats or {}
         return cls(
             document_id=record.document_id,
             id=record.document_id,
@@ -91,6 +103,12 @@ class DocumentResponse(BaseModel):
             status=record.status,
             stage=record.status,
             chunk_count=record.chunk_count,
+            total_blocks=stats.get("total_blocks"),
+            text_blocks=stats.get("text_blocks"),
+            table_blocks=stats.get("table_blocks"),
+            image_blocks=stats.get("image_blocks"),
+            ocr_blocks=stats.get("ocr_blocks"),
+            total_chunks=stats.get("total_chunks"),
             created_at=record.created_at,
             message=record.message,
         )

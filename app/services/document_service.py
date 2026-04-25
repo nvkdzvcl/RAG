@@ -4,12 +4,14 @@ from __future__ import annotations
 
 import json
 import logging
+from dataclasses import dataclass
 from pathlib import Path
 from threading import RLock
 from uuid import uuid4
 
 from fastapi import UploadFile
 
+from app.core.config import get_settings
 from app.ingestion import BaseLoader, Chunker, DocxLoader, MarkdownLoader, PdfLoader, TextCleaner, TextLoader
 from app.ingestion.base_loader import build_doc_id
 from app.schemas.documents import (
@@ -24,6 +26,28 @@ from app.schemas.ingestion import DocumentChunk, LoadedDocument
 from app.services.index_runtime import RuntimeIndexManager
 
 logger = logging.getLogger(__name__)
+
+
+@dataclass
+class UploadDebugStats:
+    total_blocks: int = 0
+    text_blocks: int = 0
+    table_blocks: int = 0
+    image_blocks: int = 0
+    ocr_blocks: int = 0
+    total_chunks: int = 0
+    ocr_chunks: int = 0
+    indexed_ocr_chunks: int = 0
+
+    def response_payload(self) -> dict[str, int]:
+        return {
+            "total_blocks": self.total_blocks,
+            "text_blocks": self.text_blocks,
+            "table_blocks": self.table_blocks,
+            "image_blocks": self.image_blocks,
+            "ocr_blocks": self.ocr_blocks,
+            "total_chunks": self.total_chunks,
+        }
 
 
 class DocumentService:
@@ -168,6 +192,20 @@ class DocumentService:
         loader = self._resolve_loader(file_path)
         if loader is None:
             raise ValueError(f"Unsupported file type: {file_path.suffix.lower()}")
+        if file_path.suffix.lower() == ".pdf":
+            settings = get_settings()
+            logger.info(
+                (
+                    "Upload OCR config | file=%s | OCR_ENABLED=%s | OCR_LANGUAGE=%s "
+                    "| OCR_MIN_TEXT_CHARS=%s | OCR_RENDER_DPI=%s | OCR_CONFIDENCE_THRESHOLD=%s"
+                ),
+                str(file_path),
+                settings.ocr_enabled,
+                settings.ocr_language,
+                settings.ocr_min_text_chars,
+                settings.ocr_render_dpi,
+                settings.ocr_confidence_threshold,
+            )
         return loader.load(
             file_path,
             metadata={
@@ -177,16 +215,48 @@ class DocumentService:
             },
         )
 
-    def _chunk_file(self, file_path: Path) -> list[DocumentChunk]:
+    def _chunk_file(self, file_path: Path) -> tuple[list[DocumentChunk], UploadDebugStats]:
         loaded = self._load_file(file_path)
+        debug_stats = UploadDebugStats(
+            total_blocks=len(loaded),
+            text_blocks=sum(1 for doc in loaded if doc.block_type == "text"),
+            table_blocks=sum(1 for doc in loaded if doc.block_type == "table"),
+            image_blocks=sum(1 for doc in loaded if doc.block_type == "image"),
+            ocr_blocks=sum(
+                1
+                for doc in loaded
+                if doc.metadata.get("block_type") == "ocr_text" or bool(doc.metadata.get("ocr"))
+            ),
+        )
         cleaned = self.cleaner.clean_documents(loaded)
-        return self.chunker.chunk_documents(cleaned)
+        chunks = self.chunker.chunk_documents(cleaned)
+        debug_stats.total_chunks = len(chunks)
+        debug_stats.ocr_chunks = sum(
+            1
+            for chunk in chunks
+            if chunk.metadata.get("block_type") == "ocr_text" or bool(chunk.metadata.get("ocr"))
+        )
+        logger.info(
+            (
+                "Upload block/chunk stats | file=%s | total_blocks=%s | text_blocks=%s "
+                "| table_blocks=%s | image_blocks=%s | ocr_blocks=%s | total_chunks=%s | ocr_chunks=%s"
+            ),
+            str(file_path),
+            debug_stats.total_blocks,
+            debug_stats.text_blocks,
+            debug_stats.table_blocks,
+            debug_stats.image_blocks,
+            debug_stats.ocr_blocks,
+            debug_stats.total_chunks,
+            debug_stats.ocr_chunks,
+        )
+        return chunks, debug_stats
 
-    def _process_uploaded_document(self, record: StoredDocumentRecord) -> StoredDocumentRecord:
+    def _process_uploaded_document(self, record: StoredDocumentRecord) -> tuple[StoredDocumentRecord, UploadDebugStats]:
         file_path = Path(record.stored_path)
         self._update_status(record.document_id, DocumentProcessingStatus.SPLITTING)
 
-        chunks = self._chunk_file(file_path)
+        chunks, debug_stats = self._chunk_file(file_path)
         if not chunks:
             raise ValueError(f"No chunks produced from uploaded document: {record.filename}")
         per_document_chunk_count = len(chunks)
@@ -199,13 +269,25 @@ class DocumentService:
         self._update_status(record.document_id, DocumentProcessingStatus.EMBEDDING)
         self._update_status(record.document_id, DocumentProcessingStatus.INDEXING)
         self.index_manager.activate_from_uploaded_files(candidate_paths)
+        activation_stats = self.index_manager.get_last_activation_stats()
+        indexed_ocr_chunks = activation_stats.get("ocr_chunks")
+        debug_stats.indexed_ocr_chunks = int(indexed_ocr_chunks) if isinstance(indexed_ocr_chunks, int) else 0
+        logger.info(
+            (
+                "Upload indexing stats | file=%s | indexed_total_chunks=%s | indexed_ocr_chunks=%s"
+            ),
+            str(file_path),
+            activation_stats.get("chunk_count", 0),
+            debug_stats.indexed_ocr_chunks,
+        )
 
-        return self._update_status(
+        ready_record = self._update_status(
             record.document_id,
             DocumentProcessingStatus.READY,
             chunk_count=per_document_chunk_count,
             message="Document is indexed and ready for retrieval.",
         )
+        return ready_record, debug_stats
 
     def upload_document(self, file: UploadFile) -> DocumentResponse:
         if not file.filename:
@@ -232,8 +314,11 @@ class DocumentService:
         self._upsert_record(created)
 
         try:
-            ready = self._process_uploaded_document(created)
-            return DocumentResponse.from_record(ready)
+            ready, debug_stats = self._process_uploaded_document(created)
+            return DocumentResponse.from_record(
+                ready,
+                debug_stats=debug_stats.response_payload(),
+            )
         except Exception as exc:
             logger.exception("Failed processing uploaded document", extra={"document_id": document_id})
             failed = self._update_status(

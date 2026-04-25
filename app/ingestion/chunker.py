@@ -56,12 +56,14 @@ class Chunker:
     ) -> DocumentChunk:
         chunk_id = self.generate_chunk_id(doc.doc_id, chunk_index, content)
         metadata = dict(doc.metadata)
+        source_block_type = str(metadata.get("block_type") or doc.block_type)
         metadata.update(
             {
                 "chunk_index": chunk_index,
                 "token_start": token_start,
                 "token_end": token_end,
-                "block_type": doc.block_type,
+                # Preserve parser-level block subtype (for example `ocr_text`) when available.
+                "block_type": source_block_type,
                 "language": doc.language,
             }
         )

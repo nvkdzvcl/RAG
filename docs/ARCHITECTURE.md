@@ -1,16 +1,16 @@
 # ARCHITECTURE.md
 
-## Overview
+## Tổng Quan
 
-This project is a modular open-source **three-mode RAG system**:
+Dự án này là một hệ thống **RAG mã nguồn mở với 3 chế độ** theo kiến trúc module:
 
-- **Standard Mode**: baseline RAG
-- **Advanced Mode**: practical Self-RAG Level 2
-- **Compare Mode**: side-by-side execution of standard and advanced
+- **Standard Mode**: RAG nền tảng
+- **Advanced Mode**: Self-RAG Level 2 theo hướng thực dụng
+- **Compare Mode**: chạy song song standard và advanced để so sánh
 
-Architecture separates shared infrastructure from workflow orchestration.
+Kiến trúc tách biệt hạ tầng dùng chung khỏi lớp điều phối workflow.
 
-## High-Level Layers
+## Các Tầng Kiến Trúc Cấp Cao
 
 1. ingestion
 2. indexing
@@ -22,65 +22,65 @@ Architecture separates shared infrastructure from workflow orchestration.
 8. frontend
 9. evaluation
 
-## Shared vs Mode-Specific
+## Thành Phần Dùng Chung vs Theo Chế Độ
 
-Shared:
+Dùng chung:
 
 - schemas
 - loaders/chunking
 - indexes/retrieval/reranking
-- generation and citation contracts
+- contract generation và citations
 - config/logging
-- evaluation tooling
+- công cụ evaluation
 
-Mode-specific:
+Theo từng mode:
 
-- control flow
-- retry/abstain behavior
-- comparison aggregation
+- luồng điều khiển
+- hành vi retry/abstain
+- logic tổng hợp so sánh
 
-## Compare Mode Contract
+## Hợp Đồng Dữ Liệu Compare Mode
 
-Compare responses return:
+Response của compare mode trả về:
 
-- `standard` branch
-- `advanced` branch
-- `comparison` summary
+- nhánh `standard`
+- nhánh `advanced`
+- tóm tắt `comparison`
 
-This avoids duplicate implementations by reusing existing standard and advanced workflows.
+Cách này tránh triển khai trùng lặp bằng cách tái sử dụng workflow standard và advanced hiện có.
 
-## Current Implementation Status
+## Trạng Thái Triển Khai Hiện Tại
 
-Implemented end-to-end MVP layers:
+Các lớp MVP end-to-end đã có:
 
-- project scaffolding, config, structured logging
-- typed schemas for ingestion/retrieval/generation/workflow/API contracts
-- ingestion layer (text/markdown loaders, cleaner, chunker, metadata preservation)
-- indexing layer (embedding interface, vector index abstraction, BM25 index, local persistence)
-- retrieval layer (dense, sparse, hybrid fusion, reranker hook, context selector)
-- generation baseline (LLM client abstraction, grounded structured output, citations, insufficient-evidence handling)
+- scaffold dự án, config, logging có cấu trúc
+- schema typed cho ingestion/retrieval/generation/workflow/API
+- ingestion layer (loader text/markdown, cleaner, chunker, giữ metadata)
+- indexing layer (interface embeddings, vector index abstraction, BM25 index, local persistence)
+- retrieval layer (dense, sparse, hybrid fusion, hook reranker, context selector)
+- generation baseline (LLM client abstraction, output có cấu trúc, citations, xử lý thiếu bằng chứng)
 - workflows:
   - standard (`retrieve -> rerank -> select -> generate -> cite`)
-  - advanced (retrieval gate, rewrite, critique, retry/refine/abstain with bounded loop)
-  - compare (runs standard + advanced and aggregates summary)
+  - advanced (retrieval gate, rewrite, critique, retry/refine/abstain với vòng lặp có giới hạn)
+  - compare (chạy standard + advanced và tổng hợp summary)
 - backend API (`/api/v1/health`, `/api/v1/query`)
-- frontend integration with mode selection and mode-specific rendering panels
-- evaluation dataset + runner + regression checks for standard/advanced/compare payloads
+- frontend tích hợp chọn mode và panel hiển thị theo mode
+- dataset evaluation + runner + regression checks cho payload standard/advanced/compare
 
-Embedding backend notes:
+Ghi chú backend embedding:
 
-- default dense embeddings use sentence-transformers (`intfloat/multilingual-e5-base`) with E5-style prefixes (`passage:` for chunks, `query:` for user queries)
-- runtime provider selection is config-driven
-- if sentence-transformers import/model loading fails, runtime falls back to deterministic hash embeddings without crashing API startup
+- mặc định dense embeddings dùng sentence-transformers (`intfloat/multilingual-e5-base`) với tiền tố kiểu E5 (`passage:` cho chunk, `query:` cho truy vấn)
+- chọn provider runtime theo config
+- nếu import/load model sentence-transformers lỗi, hệ thống tự fallback về hash embedding có tính xác định và không làm crash API
 
-Reranker backend notes:
+Ghi chú backend reranker:
 
-- default reranking uses cross-encoder (`BAAI/bge-reranker-v2-m3`) over top retrieved candidates
-- reranker scores are attached to retrieval outputs (`rerank_score`) while original retrieval scores are preserved in metadata
-- if cross-encoder initialization fails, workflow falls back to score-only reranking and keeps API/query flows available
+- mặc định rerank bằng cross-encoder (`BAAI/bge-reranker-v2-m3`) trên top candidate sau retrieval
+- điểm reranker được gắn vào output (`rerank_score`), đồng thời giữ lại điểm retrieval ban đầu trong metadata
+- nếu khởi tạo cross-encoder lỗi, workflow fallback về score-only reranking và vẫn giữ API/query hoạt động
 
-Known MVP gaps:
+Khoảng trống MVP đã biết:
 
-- retrieval/generation are deterministic baseline implementations intended for local development and testing
-- prompt files exist but business logic still uses lightweight heuristic behavior in several modules
-- production hardening (auth, rate limiting, streaming responses, deployment concerns) is intentionally out of scope
+- retrieval/generation hiện là baseline có tính xác định, ưu tiên cho local dev và testing
+- prompt files đã có nhưng một số module business logic vẫn dùng heuristic nhẹ
+- hardening production (auth, rate limiting, streaming response, triển khai vận hành) chủ động để ngoài phạm vi MVP

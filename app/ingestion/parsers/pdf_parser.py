@@ -116,6 +116,7 @@ class PDFParser(BaseDocumentParser):
                 "block_type": "ocr_text",
                 "ocr": True,
                 "ocr_language": self.ocr_language,
+                "language": "vi" if "vie" in self.ocr_language.lower() else "auto",
                 "ocr_render_dpi": self.ocr_render_dpi,
                 "ocr_confidence_threshold": self.ocr_confidence_threshold,
             },
@@ -128,6 +129,18 @@ class PDFParser(BaseDocumentParser):
         blocks: list[DocumentBlock] = []
         current_section: str | None = None
         ocr_ready = False
+        logger.info(
+            (
+                "PDF upload OCR settings | path=%s | OCR_ENABLED=%s | OCR_LANGUAGE=%s "
+                "| OCR_MIN_TEXT_CHARS=%s | OCR_RENDER_DPI=%s | OCR_CONFIDENCE_THRESHOLD=%s"
+            ),
+            str(path),
+            self.ocr_enabled,
+            self.ocr_language,
+            self.ocr_min_text_chars,
+            self.ocr_render_dpi,
+            self.ocr_confidence_threshold,
+        )
         if self.ocr_enabled:
             ocr_ready = is_tesseract_available()
             if not ocr_ready:
@@ -197,6 +210,17 @@ class PDFParser(BaseDocumentParser):
                     ocr_ready
                     and page_text_chars < self.ocr_min_text_chars
                 )
+                logger.info(
+                    (
+                        "PDF page extraction stats | path=%s | page=%s | extracted_text_length=%s "
+                        "| ocr_threshold=%s | ocr_ran=%s"
+                    ),
+                    str(path),
+                    page_idx,
+                    page_text_chars,
+                    self.ocr_min_text_chars,
+                    should_try_ocr,
+                )
                 if should_try_ocr:
                     ocr_block = self._extract_ocr_block(
                         path=path,
@@ -206,5 +230,36 @@ class PDFParser(BaseDocumentParser):
                     )
                     if ocr_block is not None:
                         blocks.append(ocr_block)
+                        preview = ocr_block.content[:300].replace("\n", " ").strip()
+                        logger.info(
+                            (
+                                "PDF OCR output | path=%s | page=%s | ocr_ran=true "
+                                "| ocr_text_length=%s | ocr_preview=%s"
+                            ),
+                            str(path),
+                            page_idx,
+                            len(ocr_block.content),
+                            preview,
+                        )
+                    else:
+                        logger.info(
+                            "PDF OCR output | path=%s | page=%s | ocr_ran=true | ocr_text_length=0 | ocr_preview=",
+                            str(path),
+                            page_idx,
+                        )
+                else:
+                    logger.info(
+                        "PDF OCR output | path=%s | page=%s | ocr_ran=false | ocr_text_length=0 | ocr_preview=",
+                        str(path),
+                        page_idx,
+                    )
+
+        ocr_blocks = sum(1 for block in blocks if block.metadata.get("block_type") == "ocr_text")
+        logger.info(
+            "PDF parse summary | path=%s | total_blocks=%s | ocr_blocks=%s",
+            str(path),
+            len(blocks),
+            ocr_blocks,
+        )
 
         return blocks
