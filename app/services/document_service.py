@@ -47,6 +47,7 @@ class UploadDebugStats:
             "image_blocks": self.image_blocks,
             "ocr_blocks": self.ocr_blocks,
             "total_chunks": self.total_chunks,
+            "ocr_chunks": self.ocr_chunks,
         }
 
 
@@ -115,22 +116,43 @@ class DocumentService:
         )
 
     def _ready_paths(self) -> list[Path]:
+        return [Path(record.stored_path) for record in self._ready_records()]
+
+    def _ready_document_ids(self) -> set[str]:
         with self._lock:
-            paths: list[Path] = []
+            return {
+                record.document_id
+                for record in self._records.values()
+                if record.status == DocumentProcessingStatus.READY and Path(record.stored_path).is_file()
+            }
+
+    def _ready_records(self) -> list[StoredDocumentRecord]:
+        with self._lock:
+            records: list[StoredDocumentRecord] = []
             for record in self._records.values():
                 if record.status != DocumentProcessingStatus.READY:
                     continue
                 path = Path(record.stored_path)
                 if path.exists() and path.is_file():
-                    paths.append(path)
-            return sorted(paths)
+                    records.append(record)
+            return sorted(records, key=lambda item: item.document_id)
 
     def _refresh_runtime_indexes(self) -> None:
-        ready_paths = self._ready_paths()
+        ready_records = self._ready_records()
+        ready_paths = [Path(record.stored_path) for record in ready_records]
+        ready_document_ids = {record.document_id for record in ready_records}
         try:
-            self.index_manager.refresh(ready_paths)
+            if ready_paths:
+                self.index_manager.refresh(
+                    ready_paths,
+                    active_document_ids=ready_document_ids,
+                )
+            else:
+                self.index_manager.clear_uploaded_indexes()
+                self.index_manager.activate_from_seeded_corpus()
         except Exception:  # pragma: no cover - defensive fallback path.
             logger.exception("Failed to refresh indexes from uploaded docs, falling back to seeded corpus.")
+            self.index_manager.clear_uploaded_indexes()
             self.index_manager.activate_from_seeded_corpus()
 
     @staticmethod
@@ -161,12 +183,20 @@ class DocumentService:
 
     def _rebuild_after_deletion(self) -> None:
         ready_paths = self._ready_paths()
-        if ready_paths:
-            self.index_manager.refresh(ready_paths)
-            return
-
-        self.index_manager.clear_uploaded_indexes()
-        self.index_manager.activate_from_seeded_corpus()
+        ready_document_ids = self._ready_document_ids()
+        try:
+            if ready_paths:
+                self.index_manager.refresh(
+                    ready_paths,
+                    active_document_ids=ready_document_ids,
+                )
+                return
+            self.index_manager.clear_uploaded_indexes()
+            self.index_manager.activate_from_seeded_corpus()
+        except Exception:  # pragma: no cover - defensive fallback path.
+            logger.exception("Failed rebuilding indexes after deletion; clearing uploaded runtime indexes.")
+            self.index_manager.clear_uploaded_indexes()
+            self.index_manager.activate_from_seeded_corpus()
 
     def _upsert_record(self, record: StoredDocumentRecord) -> None:
         with self._lock:
@@ -262,13 +292,18 @@ class DocumentService:
         per_document_chunk_count = len(chunks)
 
         candidate_paths = self._ready_paths()
+        candidate_document_ids = self._ready_document_ids()
         if file_path not in candidate_paths:
             candidate_paths.append(file_path)
             candidate_paths = sorted(candidate_paths)
+        candidate_document_ids.add(record.document_id)
 
         self._update_status(record.document_id, DocumentProcessingStatus.EMBEDDING)
         self._update_status(record.document_id, DocumentProcessingStatus.INDEXING)
-        self.index_manager.activate_from_uploaded_files(candidate_paths)
+        self.index_manager.activate_from_uploaded_files(
+            candidate_paths,
+            active_document_ids=candidate_document_ids,
+        )
         activation_stats = self.index_manager.get_last_activation_stats()
         indexed_ocr_chunks = activation_stats.get("ocr_chunks")
         debug_stats.indexed_ocr_chunks = int(indexed_ocr_chunks) if isinstance(indexed_ocr_chunks, int) else 0
@@ -359,8 +394,12 @@ class DocumentService:
             if self._safe_delete_uploaded_file(file_path):
                 deleted_files += 1
 
-        self.index_manager.clear_uploaded_indexes()
-        self.index_manager.activate_from_seeded_corpus()
+        try:
+            self.index_manager.clear_uploaded_indexes()
+            self.index_manager.activate_from_seeded_corpus()
+        except Exception:  # pragma: no cover - defensive fallback path.
+            logger.exception("Failed to reset runtime indexes after delete-all.")
+            self.index_manager.clear_uploaded_indexes()
 
         return DeleteAllDocumentsResponse(
             status="deleted",

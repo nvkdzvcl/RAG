@@ -7,6 +7,7 @@ export type ApiCitation = {
   title?: string | null;
   section?: string | null;
   page?: number | null;
+  block_type?: string | null;
 };
 
 export type ApiModeResponse = {

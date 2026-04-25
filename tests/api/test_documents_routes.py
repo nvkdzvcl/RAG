@@ -144,6 +144,36 @@ def test_upload_response_reports_ocr_debug_metadata(
     assert body["text_blocks"] >= 1
     assert body["ocr_blocks"] >= 1
     assert body["total_chunks"] >= 1
+    assert body["ocr_chunks"] >= 1
+
+
+def test_ocr_chunk_is_indexed_retrievable_and_marked_in_sources(
+    isolated_client_ocr_enabled: tuple[TestClient, Path],
+) -> None:
+    client, _ = isolated_client_ocr_enabled
+
+    upload_response = client.post(
+        "/api/v1/documents/upload",
+        files={"file": ("testocr.pdf", b"%PDF-1.4 fake scan", "application/pdf")},
+    )
+    assert upload_response.status_code == 201
+
+    query_response = client.post(
+        "/api/v1/query",
+        json={
+            "query": "tokendebugocr-77 là gì?",
+            "mode": "standard",
+            "chat_history": [],
+        },
+    )
+    assert query_response.status_code == 200
+    body = query_response.json()
+    assert body["trace"][0]["index_source"] == "uploaded"
+    assert any(citation.get("block_type") == "ocr_text" for citation in body["citations"])
+    context_steps = [step for step in body["trace"] if step.get("step") == "context_select"]
+    assert context_steps
+    selected_docs = context_steps[0].get("docs", [])
+    assert any(doc.get("block_type") == "ocr_text" for doc in selected_docs)
 
 
 def test_upload_endpoint_accepts_docx(
@@ -396,6 +426,7 @@ def test_delete_single_document_rebuilds_runtime_from_remaining_uploaded_docs(
     body = query_response.json()
     assert body["trace"][0]["index_source"] == "uploaded"
     assert any(citation["doc_id"] == second_id for citation in body["citations"])
+    assert all(citation["doc_id"] != first_id for citation in body["citations"])
 
 
 def test_delete_missing_document_returns_404(
@@ -440,3 +471,131 @@ def test_query_falls_back_to_seeded_after_delete_all_uploaded_documents(
     assert query_response.status_code == 200
     body = query_response.json()
     assert body["trace"][0]["index_source"] == "seeded"
+
+
+def test_uploaded_retrieval_excludes_deleted_document_chunks(
+    isolated_client: tuple[TestClient, Path],
+) -> None:
+    client, _ = isolated_client
+
+    upload_a = client.post(
+        "/api/v1/documents/upload",
+        files={"file": ("doc-a.txt", b"alpha-doc-token-44221", "text/plain")},
+    )
+    upload_b = client.post(
+        "/api/v1/documents/upload",
+        files={"file": ("doc-b.txt", b"beta-doc-token-99117", "text/plain")},
+    )
+    assert upload_a.status_code == 201
+    assert upload_b.status_code == 201
+    doc_a = upload_a.json()["document_id"]
+    doc_b = upload_b.json()["document_id"]
+
+    query_a_before_delete = client.post(
+        "/api/v1/query",
+        json={
+            "query": "alpha-doc-token-44221 nằm ở đâu?",
+            "mode": "standard",
+            "chat_history": [],
+        },
+    )
+    assert query_a_before_delete.status_code == 200
+    assert any(citation["doc_id"] == doc_a for citation in query_a_before_delete.json()["citations"])
+
+    query_b = client.post(
+        "/api/v1/query",
+        json={
+            "query": "beta-doc-token-99117 có trong tài liệu nào?",
+            "mode": "standard",
+            "chat_history": [],
+        },
+    )
+    assert query_b.status_code == 200
+    assert any(citation["doc_id"] == doc_b for citation in query_b.json()["citations"])
+
+    deleted = client.delete(f"/api/v1/documents/{doc_a}")
+    assert deleted.status_code == 200
+
+    query_after_delete = client.post(
+        "/api/v1/query",
+        json={
+            "query": "alpha-doc-token-44221 nằm ở đâu?",
+            "mode": "standard",
+            "chat_history": [],
+        },
+    )
+    assert query_after_delete.status_code == 200
+    body = query_after_delete.json()
+    assert body["trace"][0]["index_source"] == "uploaded"
+    assert all(citation["doc_id"] != doc_a for citation in body["citations"])
+
+
+def test_restart_with_empty_registry_does_not_use_stale_uploaded_indexes(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    data_dir = tmp_path / "data"
+    corpus_dir = tmp_path / "corpus"
+    corpus_dir.mkdir(parents=True, exist_ok=True)
+    (corpus_dir / "seed.txt").write_text(
+        "seeded-token-only-7781 should be used after stale uploaded index cleanup.",
+        encoding="utf-8",
+    )
+
+    monkeypatch.setenv("DATA_DIR", str(data_dir))
+    monkeypatch.setenv("INDEX_DIR", str(data_dir / "indexes"))
+    monkeypatch.setenv("CORPUS_DIR", str(corpus_dir))
+    get_settings.cache_clear()
+
+    app_first = create_app()
+    client_first = TestClient(app_first)
+    try:
+        upload = client_first.post(
+            "/api/v1/documents/upload",
+            files={"file": ("stale.txt", b"stale-uploaded-token-5566", "text/plain")},
+        )
+        assert upload.status_code == 201
+        stale_doc_id = upload.json()["document_id"]
+    finally:
+        client_first.close()
+
+    assert (data_dir / "indexes" / "vector_index.json").exists()
+    assert (data_dir / "indexes" / "bm25_index.json").exists()
+
+    (data_dir / "document_registry.json").write_text('{"documents": []}', encoding="utf-8")
+    raw_dir = data_dir / "raw"
+    for path in raw_dir.rglob("*"):
+        if path.is_file():
+            path.unlink()
+
+    get_settings.cache_clear()
+    app_second = create_app()
+    client_second = TestClient(app_second)
+    try:
+        stale_query = client_second.post(
+            "/api/v1/query",
+            json={
+                "query": "stale-uploaded-token-5566",
+                "mode": "standard",
+                "chat_history": [],
+            },
+        )
+        assert stale_query.status_code == 200
+        stale_body = stale_query.json()
+        assert stale_body["trace"][0]["index_source"] == "seeded"
+        assert all(citation["doc_id"] != stale_doc_id for citation in stale_body["citations"])
+
+        seeded_query = client_second.post(
+            "/api/v1/query",
+            json={
+                "query": "seeded-token-only-7781 là gì?",
+                "mode": "standard",
+                "chat_history": [],
+            },
+        )
+        assert seeded_query.status_code == 200
+        seeded_body = seeded_query.json()
+        assert seeded_body["trace"][0]["index_source"] == "seeded"
+    finally:
+        client_second.close()
+        get_settings.cache_clear()

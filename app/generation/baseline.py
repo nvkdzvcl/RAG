@@ -29,8 +29,11 @@ _STANDARD_PROMPT_FALLBACK = (
     "Answer in the required response language only.\n"
     "If response_language is Vietnamese, write fully in Vietnamese.\n"
     "Do not answer in Chinese unless the user asks in Chinese.\n"
-    "For title/name questions (e.g., \"tên của Điều 2 là gì\"), if context contains the exact heading/title, "
+    "Only for explicit title queries (e.g., \"tên của Điều 2 là gì\", \"điều 2 tên là gì\", \"tên mục/phần ... là gì\"), "
+    "if context contains the exact heading/title, "
     "return it exactly as: \"Tên của Điều X là: <exact title>.\"\n"
+    "Do not use the title format for compare/explain questions (for example: \"phân biệt\", \"so sánh\", \"giải thích\", \"trình bày\").\n"
+    "For compare questions (for example \"Phân biệt A và B\"), explain differences based only on provided context.\n"
     "Do not paraphrase official title text.\n"
     "Use only the provided context; do not invent unsupported facts.\n"
     "If evidence is insufficient, set status to insufficient_evidence.\n"
@@ -51,8 +54,11 @@ _ADVANCED_PROMPT_FALLBACK = (
     "Answer in the required response language only.\n"
     "If response_language is Vietnamese, write fully in Vietnamese.\n"
     "Do not answer in Chinese unless the user asks in Chinese.\n"
-    "For title/name questions (e.g., \"tên của Điều 2 là gì\"), if context contains the exact heading/title, "
+    "Only for explicit title queries (e.g., \"tên của Điều 2 là gì\", \"điều 2 tên là gì\", \"tên mục/phần ... là gì\"), "
+    "if context contains the exact heading/title, "
     "return it exactly as: \"Tên của Điều X là: <exact title>.\"\n"
+    "Do not use the title format for compare/explain questions (for example: \"phân biệt\", \"so sánh\", \"giải thích\", \"trình bày\").\n"
+    "For compare questions (for example \"Phân biệt A và B\"), explain differences based only on provided context.\n"
     "Do not paraphrase official title text.\n"
     "Ground every claim in the context. If evidence is weak, abstain with status=insufficient_evidence.\n"
     "Return strict JSON with keys: answer, confidence, status.\n"
@@ -60,6 +66,30 @@ _ADVANCED_PROMPT_FALLBACK = (
     "mode: $mode\n"
     "question: $question\n"
     "context:\n$context"
+)
+
+_NON_TITLE_INTENT_KEYWORDS = (
+    "phân biệt",
+    "phan biet",
+    "so sánh",
+    "so sanh",
+    "giải thích",
+    "giai thich",
+    "trình bày",
+    "trinh bay",
+    "compare",
+    "comparison",
+    "differentiate",
+    "difference",
+    "explain",
+)
+
+_EXPLICIT_TITLE_PATTERNS = (
+    re.compile(r"\btên\s+(?:của\s+)?điều\s+(?P<article>\d+[a-z]?)\s+là\s+gì\b", flags=re.IGNORECASE),
+    re.compile(r"\bten\s+(?:cua\s+)?dieu\s+(?P<article>\d+[a-z]?)\s+la\s+gi\b", flags=re.IGNORECASE),
+    re.compile(r"\bđiều\s+(?P<article>\d+[a-z]?)\s+tên\s+là\s+gì\b", flags=re.IGNORECASE),
+    re.compile(r"\bdieu\s+(?P<article>\d+[a-z]?)\s+ten\s+la\s+gi\b", flags=re.IGNORECASE),
+    re.compile(r"\bwhat\s+is\s+the\s+(?:title|name)\s+of\s+article\s+(?P<article>\d+[a-z]?)\b", flags=re.IGNORECASE),
 )
 
 
@@ -106,17 +136,17 @@ class BaselineGenerator(Generator):
     @staticmethod
     def _title_question_article_number(query: str) -> str | None:
         lowered = query.casefold()
-        has_title_intent = any(keyword in lowered for keyword in ("tên", "ten", "title", "name"))
-        if not has_title_intent:
+        if any(keyword in lowered for keyword in _NON_TITLE_INTENT_KEYWORDS):
             return None
 
-        if not any(token in lowered for token in ("là gì", "la gi", "tên gì", "ten gi", "what is", "name")):
-            return None
-
-        match = re.search(r"\b(?:điều|dieu|article)\s*(\d+[a-z]?)\b", lowered, flags=re.IGNORECASE)
-        if not match:
-            return None
-        return match.group(1).upper()
+        for pattern in _EXPLICIT_TITLE_PATTERNS:
+            match = pattern.search(query)
+            if not match:
+                continue
+            article = match.group("article").strip()
+            if article:
+                return article.upper()
+        return None
 
     @staticmethod
     def _extract_article_title(

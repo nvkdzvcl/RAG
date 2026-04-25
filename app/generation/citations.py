@@ -27,6 +27,7 @@ class CitationBuilder:
                     title=doc.title,
                     section=doc.section,
                     page=doc.page,
+                    block_type=str(doc.metadata.get("block_type")) if doc.metadata.get("block_type") else None,
                 )
             )
             seen_chunk_ids.add(doc.chunk_id)

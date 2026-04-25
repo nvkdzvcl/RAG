@@ -184,6 +184,7 @@ Block bảng được giữ nguyên (không tách đôi qua nhiều chunk).
 - Khi bật OCR, parser PDF vẫn ưu tiên text/table từ `pdfplumber`.
 - Nếu trang PDF có quá ít text (`OCR_MIN_TEXT_CHARS`) thì hệ thống thử OCR bằng Tesseract + PyMuPDF.
 - OCR thất bại sẽ chỉ ghi cảnh báo và bỏ qua block OCR, không làm crash upload/query.
+- OCR yêu cầu cài hệ thống: `tesseract-ocr` và gói tiếng Việt `tesseract-ocr-vie` (hoặc tương đương theo OS).
 - OCR hiện chỉ áp dụng cho PDF; OCR ảnh trong DOCX được giữ lại cho giai đoạn sau.
 - Sau khi bật OCR trong `.env`, cần **upload lại tài liệu PDF** để index mới chứa nội dung OCR.
 

@@ -326,7 +326,7 @@ export function ChatPage() {
     const deletedDocIds = new Set(documents.map((item) => item.id));
     try {
       await clearAllUploadedDocuments();
-      if (activeSession && resultReferencesDeletedDocuments(activeSession.lastResult ?? null, deletedDocIds)) {
+      if (activeSession) {
         clearCurrentSessionResult(activeSession.id);
       }
       if (deletedDocIds.size > 0) {

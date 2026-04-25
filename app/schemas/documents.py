@@ -85,6 +85,7 @@ class DocumentResponse(BaseModel):
     image_blocks: int | None = None
     ocr_blocks: int | None = None
     total_chunks: int | None = None
+    ocr_chunks: int | None = None
     created_at: datetime
     message: str | None = None
 
@@ -109,6 +110,7 @@ class DocumentResponse(BaseModel):
             image_blocks=stats.get("image_blocks"),
             ocr_blocks=stats.get("ocr_blocks"),
             total_chunks=stats.get("total_chunks"),
+            ocr_chunks=stats.get("ocr_chunks"),
             created_at=record.created_at,
             message=record.message,
         )

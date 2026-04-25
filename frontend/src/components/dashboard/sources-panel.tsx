@@ -77,6 +77,11 @@ function SourceList({ sources }: { sources: SourceReference[] }) {
                   doc: {source.docId}
                 </p>
               ) : null}
+              {source.blockType ? (
+                <p style={{ overflowWrap: "anywhere", wordBreak: "break-word" }}>
+                  block_type: {source.blockType}
+                </p>
+              ) : null}
             </div>
           </details>
         </li>

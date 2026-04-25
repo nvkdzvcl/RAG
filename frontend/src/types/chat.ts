@@ -9,6 +9,7 @@ export type Citation = {
   title?: string | null;
   section?: string | null;
   page?: number | null;
+  blockType?: string | null;
 };
 
 export type SourceReference = {
@@ -19,6 +20,7 @@ export type SourceReference = {
   title?: string | null;
   section?: string | null;
   page?: number | null;
+  blockType?: string | null;
   rerankScore?: number | null;
 };
 

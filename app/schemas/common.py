@@ -22,3 +22,4 @@ class Citation(BaseModel):
     title: str | None = None
     section: str | None = None
     page: int | None = None
+    block_type: str | None = None

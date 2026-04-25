@@ -8,6 +8,7 @@ from threading import RLock
 
 from app.core.config import get_settings
 from app.indexing import BaseEmbeddingProvider, IndexBuilder, LocalIndexStore, create_embedding_provider
+from app.ingestion.base_loader import build_doc_id
 from app.ingestion import BaseLoader, Chunker, DocxLoader, MarkdownLoader, PdfLoader, TextCleaner, TextLoader
 from app.retrieval import DenseRetriever, HybridRetriever, SparseRetriever
 from app.schemas.ingestion import DocumentChunk, LoadedDocument
@@ -23,6 +24,35 @@ class EmptyRetriever:
         _ = query
         _ = top_k
         return []
+
+
+class _ResultFilteringRetriever:
+    """Retriever wrapper that enforces allowed uploaded document IDs at query time."""
+
+    def __init__(
+        self,
+        retriever: HybridRetriever | EmptyRetriever,
+        *,
+        allowed_doc_ids: set[str] | None = None,
+    ) -> None:
+        self._retriever = retriever
+        self._allowed_doc_ids = set(allowed_doc_ids or set())
+
+    def retrieve(self, query: str, top_k: int = 5) -> list[RetrievalResult]:
+        if top_k <= 0:
+            return []
+
+        candidate_k = top_k
+        if self._allowed_doc_ids:
+            # Ask for a wider candidate set so filtering by active doc IDs still returns enough rows.
+            candidate_k = max(top_k * 4, top_k)
+
+        results = self._retriever.retrieve(query, top_k=candidate_k)
+        if not self._allowed_doc_ids:
+            return results[:top_k]
+
+        filtered = [item for item in results if item.doc_id in self._allowed_doc_ids]
+        return filtered[:top_k]
 
 
 class RuntimeIndexManager:
@@ -72,6 +102,7 @@ class RuntimeIndexManager:
         self._retriever: HybridRetriever | EmptyRetriever = EmptyRetriever()
         self._active_source = "none"
         self._active_chunk_count = 0
+        self._active_uploaded_doc_ids: set[str] = set()
         self._last_activation_stats: dict[str, int | str] = {
             "chunk_count": 0,
             "ocr_chunks": 0,
@@ -143,12 +174,23 @@ class RuntimeIndexManager:
         )
         return chunks
 
-    def _activate_chunks(self, chunks: list[DocumentChunk], *, source: str) -> int:
+    def _activate_chunks(
+        self,
+        chunks: list[DocumentChunk],
+        *,
+        source: str,
+        active_uploaded_doc_ids: set[str] | None = None,
+    ) -> int:
+        resolved_uploaded_ids = set(active_uploaded_doc_ids or set())
+        if source == "uploaded" and not resolved_uploaded_ids:
+            resolved_uploaded_ids = {chunk.doc_id for chunk in chunks}
+
         if not chunks:
             with self._lock:
                 self._retriever = EmptyRetriever()
                 self._active_source = source
                 self._active_chunk_count = 0
+                self._active_uploaded_doc_ids = resolved_uploaded_ids if source == "uploaded" else set()
                 self._last_activation_stats = {
                     "chunk_count": 0,
                     "ocr_chunks": 0,
@@ -168,11 +210,18 @@ class RuntimeIndexManager:
 
         self.index_store.save_vector_index(built.vector_index)
         self.index_store.save_bm25_index(built.bm25_index)
+        if source == "uploaded":
+            self.index_store.save_vector_index(built.vector_index, filename="uploaded_vector_index.json")
+            self.index_store.save_bm25_index(built.bm25_index, filename="uploaded_bm25_index.json")
+        elif source == "seeded":
+            self.index_store.save_vector_index(built.vector_index, filename="seeded_vector_index.json")
+            self.index_store.save_bm25_index(built.bm25_index, filename="seeded_bm25_index.json")
 
         with self._lock:
             self._retriever = hybrid
             self._active_source = source
             self._active_chunk_count = built.chunk_count
+            self._active_uploaded_doc_ids = resolved_uploaded_ids if source == "uploaded" else set()
             self._last_activation_stats = {
                 "chunk_count": built.chunk_count,
                 "ocr_chunks": ocr_chunk_count,
@@ -191,9 +240,27 @@ class RuntimeIndexManager:
         )
         return built.chunk_count
 
-    def activate_from_uploaded_files(self, uploaded_files: list[Path]) -> int:
+    def activate_from_uploaded_files(
+        self,
+        uploaded_files: list[Path],
+        *,
+        active_document_ids: set[str] | None = None,
+    ) -> int:
         chunks = self._build_chunks(uploaded_files, source_label="uploaded")
-        return self._activate_chunks(chunks, source="uploaded")
+        expected_doc_ids = set(active_document_ids or set())
+        if not expected_doc_ids:
+            expected_doc_ids = {
+                build_doc_id(path)
+                for path in uploaded_files
+                if path.exists() and path.is_file()
+            }
+        if expected_doc_ids:
+            chunks = [chunk for chunk in chunks if chunk.doc_id in expected_doc_ids]
+        return self._activate_chunks(
+            chunks,
+            source="uploaded",
+            active_uploaded_doc_ids=expected_doc_ids,
+        )
 
     def activate_from_seeded_corpus(self) -> int:
         if not self.corpus_dir.exists() or not self.corpus_dir.is_dir():
@@ -203,14 +270,30 @@ class RuntimeIndexManager:
         chunks = self._build_chunks(candidate_files, source_label="seeded")
         return self._activate_chunks(chunks, source="seeded")
 
-    def refresh(self, uploaded_files: list[Path]) -> int:
+    def refresh(
+        self,
+        uploaded_files: list[Path],
+        *,
+        active_document_ids: set[str] | None = None,
+    ) -> int:
         if uploaded_files:
-            return self.activate_from_uploaded_files(uploaded_files)
+            return self.activate_from_uploaded_files(
+                uploaded_files,
+                active_document_ids=active_document_ids,
+            )
         return self.activate_from_seeded_corpus()
 
-    def get_retriever(self) -> HybridRetriever | EmptyRetriever:
+    def get_retriever(self) -> HybridRetriever | EmptyRetriever | _ResultFilteringRetriever:
         with self._lock:
-            return self._retriever
+            retriever = self._retriever
+            active_source = self._active_source
+            uploaded_doc_ids = set(self._active_uploaded_doc_ids)
+        if active_source == "uploaded":
+            return _ResultFilteringRetriever(
+                retriever,
+                allowed_doc_ids=uploaded_doc_ids,
+            )
+        return retriever
 
     def get_active_source(self) -> str:
         with self._lock:
@@ -219,6 +302,10 @@ class RuntimeIndexManager:
     def get_active_chunk_count(self) -> int:
         with self._lock:
             return self._active_chunk_count
+
+    def get_active_uploaded_document_ids(self) -> set[str]:
+        with self._lock:
+            return set(self._active_uploaded_doc_ids)
 
     def get_last_activation_stats(self) -> dict[str, int | str]:
         with self._lock:
@@ -231,13 +318,29 @@ class RuntimeIndexManager:
             Number of persisted index files deleted from index_dir.
         """
         with self._lock:
-            self._retriever = EmptyRetriever()
-            self._active_source = "none"
-            self._active_chunk_count = 0
+            previous_source = self._active_source
+            if previous_source != "seeded":
+                self._retriever = EmptyRetriever()
+                self._active_source = "none"
+                self._active_chunk_count = 0
+                self._last_activation_stats = {
+                    "chunk_count": 0,
+                    "ocr_chunks": 0,
+                    "source": "none",
+                }
+            self._active_uploaded_doc_ids = set()
 
         deleted_files = 0
         index_root = self.index_dir.resolve()
-        for filename in ("vector_index.json", "bm25_index.json"):
+        target_filenames = [
+            "uploaded_vector_index.json",
+            "uploaded_bm25_index.json",
+        ]
+        # Legacy uploaded artifacts were persisted under generic names.
+        if previous_source != "seeded":
+            target_filenames.extend(["vector_index.json", "bm25_index.json"])
+
+        for filename in target_filenames:
             candidate = (self.index_dir / filename).resolve()
             try:
                 candidate.relative_to(index_root)

@@ -6,6 +6,7 @@ from pathlib import Path
 from types import SimpleNamespace
 
 from app.core.config import get_settings
+from app.ingestion.base_loader import build_doc_id
 from app.indexing import BaseEmbeddingProvider
 from app.services.index_runtime import RuntimeIndexManager
 
@@ -233,3 +234,52 @@ def test_runtime_index_manager_indexes_and_retrieves_ocr_chunks(monkeypatch, tmp
     assert any("ocrtokenviet99" in item.content for item in results)
     activation_stats = manager.get_last_activation_stats()
     assert activation_stats["ocr_chunks"] >= 1
+
+
+def test_runtime_uploaded_retrieval_filters_to_active_document_ids(tmp_path: Path) -> None:
+    provider = _CountingEmbeddingProvider(dimension=8)
+    manager = RuntimeIndexManager(
+        corpus_dir=tmp_path / "corpus",
+        index_dir=tmp_path / "indexes",
+        embedding_provider=provider,
+    )
+
+    file_a = tmp_path / "a.txt"
+    file_b = tmp_path / "b.txt"
+    file_a.write_text("alpha-only-token-71 appears in this uploaded file.", encoding="utf-8")
+    file_b.write_text("beta-only-token-92 appears in this uploaded file.", encoding="utf-8")
+    doc_a = build_doc_id(file_a)
+    doc_b = build_doc_id(file_b)
+
+    manager.activate_from_uploaded_files([file_a, file_b], active_document_ids={doc_a})
+    results = manager.get_retriever().retrieve("beta-only-token-92", top_k=5)
+
+    assert manager.get_active_source() == "uploaded"
+    assert manager.get_active_uploaded_document_ids() == {doc_a}
+    assert all(item.doc_id == doc_a for item in results)
+    assert all(item.doc_id != doc_b for item in results)
+
+
+def test_clear_uploaded_indexes_preserves_seeded_runtime_state(tmp_path: Path) -> None:
+    corpus_dir = tmp_path / "corpus"
+    corpus_dir.mkdir(parents=True, exist_ok=True)
+    (corpus_dir / "seed.txt").write_text("seed-token-clear-check-55", encoding="utf-8")
+
+    provider = _CountingEmbeddingProvider(dimension=8)
+    manager = RuntimeIndexManager(
+        corpus_dir=corpus_dir,
+        index_dir=tmp_path / "indexes",
+        embedding_provider=provider,
+    )
+
+    manager.activate_from_seeded_corpus()
+    seeded_results_before = manager.get_retriever().retrieve("seed-token-clear-check-55", top_k=3)
+    assert seeded_results_before
+    assert manager.get_active_source() == "seeded"
+
+    deleted_files = manager.clear_uploaded_indexes()
+    seeded_results_after = manager.get_retriever().retrieve("seed-token-clear-check-55", top_k=3)
+
+    assert deleted_files >= 0
+    assert manager.get_active_source() == "seeded"
+    assert seeded_results_after

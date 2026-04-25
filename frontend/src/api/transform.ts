@@ -10,6 +10,7 @@ function citationToUi(citation: ApiCitation, index: number): Citation {
     title: citation.title ?? null,
     section: citation.section ?? null,
     page: citation.page ?? null,
+    blockType: citation.block_type ?? null,
   };
 }
 
@@ -60,6 +61,7 @@ function citationsToSources(citations: Citation[], rerankScores: Map<string, num
         title: citation.title,
         section: citation.section,
         page: citation.page,
+        blockType: citation.blockType,
         rerankScore: rerankScores.get(citation.chunkId) ?? null,
       });
     }

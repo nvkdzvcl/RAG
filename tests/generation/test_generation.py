@@ -120,3 +120,58 @@ def test_title_question_returns_exact_article_title_from_context() -> None:
     assert result.stop_reason == "heuristic_exact_title"
     assert result.citations
     assert result.citations[0].chunk_id == "chunk_title_002"
+
+
+def test_compare_question_does_not_trigger_exact_title_heuristic() -> None:
+    llm = StubLLMClient(
+        responder=lambda prompt, system, model=None: (
+            '{"answer":"Effectiveness tập trung vào đạt đúng mục tiêu, còn Efficiency tập trung vào tối ưu nguồn lực.","confidence":0.83,"status":"answered"}'
+        )
+    )
+    generator = BaselineGenerator(llm_client=llm)
+    context = [
+        RetrievalResult(
+            chunk_id="chunk_compare_001",
+            doc_id="doc_compare_001",
+            source="docs/policy.md",
+            title="Tài liệu vận hành",
+            content=(
+                "Điều 2. Giải thích từ ngữ\n"
+                "Effectiveness liên quan đến mức độ đạt mục tiêu.\n"
+                "Efficiency liên quan đến mức độ tối ưu chi phí và thời gian."
+            ),
+            score=0.88,
+            score_type="hybrid",
+            rank=1,
+        )
+    ]
+
+    result = generator.generate_answer(
+        query="Phân biệt Effectiveness và Efficiency theo Điều 2",
+        context=context,
+        mode=Mode.STANDARD,
+        response_language="vi",
+    )
+
+    assert result.stop_reason != "heuristic_exact_title"
+    assert "Tên của Điều" not in result.answer
+    assert "Effectiveness" in result.answer
+
+
+def test_non_title_definition_question_keeps_normal_answer_flow() -> None:
+    llm = StubLLMClient(
+        responder=lambda prompt, system, model=None: (
+            '{"answer":"HCI là lĩnh vực nghiên cứu tương tác giữa con người và máy tính.","confidence":0.79,"status":"answered"}'
+        )
+    )
+    generator = BaselineGenerator(llm_client=llm)
+
+    result = generator.generate_answer(
+        query="HCI là gì?",
+        context=_sample_context(),
+        mode=Mode.STANDARD,
+        response_language="vi",
+    )
+
+    assert result.stop_reason == "generated"
+    assert "Tên của Điều" not in result.answer
