@@ -8,7 +8,7 @@ from pathlib import Path
 from app.core.config import get_settings
 from app.core.json_utils import parse_json_list, parse_json_object
 from app.core.prompting import PromptRepository
-from app.generation.llm_client import LLMClient
+from app.generation.llm_client import LLMClient, complete_with_model
 from app.schemas.workflow import CritiqueResult
 
 _REWRITE_PROMPT_FALLBACK = (
@@ -87,6 +87,7 @@ class QueryRewriter:
         *,
         critique: CritiqueResult | None = None,
         loop_count: int = 0,
+        model: str | None = None,
     ) -> list[str]:
         if not self.use_llm or self.llm_client is None:
             return []
@@ -101,7 +102,11 @@ class QueryRewriter:
         )
 
         try:
-            raw = self.llm_client.complete(prompt)
+            raw = complete_with_model(
+                self.llm_client,
+                prompt,
+                model=model,
+            )
         except Exception:
             return []
 
@@ -121,11 +126,13 @@ class QueryRewriter:
         *,
         critique: CritiqueResult | None = None,
         loop_count: int = 0,
+        model: str | None = None,
     ) -> list[str]:
         llm_candidates = self._llm_rewrite(
             query,
             critique=critique,
             loop_count=loop_count,
+            model=model,
         )
         heuristic_candidates = self._heuristic_rewrite(
             query,

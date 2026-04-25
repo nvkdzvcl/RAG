@@ -12,12 +12,25 @@ function SourceList({ sources }: { sources: SourceReference[] }) {
   }
 
   return (
-    <ul className="space-y-2">
+    <ul className="space-y-2 min-w-0 max-w-full">
       {sources.map((source) => (
-        <li key={source.id} className="rounded-lg border border-slate-200 bg-white px-3 py-2">
-          <p className="line-clamp-1 text-sm font-medium text-slate-700">{source.title || source.source}</p>
-          <p className="mt-1 text-xs text-slate-500">
+        <li
+          key={source.id}
+          className="min-w-0 max-w-full overflow-hidden rounded-lg border border-slate-200 bg-white px-3 py-2"
+        >
+          <p
+            className="truncate text-sm font-medium text-slate-700"
+            title={source.title || source.source}
+          >
+            {source.title || source.source}
+          </p>
+          <p
+            className="mt-1 text-xs text-slate-500"
+            title={source.source}
+            style={{ overflowWrap: "anywhere", wordBreak: "break-word" }}
+          >
             {source.source} • {translations.citations.chunk} {source.chunkId}
+            {source.docId ? ` • doc ${source.docId}` : ""}
             {source.section ? ` • ${source.section}` : ""}
             {source.page ? ` • ${translations.citations.page} ${source.page}` : ""}
             {source.rerankScore !== null && source.rerankScore !== undefined
@@ -45,11 +58,11 @@ function isCompare(result: QueryResult): result is CompareResult {
 
 export function SourcesPanel({ result }: SourcesPanelProps) {
   return (
-    <Card className="border-slate-200 shadow-sm">
+    <Card className="min-w-0 max-w-full border-slate-200 shadow-sm">
       <CardHeader className="pb-3">
         <CardTitle className="text-base">{translations.sources.title}</CardTitle>
       </CardHeader>
-      <CardContent className="space-y-3">
+      <CardContent className="min-w-0 max-w-full space-y-3 overflow-x-hidden">
         {!result ? <p className="text-sm text-slate-500">{translations.sources.runQuery}</p> : null}
 
         {result && !isCompare(result) ? <SourceList sources={result.sources} /> : null}

@@ -14,7 +14,12 @@ logger = logging.getLogger(__name__)
 class LLMClient(Protocol):
     """Abstraction for text generation providers."""
 
-    def complete(self, prompt: str, system_prompt: str | None = None) -> str:
+    def complete(
+        self,
+        prompt: str,
+        system_prompt: str | None = None,
+        model: str | None = None,
+    ) -> str:
         """Return completion text for prompt/system_prompt."""
 
 
@@ -23,18 +28,58 @@ class StubLLMClient:
 
     def __init__(
         self,
-        responder: Callable[[str, str | None], str] | None = None,
+        responder: Callable[..., str] | None = None,
     ) -> None:
         self._responder = responder or self._default_responder
 
     @staticmethod
-    def _default_responder(prompt: str, system_prompt: str | None = None) -> str:
+    def _default_responder(
+        prompt: str,
+        system_prompt: str | None = None,
+        model: str | None = None,
+    ) -> str:
         _ = system_prompt
         _ = prompt
+        _ = model
         return '{"answer":"Stub grounded answer.","confidence":0.5,"status":"answered"}'
 
-    def complete(self, prompt: str, system_prompt: str | None = None) -> str:
-        return self._responder(prompt, system_prompt)
+    def complete(
+        self,
+        prompt: str,
+        system_prompt: str | None = None,
+        model: str | None = None,
+    ) -> str:
+        try:
+            return self._responder(prompt, system_prompt, model)
+        except TypeError:
+            # Backward compatibility for existing two-arg responder lambdas in tests.
+            return self._responder(prompt, system_prompt)
+
+
+def complete_with_model(
+    llm_client: LLMClient,
+    prompt: str,
+    *,
+    system_prompt: str | None = None,
+    model: str | None = None,
+) -> str:
+    """Invoke completion while safely supporting optional per-call model override."""
+    normalized_model = model.strip() if isinstance(model, str) else ""
+
+    if normalized_model:
+        try:
+            return llm_client.complete(
+                prompt=prompt,
+                system_prompt=system_prompt,
+                model=normalized_model,
+            )
+        except TypeError:
+            return llm_client.complete(
+                prompt=prompt,
+                system_prompt=system_prompt,
+            )
+
+    return llm_client.complete(prompt=prompt, system_prompt=system_prompt)
 
 
 class OpenAICompatibleLLMClient:
@@ -108,14 +153,20 @@ class OpenAICompatibleLLMClient:
 
         raise RuntimeError("Invalid response content type from OpenAI-compatible API.")
 
-    def complete(self, prompt: str, system_prompt: str | None = None) -> str:
+    def complete(
+        self,
+        prompt: str,
+        system_prompt: str | None = None,
+        model: str | None = None,
+    ) -> str:
         messages: list[dict[str, str]] = []
         if system_prompt and system_prompt.strip():
             messages.append({"role": "system", "content": system_prompt.strip()})
         messages.append({"role": "user", "content": prompt})
+        selected_model = model.strip() if isinstance(model, str) and model.strip() else self.model
 
         payload: dict[str, object] = {
-            "model": self.model,
+            "model": selected_model,
             "messages": messages,
             "temperature": self.temperature,
             "max_tokens": self.max_tokens,
@@ -143,15 +194,30 @@ class FallbackLLMClient:
         self.primary = primary
         self.fallback = fallback
 
-    def complete(self, prompt: str, system_prompt: str | None = None) -> str:
+    def complete(
+        self,
+        prompt: str,
+        system_prompt: str | None = None,
+        model: str | None = None,
+    ) -> str:
         try:
-            return self.primary.complete(prompt=prompt, system_prompt=system_prompt)
+            return complete_with_model(
+                self.primary,
+                prompt,
+                system_prompt=system_prompt,
+                model=model,
+            )
         except Exception as exc:
             logger.warning(
                 "Primary LLM client failed; falling back to stub client.",
                 exc_info=exc,
             )
-            return self.fallback.complete(prompt=prompt, system_prompt=system_prompt)
+            return complete_with_model(
+                self.fallback,
+                prompt,
+                system_prompt=system_prompt,
+                model=model,
+            )
 
 
 OPENAI_COMPATIBLE_PROVIDER_NAMES = {

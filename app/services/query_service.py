@@ -13,9 +13,20 @@ class QueryService:
     def __init__(self, runner: WorkflowRunner | None = None) -> None:
         self.runner = runner or WorkflowRunner()
 
-    def run(self, query: str, mode: Mode, chat_history: list[dict[str, str]] | None = None) -> QueryResponse:
+    def run(
+        self,
+        query: str,
+        mode: Mode,
+        chat_history: list[dict[str, str]] | None = None,
+        model: str | None = None,
+    ) -> QueryResponse:
         """Execute query for selected mode."""
-        return self.runner.run(query=query, mode=mode, chat_history=chat_history)
+        return self.runner.run(
+            query=query,
+            mode=mode,
+            chat_history=chat_history,
+            model=model,
+        )
 
     def run_request(self, payload: QueryRequest) -> QueryResponse:
         """Execute query from typed API request payload."""
@@ -23,4 +34,5 @@ class QueryService:
             query=payload.query,
             mode=payload.mode,
             chat_history=payload.chat_history,
+            model=payload.model,
         )

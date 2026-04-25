@@ -1,6 +1,7 @@
 import type {
   ApiDocument,
   ApiDocumentStatusResponse,
+  ApiHealthResponse,
   ApiQueryRequest,
   ApiQueryResponse,
   ApiUploadDocumentResponse,
@@ -134,6 +135,18 @@ export async function postQuery(request: ApiQueryRequest): Promise<ApiQueryRespo
   }
 
   return (await parseJsonResponse(response)) as ApiQueryResponse;
+}
+
+export async function getHealthStatus(): Promise<ApiHealthResponse> {
+  const response = await fetch(`${API_BASE_URL}/health`, {
+    method: "GET",
+  });
+
+  if (!response.ok) {
+    await handleApiFailure(response);
+  }
+
+  return (await parseJsonResponse(response)) as ApiHealthResponse;
 }
 
 export async function uploadDocument(

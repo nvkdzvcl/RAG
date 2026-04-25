@@ -81,3 +81,62 @@ def test_compare_workflow_uses_injected_qwen_backed_branches() -> None:
 
     assert response.standard.answer == "Qwen DI answer."
     assert response.advanced.answer == "Qwen DI answer."
+
+
+def test_compare_workflow_preserves_model_override_for_both_branches() -> None:
+    class _RecordingLLMClient:
+        def __init__(self) -> None:
+            self.models: list[str | None] = []
+
+        def complete(
+            self,
+            prompt: str,
+            system_prompt: str | None = None,
+            model: str | None = None,
+        ) -> str:
+            _ = prompt
+            _ = system_prompt
+            self.models.append(model)
+            return '{"answer":"Shared override answer.","confidence":0.73,"status":"answered"}'
+
+    class _FakeRetriever:
+        def retrieve(self, query: str, top_k: int = 5) -> list[RetrievalResult]:
+            _ = query
+            _ = top_k
+            return [
+                RetrievalResult(
+                    chunk_id="c_cmp_model_001",
+                    doc_id="d_cmp_model_001",
+                    source="seeded://cmp-model",
+                    content="Compare model override test context.",
+                    score=0.86,
+                    score_type="hybrid",
+                    rank=1,
+                )
+            ]
+
+    class _FakeIndexManager:
+        def get_retriever(self) -> _FakeRetriever:
+            return _FakeRetriever()
+
+        def get_active_source(self) -> str:
+            return "seeded"
+
+    llm_client = _RecordingLLMClient()
+    standard = StandardWorkflow(
+        index_manager=_FakeIndexManager(),
+        llm_client=llm_client,
+        reranker=ScoreOnlyReranker(),
+    )
+    advanced = AdvancedWorkflow(standard_workflow=standard, max_loops=1)
+    compare = CompareWorkflow(
+        standard_workflow=standard,
+        advanced_workflow=advanced,
+    )
+
+    response = compare.run(query="compare model override", model="qwen3.5:9b")
+
+    assert response.standard.answer == "Shared override answer."
+    assert response.advanced.answer
+    assert len(llm_client.models) >= 2
+    assert set(llm_client.models) == {"qwen3.5:9b"}

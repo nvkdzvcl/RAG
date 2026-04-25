@@ -24,7 +24,13 @@ class Reranker(Protocol):
 class Generator(Protocol):
     """Generator contract."""
 
-    def generate_answer(self, query: str, context: list[dict], mode: Mode) -> dict: ...
+    def generate_answer(
+        self,
+        query: str,
+        context: list[dict],
+        mode: Mode,
+        model: str | None = None,
+    ) -> dict: ...
 
 
 class Critic(Protocol):
@@ -36,4 +42,9 @@ class Critic(Protocol):
 class Workflow(Protocol):
     """Workflow contract."""
 
-    def run(self, query: str, chat_history: list[dict[str, str]] | None = None) -> dict: ...
+    def run(
+        self,
+        query: str,
+        chat_history: list[dict[str, str]] | None = None,
+        model: str | None = None,
+    ) -> dict: ...

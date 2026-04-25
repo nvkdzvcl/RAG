@@ -21,6 +21,13 @@ export const translations = {
     compare: "So sánh cả hai chế độ song song",
   },
 
+  // Model selector
+  model: {
+    title: "Mô hình Qwen",
+    active: "Model đang dùng",
+    sharedAcrossModes: "Áp dụng chung cho Chuẩn, Nâng cao và So sánh",
+  },
+
   // Sidebar
   sidebar: {
     newChat: "Cuộc trò chuyện mới",

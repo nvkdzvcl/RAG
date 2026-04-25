@@ -2,10 +2,16 @@
 
 from fastapi import APIRouter
 
+from app.core.config import get_settings
+
 router = APIRouter(tags=["health"])
 
 
 @router.get("/health")
 def health() -> dict[str, str]:
     """Liveness probe endpoint."""
-    return {"status": "ok"}
+    settings = get_settings()
+    return {
+        "status": "ok",
+        "llm_model": settings.llm_model,
+    }

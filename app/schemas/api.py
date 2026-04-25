@@ -15,6 +15,7 @@ class QueryRequest(BaseModel):
     query: str = Field(min_length=1)
     mode: Mode = Mode.STANDARD
     chat_history: list[dict[str, str]] = Field(default_factory=list)
+    model: str | None = Field(default=None, min_length=1)
 
 
 class ModeResult(BaseModel):

@@ -8,6 +8,7 @@ from app.generation.llm_client import (
     LLMClient,
     OpenAICompatibleLLMClient,
     StubLLMClient,
+    complete_with_model,
     create_llm_client,
     create_llm_client_from_settings,
 )
@@ -22,6 +23,7 @@ __all__ = [
     "OpenAICompatibleLLMClient",
     "StructuredOutputParser",
     "StubLLMClient",
+    "complete_with_model",
     "create_llm_client",
     "create_llm_client_from_settings",
 ]

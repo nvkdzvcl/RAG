@@ -63,6 +63,13 @@ def test_settings_defaults(monkeypatch) -> None:
 def test_query_request_mode_default() -> None:
     payload = QueryRequest(query="What is Self-RAG?")
     assert payload.mode == Mode.STANDARD
+    assert payload.model is None
+
+
+def test_query_request_accepts_optional_model_override() -> None:
+    payload = QueryRequest(query="What is Self-RAG?", model="qwen2.5:7b")
+    assert payload.mode == Mode.STANDARD
+    assert payload.model == "qwen2.5:7b"
 
 
 def test_workflow_state_schema() -> None:

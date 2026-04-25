@@ -131,7 +131,12 @@ class StandardWorkflow:
             return "seeded"
         return self.index_manager.get_active_source()
 
-    def run_pipeline(self, query: str, mode: Mode = Mode.STANDARD) -> StandardPipelineResult:
+    def run_pipeline(
+        self,
+        query: str,
+        mode: Mode = Mode.STANDARD,
+        model: str | None = None,
+    ) -> StandardPipelineResult:
         """Run one retrieval-generation pass and return intermediate artifacts."""
         normalized_query = normalize_query(query)
         retrieval_top_k = max(self.hybrid_top_k, self.rerank_top_k)
@@ -142,6 +147,7 @@ class StandardWorkflow:
             query=normalized_query,
             context=selected_context,
             mode=mode,
+            model=model,
         )
 
         return StandardPipelineResult(
@@ -156,11 +162,12 @@ class StandardWorkflow:
         self,
         query: str,
         chat_history: list[dict[str, str]] | None = None,
+        model: str | None = None,
     ) -> StandardQueryResponse:
         start_time = time.perf_counter()
         _ = chat_history
 
-        pipeline = self.run_pipeline(query=query, mode=Mode.STANDARD)
+        pipeline = self.run_pipeline(query=query, mode=Mode.STANDARD, model=model)
 
         elapsed_ms = int((time.perf_counter() - start_time) * 1000)
         trace = [

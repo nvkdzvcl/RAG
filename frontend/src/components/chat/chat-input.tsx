@@ -27,6 +27,11 @@ export function ChatInput({ query, onQueryChange, onSubmit, isLoading = false, c
             if ((event.ctrlKey || event.metaKey) && event.key === "Enter") {
               event.preventDefault();
               onSubmit();
+              return;
+            }
+            if (event.key === "Enter" && !event.shiftKey) {
+              event.preventDefault();
+              onSubmit();
             }
           }}
           disabled={isLoading}

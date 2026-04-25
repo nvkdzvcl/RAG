@@ -1,6 +1,6 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 
-import { postQuery } from "@/api/client";
+import { getHealthStatus, postQuery } from "@/api/client";
 import { apiToUi } from "@/api/transform";
 import { AppShell } from "@/components/dashboard/app-shell";
 import { ChatComposer } from "@/components/dashboard/chat-composer";
@@ -21,8 +21,15 @@ const RECENT_CHAT_SEED: RecentChat[] = [
   { id: "recent-3", title: "RAG cơ bản là gì?", mode: "standard", timeLabel: "1 giờ trước" },
 ];
 
+const DEFAULT_MODEL =
+  (typeof import.meta.env.VITE_DEFAULT_LLM_MODEL === "string" &&
+  import.meta.env.VITE_DEFAULT_LLM_MODEL.trim().length > 0
+    ? import.meta.env.VITE_DEFAULT_LLM_MODEL.trim()
+    : "qwen2.5:3b");
+
 export function ChatPage() {
   const [mode, setMode] = useState<Mode>("standard");
+  const [selectedModel, setSelectedModel] = useState<string>(DEFAULT_MODEL);
   const [query, setQuery] = useState("");
   const [submittedQuery, setSubmittedQuery] = useState<string | null>(null);
   const [result, setResult] = useState<QueryResult | null>(null);
@@ -47,6 +54,29 @@ export function ChatPage() {
     queryDisabledReason,
     uploadFile,
   } = useDocumentIngestion();
+
+  useEffect(() => {
+    let mounted = true;
+
+    const loadBackendDefaultModel = async () => {
+      try {
+        const health = await getHealthStatus();
+        if (!mounted) {
+          return;
+        }
+        if (typeof health.llm_model === "string" && health.llm_model.trim().length > 0) {
+          setSelectedModel(health.llm_model.trim());
+        }
+      } catch {
+        // Keep local default model when backend health/default model is unavailable.
+      }
+    };
+
+    void loadBackendDefaultModel();
+    return () => {
+      mounted = false;
+    };
+  }, []);
 
   const canSubmit = query.trim().length > 0 && !isLoading && canQuery;
 
@@ -83,9 +113,11 @@ export function ChatPage() {
         query: normalized,
         mode,
         chat_history: chatHistory,
+        model: selectedModel,
       });
       const mapped = apiToUi(payload);
       setResult(mapped);
+      setQuery("");
       upsertRecentChat(normalized, mode);
 
       const assistantMessage = mapped.mode === "compare" ? mapped.comparison.note || "Hoàn tất so sánh." : mapped.answer;
@@ -134,7 +166,13 @@ export function ChatPage() {
 
   const mainContent = (
     <div className="mx-auto flex w-full max-w-5xl flex-col gap-4">
-      <ModeSelector mode={mode} onModeChange={setMode} disabled={isLoading} />
+      <ModeSelector
+        mode={mode}
+        onModeChange={setMode}
+        selectedModel={selectedModel}
+        onModelChange={setSelectedModel}
+        disabled={isLoading}
+      />
       <DocumentUploadCard
         documents={documents}
         activeDocument={activeDocument}

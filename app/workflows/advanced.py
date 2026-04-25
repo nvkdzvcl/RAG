@@ -6,6 +6,7 @@ import time
 
 from app.core.prompting import PromptRepository
 from app.core.config import get_settings
+from app.generation.llm_client import complete_with_model
 from app.schemas.api import AdvancedQueryResponse
 from app.schemas.common import Mode
 from app.schemas.workflow import WorkflowState
@@ -45,6 +46,7 @@ class AdvancedWorkflow:
 
         self.standard_workflow = standard_workflow or StandardWorkflow()
         llm_client = self.standard_workflow.generator.llm_client
+        self.llm_client = llm_client
         prompt_repository = self.standard_workflow.generator.prompt_repository
         self._prompt_repository: PromptRepository = prompt_repository
 
@@ -65,7 +67,12 @@ class AdvancedWorkflow:
             prompt_repository=prompt_repository,
         )
 
-    def _direct_answer_without_retrieval(self, query: str) -> tuple[str, float | None, str, str]:
+    def _direct_answer_without_retrieval(
+        self,
+        query: str,
+        *,
+        model: str | None = None,
+    ) -> tuple[str, float | None, str, str]:
         prompt = self._prompt_repository.render(
             "advanced_answer.md",
             fallback=_ADVANCED_DIRECT_ANSWER_FALLBACK,
@@ -74,7 +81,11 @@ class AdvancedWorkflow:
             context="(No retrieved context. Answer only if still safe and grounded.)",
         )
         try:
-            raw = self.standard_workflow.llm_client.complete(prompt)
+            raw = complete_with_model(
+                self.standard_workflow.llm_client,
+                prompt,
+                model=model,
+            )
         except Exception:
             return (
                 "Insufficient evidence to answer without retrieval.",
@@ -94,7 +105,12 @@ class AdvancedWorkflow:
 
         return parsed.answer.strip(), parsed.confidence, parsed.status, "gate_no_retrieval"
 
-    def run(self, query: str, chat_history: list[dict[str, str]] | None = None) -> AdvancedQueryResponse:
+    def run(
+        self,
+        query: str,
+        chat_history: list[dict[str, str]] | None = None,
+        model: str | None = None,
+    ) -> AdvancedQueryResponse:
         start = time.perf_counter()
         normalized_query = normalize_query(query)
 
@@ -109,6 +125,7 @@ class AdvancedWorkflow:
         need_retrieval, gate_reason = self.retrieval_gate.decide(
             normalized_query,
             chat_history=chat_history,
+            model=model,
         )
         state.need_retrieval = need_retrieval
         trace.append(
@@ -120,7 +137,10 @@ class AdvancedWorkflow:
         )
 
         if not need_retrieval:
-            answer, confidence, status, stop_reason = self._direct_answer_without_retrieval(normalized_query)
+            answer, confidence, status, stop_reason = self._direct_answer_without_retrieval(
+                normalized_query,
+                model=model,
+            )
             elapsed_ms = int((time.perf_counter() - start) * 1000)
             return AdvancedQueryResponse(
                 mode="advanced",
@@ -148,6 +168,7 @@ class AdvancedWorkflow:
                     current_query,
                     critique=critique_result,
                     loop_count=loop,
+                    model=model,
                 )
                 if rewrites:
                     current_query = rewrites[0]
@@ -155,7 +176,11 @@ class AdvancedWorkflow:
                         if candidate not in state.rewritten_queries:
                             state.rewritten_queries.append(candidate)
 
-            pipeline = self.standard_workflow.run_pipeline(query=current_query, mode=Mode.ADVANCED)
+            pipeline = self.standard_workflow.run_pipeline(
+                query=current_query,
+                mode=Mode.ADVANCED,
+                model=model,
+            )
 
             state.retrieved_docs = [item.model_dump() for item in pipeline.retrieved]
             state.reranked_docs = [item.model_dump() for item in pipeline.reranked]
@@ -168,6 +193,7 @@ class AdvancedWorkflow:
                 context=pipeline.selected_context,
                 loop_count=loop,
                 max_loops=self.max_loops,
+                model=model,
             )
             state.critique = critique_result
             state.confidence = critique_result.confidence
@@ -245,6 +271,7 @@ class AdvancedWorkflow:
                 draft_answer=pipeline.generated.answer,
                 critique=critique_result,
                 context=pipeline.selected_context,
+                model=model,
             )
             stop_reason = "refined_after_critique"
 

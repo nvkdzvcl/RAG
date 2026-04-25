@@ -8,7 +8,7 @@ from pathlib import Path
 from app.core.config import get_settings
 from app.core.json_utils import parse_json_object
 from app.core.prompting import PromptRepository
-from app.generation.llm_client import LLMClient
+from app.generation.llm_client import LLMClient, complete_with_model
 from app.schemas.retrieval import RetrievalResult
 from app.schemas.workflow import CritiqueResult
 
@@ -68,6 +68,8 @@ class AnswerRefiner:
         draft_answer: str,
         critique: CritiqueResult,
         context: list[RetrievalResult],
+        *,
+        model: str | None = None,
     ) -> str:
         heuristic = self._heuristic_refine(query, draft_answer, critique, context)
 
@@ -94,7 +96,11 @@ class AnswerRefiner:
         )
 
         try:
-            raw = self.llm_client.complete(prompt)
+            raw = complete_with_model(
+                self.llm_client,
+                prompt,
+                model=model,
+            )
         except Exception:
             return heuristic
 

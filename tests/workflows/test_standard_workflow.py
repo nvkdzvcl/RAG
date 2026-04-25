@@ -121,3 +121,52 @@ def test_standard_workflow_uses_configured_llm_client_factory(monkeypatch) -> No
         "model": "qwen2.5:3b",
         "api_base": "http://localhost:11434/v1",
     }
+
+
+def test_standard_workflow_passes_model_override_to_llm_client() -> None:
+    class _RecordingLLMClient:
+        def __init__(self) -> None:
+            self.models: list[str | None] = []
+
+        def complete(
+            self,
+            prompt: str,
+            system_prompt: str | None = None,
+            model: str | None = None,
+        ) -> str:
+            _ = prompt
+            _ = system_prompt
+            self.models.append(model)
+            return '{"answer":"Model override answer.","confidence":0.88,"status":"answered"}'
+
+    class _FakeRetriever:
+        def retrieve(self, query: str, top_k: int = 5) -> list[RetrievalResult]:
+            _ = query
+            _ = top_k
+            return [
+                RetrievalResult(
+                    chunk_id="c-model-001",
+                    doc_id="d-model-001",
+                    source="seeded://model",
+                    content="Context for per-request model override checks.",
+                    score=0.91,
+                    score_type="hybrid",
+                    rank=1,
+                )
+            ]
+
+    class _FakeIndexManager:
+        def get_retriever(self) -> _FakeRetriever:
+            return _FakeRetriever()
+
+        def get_active_source(self) -> str:
+            return "seeded"
+
+    llm_client = _RecordingLLMClient()
+    workflow = StandardWorkflow(index_manager=_FakeIndexManager(), llm_client=llm_client)
+
+    response = workflow.run(query="Use qwen2.5:7b", model="qwen2.5:7b")
+
+    assert response.answer == "Model override answer."
+    assert llm_client.models
+    assert set(llm_client.models) == {"qwen2.5:7b"}

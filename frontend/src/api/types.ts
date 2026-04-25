@@ -41,6 +41,7 @@ export type ApiQueryRequest = {
   query: string;
   mode: Mode;
   chat_history: Array<Record<string, string>>;
+  model?: string | null;
 };
 
 export type ApiDocument = {
@@ -58,3 +59,8 @@ export type ApiUploadDocumentResponse = ApiDocument;
 export type ApiDocumentStatusResponse = ApiDocument;
 
 export type ApiListDocumentsResponse = ApiDocument[] | { documents: ApiDocument[] };
+
+export type ApiHealthResponse = {
+  status: string;
+  llm_model?: string | null;
+};

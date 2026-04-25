@@ -9,7 +9,7 @@ from app.core.config import get_settings
 from app.core.prompting import PromptRepository
 from app.generation.citations import CitationBuilder
 from app.generation.interfaces import Generator
-from app.generation.llm_client import LLMClient
+from app.generation.llm_client import LLMClient, complete_with_model
 from app.generation.parser import StructuredOutputParser
 from app.schemas.common import Mode
 from app.schemas.generation import GeneratedAnswer
@@ -87,6 +87,7 @@ class BaselineGenerator(Generator):
         query: str,
         context: list[RetrievalResult],
         mode: Mode,
+        model: str | None = None,
     ) -> GeneratedAnswer:
         non_empty_context = [doc for doc in context if doc.content.strip()]
         if not non_empty_context:
@@ -94,7 +95,11 @@ class BaselineGenerator(Generator):
 
         prompt = self._build_prompt(query, non_empty_context, mode)
         try:
-            raw_output = self.llm_client.complete(prompt)
+            raw_output = complete_with_model(
+                self.llm_client,
+                prompt,
+                model=model,
+            )
         except Exception as exc:
             logger.warning("LLM completion failed in BaselineGenerator.", exc_info=exc)
             return self._insufficient("llm_error")

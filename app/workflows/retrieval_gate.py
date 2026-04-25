@@ -9,7 +9,7 @@ from pathlib import Path
 from app.core.config import get_settings
 from app.core.json_utils import parse_json_object
 from app.core.prompting import PromptRepository
-from app.generation.llm_client import LLMClient
+from app.generation.llm_client import LLMClient, complete_with_model
 
 _GATE_PROMPT_FALLBACK = (
     "Decide if retrieval is required before answering.\n"
@@ -68,7 +68,13 @@ class HeuristicRetrievalGate:
 
         return True, "default_retrieval"
 
-    def _llm_decide(self, query: str, chat_history: list[dict[str, str]] | None = None) -> tuple[bool, str] | None:
+    def _llm_decide(
+        self,
+        query: str,
+        chat_history: list[dict[str, str]] | None = None,
+        *,
+        model: str | None = None,
+    ) -> tuple[bool, str] | None:
         if not self.use_llm or self.llm_client is None:
             return None
 
@@ -80,7 +86,11 @@ class HeuristicRetrievalGate:
         )
 
         try:
-            raw = self.llm_client.complete(prompt)
+            raw = complete_with_model(
+                self.llm_client,
+                prompt,
+                model=model,
+            )
         except Exception:
             return None
 
@@ -96,12 +106,22 @@ class HeuristicRetrievalGate:
             reason = "llm_gate"
         return need_retrieval, reason.strip()
 
-    def decide(self, query: str, chat_history: list[dict[str, str]] | None = None) -> tuple[bool, str]:
+    def decide(
+        self,
+        query: str,
+        chat_history: list[dict[str, str]] | None = None,
+        *,
+        model: str | None = None,
+    ) -> tuple[bool, str]:
         heuristic_need, heuristic_reason = self._heuristic_decide(query, chat_history=chat_history)
         if heuristic_reason in {"empty_query", "forced_retrieval", "small_talk", "small_talk_short"}:
             return heuristic_need, heuristic_reason
 
-        llm_decision = self._llm_decide(query, chat_history=chat_history)
+        llm_decision = self._llm_decide(
+            query,
+            chat_history=chat_history,
+            model=model,
+        )
         if llm_decision is not None:
             return llm_decision
         return heuristic_need, heuristic_reason

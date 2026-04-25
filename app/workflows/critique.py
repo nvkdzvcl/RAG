@@ -9,7 +9,7 @@ from pathlib import Path
 from app.core.config import get_settings
 from app.core.json_utils import parse_json_object
 from app.core.prompting import PromptRepository
-from app.generation.llm_client import LLMClient
+from app.generation.llm_client import LLMClient, complete_with_model
 from app.schemas.retrieval import RetrievalResult
 from app.schemas.workflow import CritiqueResult
 
@@ -170,6 +170,7 @@ class HeuristicCritic:
         loop_count: int,
         max_loops: int,
         fallback: CritiqueResult,
+        model: str | None = None,
     ) -> CritiqueResult | None:
         if not self.use_llm or self.llm_client is None:
             return None
@@ -194,7 +195,11 @@ class HeuristicCritic:
         )
 
         try:
-            raw = self.llm_client.complete(prompt)
+            raw = complete_with_model(
+                self.llm_client,
+                prompt,
+                model=model,
+            )
         except Exception:
             return None
 
@@ -236,6 +241,7 @@ class HeuristicCritic:
         *,
         loop_count: int,
         max_loops: int,
+        model: str | None = None,
     ) -> CritiqueResult:
         heuristic = self._heuristic_critique(
             query=query,
@@ -256,5 +262,6 @@ class HeuristicCritic:
             loop_count=loop_count,
             max_loops=max_loops,
             fallback=heuristic,
+            model=model,
         )
         return llm_result or heuristic

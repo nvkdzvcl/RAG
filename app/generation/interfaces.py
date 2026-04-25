@@ -17,5 +17,6 @@ class Generator(Protocol):
         query: str,
         context: list[RetrievalResult],
         mode: Mode,
+        model: str | None = None,
     ) -> GeneratedAnswer:
         """Generate grounded answer from query and selected context."""

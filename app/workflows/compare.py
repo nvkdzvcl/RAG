@@ -56,11 +56,24 @@ class CompareWorkflow:
             note=note,
         )
 
-    def run(self, query: str, chat_history: list[dict[str, str]] | None = None) -> CompareQueryResponse:
+    def run(
+        self,
+        query: str,
+        chat_history: list[dict[str, str]] | None = None,
+        model: str | None = None,
+    ) -> CompareQueryResponse:
         started = time.perf_counter()
 
-        standard = self.standard_workflow.run(query=query, chat_history=chat_history)
-        advanced = self.advanced_workflow.run(query=query, chat_history=chat_history)
+        standard = self.standard_workflow.run(
+            query=query,
+            chat_history=chat_history,
+            model=model,
+        )
+        advanced = self.advanced_workflow.run(
+            query=query,
+            chat_history=chat_history,
+            model=model,
+        )
 
         total_latency_ms = int((time.perf_counter() - started) * 1000)
         summary = self._build_summary(

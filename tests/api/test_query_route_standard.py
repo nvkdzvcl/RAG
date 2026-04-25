@@ -14,6 +14,7 @@ def test_query_route_standard_returns_contract_payload() -> None:
         "query": "What does the standard pipeline do?",
         "mode": "standard",
         "chat_history": [],
+        "model": "qwen2.5:3b",
     }
 
     response = client.post("/api/v1/query", json=payload)

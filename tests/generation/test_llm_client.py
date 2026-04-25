@@ -55,6 +55,38 @@ def test_openai_compatible_chat_completion_success() -> None:
     assert "Xin chao" in result
 
 
+def test_openai_compatible_chat_completion_supports_model_override() -> None:
+    captured_models: list[str] = []
+
+    def _handler(request: httpx.Request) -> httpx.Response:
+        payload = json.loads(request.content.decode("utf-8"))
+        captured_models.append(payload["model"])
+        return httpx.Response(
+            status_code=200,
+            json={"choices": [{"message": {"content": '{"answer":"ok","confidence":0.7,"status":"answered"}'}}]},
+        )
+
+    client = httpx.Client(
+        base_url="http://localhost:11434/v1/",
+        transport=httpx.MockTransport(_handler),
+    )
+    llm = OpenAICompatibleLLMClient(
+        model="qwen2.5:3b",
+        api_base="http://localhost:11434/v1",
+        api_key="ollama",
+        temperature=0.2,
+        max_tokens=256,
+        timeout_seconds=10,
+        client=client,
+    )
+
+    llm.complete("default model")
+    llm.complete("override model", model="qwen3.5:9b")
+    client.close()
+
+    assert captured_models == ["qwen2.5:3b", "qwen3.5:9b"]
+
+
 def test_openai_compatible_supports_list_content_blocks() -> None:
     def _handler(request: httpx.Request) -> httpx.Response:
         _ = request
