@@ -18,6 +18,7 @@ function confidenceLabel(confidence: number | null): string {
 function reliabilitySummary(result: CompareResult): string {
   const standard = result.standard;
   const advanced = result.advanced;
+  const responseLanguage = standard.responseLanguage;
 
   const statusScore = (status: string): number => {
     if (status === "answered") return 2;
@@ -29,12 +30,21 @@ function reliabilitySummary(result: CompareResult): string {
   const advancedScore = statusScore(advanced.status) + (advanced.confidence ?? 0);
 
   if (advancedScore > standardScore + 0.03) {
-    return "Chế độ Nâng cao có vẻ đáng tin cậy hơn cho câu hỏi này (độ tin cậy/trạng thái cao hơn).";
+    if (responseLanguage === "vi") {
+      return "Chế độ Nâng cao có vẻ đáng tin cậy hơn cho câu hỏi này (độ tin cậy/trạng thái cao hơn).";
+    }
+    return "Advanced mode appears more reliable for this query (higher confidence/status).";
   }
   if (standardScore > advancedScore + 0.03) {
-    return "Chế độ Chuẩn có vẻ đáng tin cậy hơn cho câu hỏi này (độ tin cậy/trạng thái cao hơn).";
+    if (responseLanguage === "vi") {
+      return "Chế độ Chuẩn có vẻ đáng tin cậy hơn cho câu hỏi này (độ tin cậy/trạng thái cao hơn).";
+    }
+    return "Standard mode appears more reliable for this query (higher confidence/status).";
   }
-  return "Cả hai chế độ đều có độ tin cậy tương đương cho câu hỏi này.";
+  if (responseLanguage === "vi") {
+    return "Cả hai chế độ đều có độ tin cậy tương đương cho câu hỏi này.";
+  }
+  return "Both modes appear similarly reliable for this query.";
 }
 
 function ModeColumn({ title, result }: { title: string; result: ModeResult }) {
@@ -46,9 +56,15 @@ function ModeColumn({ title, result }: { title: string; result: ModeResult }) {
       <CardContent className="space-y-4">
         <div className="flex flex-wrap gap-2">
           <Badge variant="outline">trạng thái {result.status}</Badge>
+          <Badge variant="muted">lang {result.responseLanguage}</Badge>
           <Badge variant="muted">{translations.metrics.confidence} {confidenceLabel(result.confidence)}</Badge>
           <Badge variant="muted">{translations.metrics.latency} {result.latencyMs === null ? "n/a" : `${result.latencyMs}ms`}</Badge>
           <Badge variant="muted">{translations.citations.title} {result.citations.length}</Badge>
+          {result.languageMismatch ? (
+            <Badge variant="outline" className="border-amber-300 bg-amber-50 text-amber-700">
+              {translations.answer.languageMismatch}
+            </Badge>
+          ) : null}
         </div>
 
         <div className="rounded-xl border border-slate-200 bg-white px-4 py-3">

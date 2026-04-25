@@ -11,10 +11,12 @@ from app.core.prompting import PromptRepository
 from app.generation.llm_client import LLMClient, complete_with_model
 from app.schemas.retrieval import RetrievalResult
 from app.schemas.workflow import CritiqueResult
+from app.workflows.shared import build_language_system_prompt, response_language_name
 
 _REFINE_PROMPT_FALLBACK = (
     "Refine the draft answer to improve groundedness and coverage.\\n"
-    "Keep response language aligned with the question (Vietnamese/English).\\n"
+    "Return in $response_language_name only.\\n"
+    "response_language: $response_language\\n"
     "Return strict JSON only with key: refined_answer.\\n"
     "question: $question\\n"
     "draft_answer: $draft_answer\\n"
@@ -46,6 +48,7 @@ class AnswerRefiner:
         draft_answer: str,
         critique: CritiqueResult,
         context: list[RetrievalResult],
+        response_language: str,
     ) -> str:
         _ = query
         refined = draft_answer.strip()
@@ -60,6 +63,10 @@ class AnswerRefiner:
                 f" ({lead_source.chunk_id})."
             )
 
+        if response_language == "vi":
+            refined = refined.replace("Additional coverage:", "Bổ sung nội dung:")
+            refined = refined.replace("Evidence note: supported by", "Ghi chú bằng chứng: được hỗ trợ bởi")
+
         return refined
 
     def refine(
@@ -70,8 +77,15 @@ class AnswerRefiner:
         context: list[RetrievalResult],
         *,
         model: str | None = None,
+        response_language: str = "en",
     ) -> str:
-        heuristic = self._heuristic_refine(query, draft_answer, critique, context)
+        heuristic = self._heuristic_refine(
+            query,
+            draft_answer,
+            critique,
+            context,
+            response_language=response_language,
+        )
 
         if not self.use_llm or self.llm_client is None:
             return heuristic
@@ -93,12 +107,15 @@ class AnswerRefiner:
                 ],
                 ensure_ascii=False,
             ),
+            response_language=response_language,
+            response_language_name=response_language_name(response_language),
         )
 
         try:
             raw = complete_with_model(
                 self.llm_client,
                 prompt,
+                system_prompt=build_language_system_prompt(response_language),
                 model=model,
             )
         except Exception:

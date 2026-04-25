@@ -14,14 +14,24 @@ from app.workflows.critique import HeuristicCritic
 from app.workflows.query_rewrite import QueryRewriter
 from app.workflows.refine import AnswerRefiner
 from app.workflows.retrieval_gate import HeuristicRetrievalGate
-from app.workflows.shared import normalize_query
+from app.workflows.shared import (
+    build_language_system_prompt,
+    detect_response_language,
+    is_language_mismatch,
+    localized_insufficient_evidence,
+    normalize_query,
+    response_language_name,
+)
 from app.workflows.standard import StandardWorkflow
 
 _ADVANCED_DIRECT_ANSWER_FALLBACK = (
     "You are the advanced Self-RAG assistant.\n"
     "No retrieval context is available for this turn.\n"
+    "Answer in the required response language only.\n"
+    "Do not answer in Chinese unless the user asks in Chinese.\n"
     "If the question cannot be answered safely without context, set status=insufficient_evidence.\n"
     "Return strict JSON with keys: answer, confidence, status.\n"
+    "response_language: $response_language ($response_language_name)\n"
     "mode: $mode\n"
     "question: $question\n"
     "context:\n$context"
@@ -72,6 +82,7 @@ class AdvancedWorkflow:
         query: str,
         *,
         model: str | None = None,
+        response_language: str = "en",
     ) -> tuple[str, float | None, str, str]:
         prompt = self._prompt_repository.render(
             "advanced_answer.md",
@@ -79,16 +90,19 @@ class AdvancedWorkflow:
             mode="advanced",
             question=query,
             context="(No retrieved context. Answer only if still safe and grounded.)",
+            response_language=response_language,
+            response_language_name=response_language_name(response_language),
         )
         try:
             raw = complete_with_model(
                 self.standard_workflow.llm_client,
                 prompt,
+                system_prompt=build_language_system_prompt(response_language),
                 model=model,
             )
         except Exception:
             return (
-                "Insufficient evidence to answer without retrieval.",
+                localized_insufficient_evidence(response_language),
                 0.0,
                 "insufficient_evidence",
                 "gate_no_retrieval_llm_error",
@@ -97,7 +111,7 @@ class AdvancedWorkflow:
 
         if not parsed.answer.strip() or parsed.status == "insufficient_evidence":
             return (
-                "Insufficient evidence to answer without retrieval.",
+                localized_insufficient_evidence(response_language),
                 0.0,
                 "insufficient_evidence",
                 "gate_no_retrieval_insufficient",
@@ -110,14 +124,17 @@ class AdvancedWorkflow:
         query: str,
         chat_history: list[dict[str, str]] | None = None,
         model: str | None = None,
+        response_language: str | None = None,
     ) -> AdvancedQueryResponse:
         start = time.perf_counter()
         normalized_query = normalize_query(query)
+        resolved_language = response_language or detect_response_language(query)
 
         state = WorkflowState(
             mode=Mode.ADVANCED,
             user_query=query,
             normalized_query=normalized_query,
+            response_language=resolved_language,
             chat_history=chat_history or [],
         )
         trace: list[dict] = []
@@ -126,6 +143,7 @@ class AdvancedWorkflow:
             normalized_query,
             chat_history=chat_history,
             model=model,
+            response_language=resolved_language,
         )
         state.need_retrieval = need_retrieval
         trace.append(
@@ -133,6 +151,7 @@ class AdvancedWorkflow:
                 "step": "retrieval_gate",
                 "need_retrieval": need_retrieval,
                 "reason": gate_reason,
+                "response_language": resolved_language,
             }
         )
 
@@ -140,7 +159,19 @@ class AdvancedWorkflow:
             answer, confidence, status, stop_reason = self._direct_answer_without_retrieval(
                 normalized_query,
                 model=model,
+                response_language=resolved_language,
             )
+            mismatch = is_language_mismatch(answer, resolved_language)
+            if mismatch and status != "insufficient_evidence":
+                rewritten = self.standard_workflow._rewrite_answer_language(
+                    query=normalized_query,
+                    answer=answer,
+                    response_language=resolved_language,
+                    model=model,
+                )
+                if rewritten:
+                    answer = rewritten
+                    mismatch = is_language_mismatch(answer, resolved_language)
             elapsed_ms = int((time.perf_counter() - start) * 1000)
             return AdvancedQueryResponse(
                 mode="advanced",
@@ -151,6 +182,8 @@ class AdvancedWorkflow:
                 stop_reason=stop_reason,
                 latency_ms=elapsed_ms,
                 loop_count=0,
+                response_language=resolved_language,
+                language_mismatch=mismatch,
                 trace=trace,
             )
 
@@ -169,6 +202,7 @@ class AdvancedWorkflow:
                     critique=critique_result,
                     loop_count=loop,
                     model=model,
+                    response_language=resolved_language,
                 )
                 if rewrites:
                     current_query = rewrites[0]
@@ -180,6 +214,7 @@ class AdvancedWorkflow:
                 query=current_query,
                 mode=Mode.ADVANCED,
                 model=model,
+                response_language=resolved_language,
             )
 
             state.retrieved_docs = [item.model_dump() for item in pipeline.retrieved]
@@ -194,6 +229,7 @@ class AdvancedWorkflow:
                 loop_count=loop,
                 max_loops=self.max_loops,
                 model=model,
+                response_language=resolved_language,
             )
             state.critique = critique_result
             state.confidence = critique_result.confidence
@@ -238,13 +274,15 @@ class AdvancedWorkflow:
             elapsed_ms = int((time.perf_counter() - start) * 1000)
             return AdvancedQueryResponse(
                 mode="advanced",
-                answer="Insufficient evidence to provide a grounded answer.",
+                answer=localized_insufficient_evidence(resolved_language),
                 citations=[],
                 confidence=0.0,
                 status="insufficient_evidence",
                 stop_reason="no_pipeline_result",
                 latency_ms=elapsed_ms,
                 loop_count=state.loop_count,
+                response_language=resolved_language,
+                language_mismatch=False,
                 trace=trace,
             )
 
@@ -259,7 +297,7 @@ class AdvancedWorkflow:
             and not critique_result.should_retry_retrieval
             and not critique_result.should_refine_answer
         ):
-            final_answer = "Insufficient evidence to provide a grounded answer."
+            final_answer = localized_insufficient_evidence(resolved_language)
             final_citations = []
             final_status = "insufficient_evidence"
             stop_reason = "critic_abstain"
@@ -272,16 +310,42 @@ class AdvancedWorkflow:
                 critique=critique_result,
                 context=pipeline.selected_context,
                 model=model,
+                response_language=resolved_language,
             )
             stop_reason = "refined_after_critique"
 
         if critique_result.has_conflict and stop_reason == "critique_pass":
-            final_answer = final_answer + "\n\nPotential conflict detected in sources."
+            if resolved_language == "vi":
+                final_answer = final_answer + "\n\nPhát hiện khả năng xung đột giữa các nguồn."
+            else:
+                final_answer = final_answer + "\n\nPotential conflict detected in sources."
             stop_reason = "conflict_detected"
+
+        language_mismatch = is_language_mismatch(final_answer, resolved_language)
+        if language_mismatch and final_status != "insufficient_evidence":
+            rewritten = self.standard_workflow._rewrite_answer_language(
+                query=normalized_query,
+                answer=final_answer,
+                response_language=resolved_language,
+                model=model,
+            )
+            if rewritten:
+                final_answer = rewritten
+                language_mismatch = is_language_mismatch(final_answer, resolved_language)
+                if not language_mismatch and stop_reason == "critique_pass":
+                    stop_reason = "language_refined"
 
         state.final_answer = final_answer
         state.citations = final_citations
         state.stop_reason = stop_reason
+        state.language_mismatch = language_mismatch
+        trace.append(
+            {
+                "step": "language_guard",
+                "response_language": resolved_language,
+                "language_mismatch": language_mismatch,
+            }
+        )
 
         elapsed_ms = int((time.perf_counter() - start) * 1000)
         return AdvancedQueryResponse(
@@ -293,5 +357,7 @@ class AdvancedWorkflow:
             stop_reason=state.stop_reason,
             latency_ms=elapsed_ms,
             loop_count=state.loop_count,
+            response_language=resolved_language,
+            language_mismatch=state.language_mismatch,
             trace=trace,
         )

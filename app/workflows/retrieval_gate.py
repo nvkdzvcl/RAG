@@ -10,11 +10,14 @@ from app.core.config import get_settings
 from app.core.json_utils import parse_json_object
 from app.core.prompting import PromptRepository
 from app.generation.llm_client import LLMClient, complete_with_model
+from app.workflows.shared import build_language_system_prompt, response_language_name
 
 _GATE_PROMPT_FALLBACK = (
     "Decide if retrieval is required before answering.\n"
     "Return strict JSON only with keys: need_retrieval (boolean), reason (string).\n"
     "Use query meaning, not stylistic preference.\n"
+    "Keep reason in $response_language_name.\n"
+    "response_language: $response_language\n"
     "question: $question\n"
     "chat_history: $chat_history"
 )
@@ -74,6 +77,7 @@ class HeuristicRetrievalGate:
         chat_history: list[dict[str, str]] | None = None,
         *,
         model: str | None = None,
+        response_language: str = "en",
     ) -> tuple[bool, str] | None:
         if not self.use_llm or self.llm_client is None:
             return None
@@ -83,12 +87,15 @@ class HeuristicRetrievalGate:
             fallback=_GATE_PROMPT_FALLBACK,
             question=query,
             chat_history=json.dumps(chat_history or [], ensure_ascii=False),
+            response_language=response_language,
+            response_language_name=response_language_name(response_language),
         )
 
         try:
             raw = complete_with_model(
                 self.llm_client,
                 prompt,
+                system_prompt=build_language_system_prompt(response_language),
                 model=model,
             )
         except Exception:
@@ -112,6 +119,7 @@ class HeuristicRetrievalGate:
         chat_history: list[dict[str, str]] | None = None,
         *,
         model: str | None = None,
+        response_language: str = "en",
     ) -> tuple[bool, str]:
         heuristic_need, heuristic_reason = self._heuristic_decide(query, chat_history=chat_history)
         if heuristic_reason in {"empty_query", "forced_retrieval", "small_talk", "small_talk_short"}:
@@ -121,6 +129,7 @@ class HeuristicRetrievalGate:
             query,
             chat_history=chat_history,
             model=model,
+            response_language=response_language,
         )
         if llm_decision is not None:
             return llm_decision

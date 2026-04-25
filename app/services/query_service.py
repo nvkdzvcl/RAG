@@ -19,6 +19,7 @@ class QueryService:
         mode: Mode,
         chat_history: list[dict[str, str]] | None = None,
         model: str | None = None,
+        response_language: str | None = None,
     ) -> QueryResponse:
         """Execute query for selected mode."""
         return self.runner.run(
@@ -26,6 +27,7 @@ class QueryService:
             mode=mode,
             chat_history=chat_history,
             model=model,
+            response_language=response_language,
         )
 
     def run_request(self, payload: QueryRequest) -> QueryResponse:

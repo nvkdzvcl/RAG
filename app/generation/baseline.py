@@ -14,16 +14,24 @@ from app.generation.parser import StructuredOutputParser
 from app.schemas.common import Mode
 from app.schemas.generation import GeneratedAnswer
 from app.schemas.retrieval import RetrievalResult
+from app.workflows.shared import (
+    build_language_system_prompt,
+    localized_insufficient_evidence,
+    response_language_name,
+)
 
 logger = logging.getLogger(__name__)
 
 
 _STANDARD_PROMPT_FALLBACK = (
     "You are a grounded RAG assistant.\n"
-    "Answer in the same language as the question when possible (including Vietnamese).\n"
+    "Answer in the required response language only.\n"
+    "If response_language is Vietnamese, write fully in Vietnamese.\n"
+    "Do not answer in Chinese unless the user asks in Chinese.\n"
     "Use only the provided context; do not invent unsupported facts.\n"
     "If evidence is insufficient, set status to insufficient_evidence.\n"
     "Return strict JSON with keys: answer, confidence, status.\n"
+    "response_language: $response_language ($response_language_name)\n"
     "mode: $mode\n"
     "question: $question\n"
     "context:\n$context"
@@ -31,9 +39,12 @@ _STANDARD_PROMPT_FALLBACK = (
 
 _ADVANCED_PROMPT_FALLBACK = (
     "You are the advanced Self-RAG answerer.\n"
-    "Answer in the same language as the question when possible (including Vietnamese).\n"
+    "Answer in the required response language only.\n"
+    "If response_language is Vietnamese, write fully in Vietnamese.\n"
+    "Do not answer in Chinese unless the user asks in Chinese.\n"
     "Ground every claim in the context. If evidence is weak, abstain with status=insufficient_evidence.\n"
     "Return strict JSON with keys: answer, confidence, status.\n"
+    "response_language: $response_language ($response_language_name)\n"
     "mode: $mode\n"
     "question: $question\n"
     "context:\n$context"
@@ -58,7 +69,13 @@ class BaselineGenerator(Generator):
         resolved_prompt_dir = prompt_dir or settings.prompt_dir
         self.prompt_repository = prompt_repository or PromptRepository(resolved_prompt_dir)
 
-    def _build_prompt(self, query: str, context: list[RetrievalResult], mode: Mode) -> str:
+    def _build_prompt(
+        self,
+        query: str,
+        context: list[RetrievalResult],
+        mode: Mode,
+        response_language: str,
+    ) -> str:
         joined_context = "\n\n".join(
             f"[chunk_id={doc.chunk_id}] {doc.content}" for doc in context
         )
@@ -70,11 +87,19 @@ class BaselineGenerator(Generator):
             mode=mode.value,
             question=query,
             context=joined_context,
+            response_language=response_language,
+            response_language_name=response_language_name(response_language),
         )
 
-    def _insufficient(self, reason: str, raw_output: str | None = None) -> GeneratedAnswer:
+    def _insufficient(
+        self,
+        reason: str,
+        *,
+        response_language: str,
+        raw_output: str | None = None,
+    ) -> GeneratedAnswer:
         return GeneratedAnswer(
-            answer="Insufficient evidence to provide a grounded answer.",
+            answer=localized_insufficient_evidence(response_language),
             citations=[],
             confidence=0.0,
             status="insufficient_evidence",
@@ -88,25 +113,42 @@ class BaselineGenerator(Generator):
         context: list[RetrievalResult],
         mode: Mode,
         model: str | None = None,
+        response_language: str = "en",
     ) -> GeneratedAnswer:
         non_empty_context = [doc for doc in context if doc.content.strip()]
         if not non_empty_context:
-            return self._insufficient("no_context")
+            return self._insufficient(
+                "no_context",
+                response_language=response_language,
+            )
 
-        prompt = self._build_prompt(query, non_empty_context, mode)
+        prompt = self._build_prompt(
+            query,
+            non_empty_context,
+            mode,
+            response_language,
+        )
         try:
             raw_output = complete_with_model(
                 self.llm_client,
                 prompt,
+                system_prompt=build_language_system_prompt(response_language),
                 model=model,
             )
         except Exception as exc:
             logger.warning("LLM completion failed in BaselineGenerator.", exc_info=exc)
-            return self._insufficient("llm_error")
+            return self._insufficient(
+                "llm_error",
+                response_language=response_language,
+            )
         parsed = self.parser.parse(raw_output)
 
         if parsed.status == "insufficient_evidence" or not parsed.answer.strip():
-            return self._insufficient("model_insufficient_evidence", raw_output=raw_output)
+            return self._insufficient(
+                "model_insufficient_evidence",
+                response_language=response_language,
+                raw_output=raw_output,
+            )
 
         citations = self.citation_builder.build(non_empty_context)
         return GeneratedAnswer(

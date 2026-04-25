@@ -18,6 +18,8 @@ export type ApiModeResponse = {
   status: string;
   latency_ms?: number | null;
   loop_count?: number | null;
+  response_language?: string;
+  language_mismatch?: boolean;
   trace: Array<Record<string, unknown>>;
 };
 

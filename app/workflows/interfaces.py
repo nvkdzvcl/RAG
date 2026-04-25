@@ -47,4 +47,5 @@ class Workflow(Protocol):
         query: str,
         chat_history: list[dict[str, str]] | None = None,
         model: str | None = None,
+        response_language: str | None = None,
     ) -> dict: ...

@@ -10,12 +10,14 @@ from app.core.json_utils import parse_json_list, parse_json_object
 from app.core.prompting import PromptRepository
 from app.generation.llm_client import LLMClient, complete_with_model
 from app.schemas.workflow import CritiqueResult
+from app.workflows.shared import build_language_system_prompt, response_language_name
 
 _REWRITE_PROMPT_FALLBACK = (
     "Rewrite the query to improve retrieval quality.\n"
     "Return strict JSON only.\n"
     "Schema: {\"rewrites\": [\"string\", ...]}\n"
-    "Provide up to 3 concise alternatives, keep original language (Vietnamese compatible).\n"
+    "Provide up to 3 concise alternatives in $response_language_name.\n"
+    "response_language: $response_language\n"
     "question: $question\n"
     "loop_count: $loop_count\n"
     "critique: $critique"
@@ -88,6 +90,7 @@ class QueryRewriter:
         critique: CritiqueResult | None = None,
         loop_count: int = 0,
         model: str | None = None,
+        response_language: str = "en",
     ) -> list[str]:
         if not self.use_llm or self.llm_client is None:
             return []
@@ -99,12 +102,15 @@ class QueryRewriter:
             question=query,
             loop_count=loop_count,
             critique=json.dumps(critique_payload, ensure_ascii=False),
+            response_language=response_language,
+            response_language_name=response_language_name(response_language),
         )
 
         try:
             raw = complete_with_model(
                 self.llm_client,
                 prompt,
+                system_prompt=build_language_system_prompt(response_language),
                 model=model,
             )
         except Exception:
@@ -127,12 +133,14 @@ class QueryRewriter:
         critique: CritiqueResult | None = None,
         loop_count: int = 0,
         model: str | None = None,
+        response_language: str = "en",
     ) -> list[str]:
         llm_candidates = self._llm_rewrite(
             query,
             critique=critique,
             loop_count=loop_count,
             model=model,
+            response_language=response_language,
         )
         heuristic_candidates = self._heuristic_rewrite(
             query,

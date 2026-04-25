@@ -7,7 +7,9 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from app.core.config import get_settings
+from app.core.json_utils import parse_json_object
 from app.generation import BaselineGenerator, LLMClient, create_llm_client_from_settings
+from app.generation.llm_client import complete_with_model
 from app.indexing.bm25_index import BM25Index
 from app.indexing.vector_index import VectorIndex
 from app.indexing import BaseEmbeddingProvider, IndexBuilder, LocalIndexStore, create_embedding_provider
@@ -19,7 +21,13 @@ from app.schemas.generation import GeneratedAnswer
 from app.schemas.ingestion import DocumentChunk
 from app.schemas.retrieval import RetrievalResult
 from app.services.index_runtime import EmptyRetriever, RuntimeIndexManager
-from app.workflows.shared import normalize_query
+from app.workflows.shared import (
+    build_language_system_prompt,
+    detect_response_language,
+    is_language_mismatch,
+    normalize_query,
+    response_language_name,
+)
 
 
 @dataclass
@@ -35,6 +43,16 @@ class StandardPipelineResult:
 
 class StandardWorkflow:
     """Baseline RAG workflow: retrieve -> rerank -> select context -> generate."""
+
+    _LANGUAGE_REWRITE_PROMPT = (
+        "Rewrite the answer into $response_language_name while keeping the same grounded meaning.\n"
+        "Do not add new facts.\n"
+        "Do not use Chinese unless explicitly requested.\n"
+        "Return strict JSON only: {\"answer\": \"string\"}\n"
+        "response_language: $response_language\n"
+        "question: $question\n"
+        "answer:\n$draft_answer"
+    )
 
     def __init__(
         self,
@@ -136,6 +154,7 @@ class StandardWorkflow:
         query: str,
         mode: Mode = Mode.STANDARD,
         model: str | None = None,
+        response_language: str = "en",
     ) -> StandardPipelineResult:
         """Run one retrieval-generation pass and return intermediate artifacts."""
         normalized_query = normalize_query(query)
@@ -148,6 +167,7 @@ class StandardWorkflow:
             context=selected_context,
             mode=mode,
             model=model,
+            response_language=response_language,
         )
 
         return StandardPipelineResult(
@@ -163,17 +183,41 @@ class StandardWorkflow:
         query: str,
         chat_history: list[dict[str, str]] | None = None,
         model: str | None = None,
+        response_language: str | None = None,
     ) -> StandardQueryResponse:
         start_time = time.perf_counter()
         _ = chat_history
 
-        pipeline = self.run_pipeline(query=query, mode=Mode.STANDARD, model=model)
+        resolved_language = response_language or detect_response_language(query)
+        pipeline = self.run_pipeline(
+            query=query,
+            mode=Mode.STANDARD,
+            model=model,
+            response_language=resolved_language,
+        )
+        final_answer = pipeline.generated.answer
+        language_mismatch = is_language_mismatch(final_answer, resolved_language)
+        stop_reason = pipeline.generated.stop_reason
+
+        if language_mismatch and pipeline.generated.status != "insufficient_evidence":
+            rewritten = self._rewrite_answer_language(
+                query=pipeline.normalized_query,
+                answer=final_answer,
+                response_language=resolved_language,
+                model=model,
+            )
+            if rewritten:
+                final_answer = rewritten
+                language_mismatch = is_language_mismatch(final_answer, resolved_language)
+                if not language_mismatch:
+                    stop_reason = "language_refined"
 
         elapsed_ms = int((time.perf_counter() - start_time) * 1000)
         trace = [
             {
                 "step": "retrieve",
                 "query": pipeline.normalized_query,
+                "response_language": resolved_language,
                 "index_source": self._get_index_source(),
                 "count": len(pipeline.retrieved),
                 "chunk_ids": [item.chunk_id for item in pipeline.retrieved],
@@ -212,17 +256,78 @@ class StandardWorkflow:
             {
                 "step": "generate",
                 "status": pipeline.generated.status,
-                "stop_reason": pipeline.generated.stop_reason,
+                "stop_reason": stop_reason,
+                "response_language": resolved_language,
+                "language_mismatch": language_mismatch,
             },
         ]
 
+        if pipeline.generated.status != "insufficient_evidence":
+            trace.append(
+                {
+                    "step": "language_guard",
+                    "response_language": resolved_language,
+                    "language_mismatch": language_mismatch,
+                }
+            )
+
         return StandardQueryResponse(
             mode="standard",
-            answer=pipeline.generated.answer,
+            answer=final_answer,
             citations=pipeline.generated.citations,
             confidence=pipeline.generated.confidence,
-            stop_reason=pipeline.generated.stop_reason,
+            stop_reason=stop_reason,
             status=pipeline.generated.status,
             latency_ms=elapsed_ms,
+            response_language=resolved_language,
+            language_mismatch=language_mismatch,
             trace=trace,
         )
+
+    def _rewrite_answer_language(
+        self,
+        *,
+        query: str,
+        answer: str,
+        response_language: str,
+        model: str | None = None,
+    ) -> str | None:
+        prompt = self.generator.prompt_repository.render(
+            "refine.md",
+            fallback=self._LANGUAGE_REWRITE_PROMPT,
+            question=query,
+            draft_answer=answer,
+            critique=(
+                '{"note":"language_mismatch_detected","should_refine_answer":true,'
+                '"grounded":true,"enough_evidence":true,"has_conflict":false,'
+                '"missing_aspects":[],"should_retry_retrieval":false,'
+                '"better_queries":[],"confidence":0.0}'
+            ),
+            selected_context="(keep original grounded meaning; language-only rewrite)",
+            response_language=response_language,
+            response_language_name=response_language_name(response_language),
+        )
+        try:
+            raw = complete_with_model(
+                self.llm_client,
+                prompt,
+                system_prompt=build_language_system_prompt(response_language),
+                model=model,
+            )
+        except Exception:
+            return None
+
+        payload = parse_json_object(raw)
+        if payload and isinstance(payload.get("answer"), str):
+            rewritten = payload["answer"].strip()
+            if rewritten:
+                return rewritten
+        if payload and isinstance(payload.get("refined_answer"), str):
+            rewritten = payload["refined_answer"].strip()
+            if rewritten:
+                return rewritten
+
+        fallback = raw.strip()
+        if fallback and not fallback.startswith("{"):
+            return fallback
+        return None

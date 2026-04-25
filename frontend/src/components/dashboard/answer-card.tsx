@@ -28,9 +28,15 @@ export function AnswerCard({ title = "Câu trả lời", result }: AnswerCardPro
             {translations.modes[result.mode]}
           </Badge>
           <Badge variant="outline">{result.status}</Badge>
+          <Badge variant="muted">lang {result.responseLanguage}</Badge>
           <Badge variant="muted">{translations.metrics.confidence} {confidenceLabel(result.confidence)}</Badge>
           <Badge variant="muted">{translations.metrics.latency} {result.latencyMs === null ? "n/a" : `${result.latencyMs}ms`}</Badge>
           <Badge variant="muted">{translations.citations.title} {result.citations.length}</Badge>
+          {result.languageMismatch ? (
+            <Badge variant="outline" className="border-amber-300 bg-amber-50 text-amber-700">
+              {translations.answer.languageMismatch}
+            </Badge>
+          ) : null}
         </div>
 
         <div className="rounded-xl border border-slate-200 bg-white px-4 py-3">

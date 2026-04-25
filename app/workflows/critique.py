@@ -12,6 +12,7 @@ from app.core.prompting import PromptRepository
 from app.generation.llm_client import LLMClient, complete_with_model
 from app.schemas.retrieval import RetrievalResult
 from app.schemas.workflow import CritiqueResult
+from app.workflows.shared import build_language_system_prompt, response_language_name
 
 _CRITIQUE_PROMPT_FALLBACK = (
     "Critique the draft answer against selected context.\\n"
@@ -28,7 +29,8 @@ _CRITIQUE_PROMPT_FALLBACK = (
     '  "confidence": float,\\n'
     '  "note": string\\n'
     "}\\n"
-    "Keep language compatible with the question (Vietnamese/English).\\n"
+    "Keep note/missing_aspects/better_queries in $response_language_name.\\n"
+    "response_language: $response_language\\n"
     "question: $question\\n"
     "draft_answer: $draft_answer\\n"
     "selected_context: $selected_context\\n"
@@ -171,6 +173,7 @@ class HeuristicCritic:
         max_loops: int,
         fallback: CritiqueResult,
         model: str | None = None,
+        response_language: str = "en",
     ) -> CritiqueResult | None:
         if not self.use_llm or self.llm_client is None:
             return None
@@ -192,12 +195,15 @@ class HeuristicCritic:
             selected_context=json.dumps(context_payload, ensure_ascii=False),
             loop_count=loop_count,
             max_loops=max_loops,
+            response_language=response_language,
+            response_language_name=response_language_name(response_language),
         )
 
         try:
             raw = complete_with_model(
                 self.llm_client,
                 prompt,
+                system_prompt=build_language_system_prompt(response_language),
                 model=model,
             )
         except Exception:
@@ -242,6 +248,7 @@ class HeuristicCritic:
         loop_count: int,
         max_loops: int,
         model: str | None = None,
+        response_language: str = "en",
     ) -> CritiqueResult:
         heuristic = self._heuristic_critique(
             query=query,
@@ -263,5 +270,6 @@ class HeuristicCritic:
             max_loops=max_loops,
             fallback=heuristic,
             model=model,
+            response_language=response_language,
         )
         return llm_result or heuristic

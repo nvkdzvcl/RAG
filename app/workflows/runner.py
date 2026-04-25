@@ -25,11 +25,27 @@ class WorkflowRunner:
         mode: Mode,
         chat_history: list[dict[str, str]] | None = None,
         model: str | None = None,
+        response_language: str | None = None,
     ) -> QueryResponse:
         if mode == Mode.STANDARD:
-            return self._standard.run(query=query, chat_history=chat_history, model=model)
+            return self._standard.run(
+                query=query,
+                chat_history=chat_history,
+                model=model,
+                response_language=response_language,
+            )
         if mode == Mode.ADVANCED:
-            return self._advanced.run(query=query, chat_history=chat_history, model=model)
+            return self._advanced.run(
+                query=query,
+                chat_history=chat_history,
+                model=model,
+                response_language=response_language,
+            )
         if mode == Mode.COMPARE:
-            return self._compare.run(query=query, chat_history=chat_history, model=model)
+            return self._compare.run(
+                query=query,
+                chat_history=chat_history,
+                model=model,
+                response_language=response_language,
+            )
         raise NotImplementedError(f"Unsupported mode: {mode}")

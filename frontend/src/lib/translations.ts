@@ -69,6 +69,7 @@ export const translations = {
     status: "Trạng thái",
     stopReason: "Lý do dừng",
     loopCount: "Số vòng lặp",
+    languageMismatch: "Có thể sai ngôn ngữ trả lời",
   },
 
   // Citations

@@ -28,6 +28,8 @@ class ModeResult(BaseModel):
     status: str = "answered"
     latency_ms: int | None = None
     loop_count: int | None = None
+    response_language: str = "en"
+    language_mismatch: bool = False
     trace: list[dict[str, Any]] = Field(default_factory=list)
 
 

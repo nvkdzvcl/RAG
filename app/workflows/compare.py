@@ -6,6 +6,7 @@ import time
 
 from app.schemas.api import AdvancedQueryResponse, CompareQueryResponse, ComparisonSummary, StandardQueryResponse
 from app.workflows.advanced import AdvancedWorkflow
+from app.workflows.shared import detect_response_language
 from app.workflows.standard import StandardWorkflow
 
 
@@ -27,6 +28,7 @@ class CompareWorkflow:
         advanced: AdvancedQueryResponse,
         *,
         total_latency_ms: int,
+        response_language: str,
     ) -> ComparisonSummary:
         confidence_delta = None
         if standard.confidence is not None and advanced.confidence is not None:
@@ -38,16 +40,34 @@ class CompareWorkflow:
 
         citation_delta = len(advanced.citations) - len(standard.citations)
 
-        note = "Comparison completed."
+        if response_language == "vi":
+            note = "Đã hoàn tất so sánh."
+        else:
+            note = "Comparison completed."
         if confidence_delta is not None:
             if confidence_delta > 0:
-                note = "Advanced mode reports higher confidence."
+                note = (
+                    "Chế độ nâng cao cho thấy độ tin cậy cao hơn."
+                    if response_language == "vi"
+                    else "Advanced mode reports higher confidence."
+                )
             elif confidence_delta < 0:
-                note = "Standard mode reports higher confidence."
+                note = (
+                    "Chế độ chuẩn cho thấy độ tin cậy cao hơn."
+                    if response_language == "vi"
+                    else "Standard mode reports higher confidence."
+                )
             else:
-                note = "Both modes report equal confidence."
+                note = (
+                    "Hai chế độ cho độ tin cậy tương đương."
+                    if response_language == "vi"
+                    else "Both modes report equal confidence."
+                )
 
-        note = f"{note} total_latency_ms={total_latency_ms}"
+        if response_language == "vi":
+            note = f"{note} tổng_thời_gian_ms={total_latency_ms}"
+        else:
+            note = f"{note} total_latency_ms={total_latency_ms}"
 
         return ComparisonSummary(
             confidence_delta=confidence_delta,
@@ -61,18 +81,22 @@ class CompareWorkflow:
         query: str,
         chat_history: list[dict[str, str]] | None = None,
         model: str | None = None,
+        response_language: str | None = None,
     ) -> CompareQueryResponse:
         started = time.perf_counter()
+        resolved_language = response_language or detect_response_language(query)
 
         standard = self.standard_workflow.run(
             query=query,
             chat_history=chat_history,
             model=model,
+            response_language=resolved_language,
         )
         advanced = self.advanced_workflow.run(
             query=query,
             chat_history=chat_history,
             model=model,
+            response_language=resolved_language,
         )
 
         total_latency_ms = int((time.perf_counter() - started) * 1000)
@@ -80,6 +104,7 @@ class CompareWorkflow:
             standard=standard,
             advanced=advanced,
             total_latency_ms=total_latency_ms,
+            response_language=resolved_language,
         )
 
         return CompareQueryResponse(

@@ -124,6 +124,8 @@ function modeToUi(result: ApiModeResponse): ModeResult {
     stopReason: result.stop_reason ?? null,
     latencyMs: result.latency_ms ?? null,
     loopCount: result.loop_count ?? null,
+    responseLanguage: result.response_language ?? "en",
+    languageMismatch: result.language_mismatch ?? false,
     sources: citationsToSources(citations, rerankScores),
     trace: result.trace.map(traceToUi),
   };

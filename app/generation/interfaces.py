@@ -18,5 +18,6 @@ class Generator(Protocol):
         context: list[RetrievalResult],
         mode: Mode,
         model: str | None = None,
+        response_language: str = "en",
     ) -> GeneratedAnswer:
         """Generate grounded answer from query and selected context."""

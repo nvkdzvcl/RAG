@@ -40,6 +40,8 @@ export type ModeResult = {
   stopReason: string | null;
   latencyMs: number | null;
   loopCount: number | null;
+  responseLanguage: string;
+  languageMismatch: boolean;
   sources: SourceReference[];
   trace: TraceEntry[];
 };

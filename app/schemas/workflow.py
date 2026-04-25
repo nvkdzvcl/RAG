@@ -25,6 +25,7 @@ class WorkflowState(BaseModel):
     mode: Mode
     user_query: str
     normalized_query: str
+    response_language: str = "en"
     chat_history: list[dict[str, str]] = Field(default_factory=list)
     need_retrieval: bool = True
 
@@ -39,6 +40,7 @@ class WorkflowState(BaseModel):
 
     critique: CritiqueResult | None = None
     confidence: float | None = None
+    language_mismatch: bool = False
 
     loop_count: int = 0
     stop_reason: str | None = None
