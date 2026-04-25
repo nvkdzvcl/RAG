@@ -23,6 +23,7 @@ type SidebarProps = {
   onNewChat: () => void;
   recentChats: RecentChat[];
   onSelectRecent: (chat: RecentChat) => void;
+  onOpenDocuments?: () => void;
   onClearHistory?: () => void;
   onClearVectorStore?: () => void;
   onOpenSettings?: () => void;
@@ -33,7 +34,16 @@ const navItems = [
   { key: "settings", label: "Cài đặt", icon: Settings },
 ];
 
-export function Sidebar({ mode, onNewChat, recentChats, onSelectRecent, onClearHistory, onClearVectorStore, onOpenSettings }: SidebarProps) {
+export function Sidebar({
+  mode,
+  onNewChat,
+  recentChats,
+  onSelectRecent,
+  onOpenDocuments,
+  onClearHistory,
+  onClearVectorStore,
+  onOpenSettings,
+}: SidebarProps) {
   const canClearHistory = recentChats.length > 0;
 
   return (
@@ -58,12 +68,13 @@ export function Sidebar({ mode, onNewChat, recentChats, onSelectRecent, onClearH
           <div className="space-y-1">
             {navItems.map((item) => {
               const Icon = item.icon;
+              const isDocuments = item.key === "documents";
               const isSettings = item.key === "settings";
               return (
                 <button
                   key={item.key}
                   type="button"
-                  onClick={isSettings ? onOpenSettings : undefined}
+                  onClick={isDocuments ? onOpenDocuments : isSettings ? onOpenSettings : undefined}
                   className="flex w-full items-center gap-2 rounded-lg px-3 py-2 text-left text-sm text-slate-300 transition hover:bg-slate-800 hover:text-white"
                 >
                   <Icon className="h-4 w-4" />
@@ -93,7 +104,9 @@ export function Sidebar({ mode, onNewChat, recentChats, onSelectRecent, onClearH
                 <p className="line-clamp-1 text-sm text-slate-100">{chat.title}</p>
                 <div className="mt-1 flex items-center justify-between text-[11px] text-slate-400">
                   <span>{chat.timeLabel}</span>
-                  <span className="capitalize">{chat.mode}</span>
+                  <Badge variant="outline" className="border-slate-700 bg-slate-800/80 px-1.5 py-0 text-[10px] capitalize text-slate-200">
+                    {chat.mode}
+                  </Badge>
                 </div>
               </button>
             ))

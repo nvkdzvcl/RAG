@@ -1,9 +1,10 @@
-"""Schemas for document upload and processing APIs."""
+"""Schemas for document upload, delete, and processing APIs."""
 
 from __future__ import annotations
 
 from datetime import datetime, timezone
 from enum import Enum
+from typing import Literal
 
 from pydantic import BaseModel, Field
 
@@ -99,3 +100,20 @@ class DocumentListResponse(BaseModel):
     """API payload for document collection response."""
 
     documents: list[DocumentResponse] = Field(default_factory=list)
+
+
+class DeleteAllDocumentsResponse(BaseModel):
+    """API payload for deleting all uploaded documents."""
+
+    status: Literal["deleted"] = "deleted"
+    deleted_documents: int = 0
+    deleted_files: int = 0
+
+
+class DeleteDocumentResponse(BaseModel):
+    """API payload for deleting one uploaded document."""
+
+    status: Literal["deleted"] = "deleted"
+    document_id: str
+    remaining_documents: int = 0
+    deleted_files: int = 0

@@ -5,6 +5,7 @@ import {
   Circle,
   FileText,
   Loader2,
+  Trash2,
   UploadCloud,
 } from "lucide-react";
 
@@ -18,9 +19,13 @@ type DocumentUploadCardProps = {
   documents: DocumentRecord[];
   activeDocument: DocumentRecord | null;
   isUploading: boolean;
+  isDeletingDocuments?: boolean;
+  deletingDocumentId?: string | null;
   uploadMessage: string | null;
   uploadError: string | null;
   onUpload: (file: File) => Promise<void>;
+  onRequestDeleteDocument?: (document: DocumentRecord) => void;
+  onRequestDeleteAllDocuments?: () => void;
 };
 
 type StageState = "pending" | "in_progress" | "done";
@@ -96,9 +101,13 @@ export function DocumentUploadCard({
   documents,
   activeDocument,
   isUploading,
+  isDeletingDocuments = false,
+  deletingDocumentId = null,
   uploadMessage,
   uploadError,
   onUpload,
+  onRequestDeleteDocument,
+  onRequestDeleteAllDocuments,
 }: DocumentUploadCardProps) {
   const [isDragging, setIsDragging] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -210,29 +219,64 @@ export function DocumentUploadCard({
         </div>
 
         <div className="space-y-2">
-          <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">Tài liệu đã xử lý</p>
+          <div className="flex items-center justify-between gap-2">
+            <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">Tài liệu đã xử lý</p>
+            {onRequestDeleteAllDocuments ? (
+              <Button
+                type="button"
+                size="sm"
+                variant="outline"
+                disabled={documents.length === 0 || isDeletingDocuments || isUploading}
+                onClick={onRequestDeleteAllDocuments}
+                className="h-8 gap-1 border-rose-300 bg-rose-50 px-2 text-rose-700 hover:bg-rose-100 disabled:cursor-not-allowed disabled:opacity-50"
+              >
+                <Trash2 className="h-3.5 w-3.5" />
+                <span className="text-xs">Xóa tất cả</span>
+              </Button>
+            ) : null}
+          </div>
           {documents.length === 0 ? (
             <div className="rounded-lg border border-slate-200 bg-white px-3 py-3 text-sm text-slate-500">
               {translations.upload.noDocuments}. {translations.upload.uploadFirst}.
             </div>
           ) : (
             <ul className="max-h-44 space-y-2 overflow-y-auto pr-1">
-              {documents.map((document) => (
-                <li key={document.id} className="rounded-lg border border-slate-200 bg-white px-3 py-2">
-                  <div className="flex items-center justify-between gap-2">
-                    <div className="flex min-w-0 items-center gap-2">
-                      <FileText className="h-4 w-4 shrink-0 text-slate-500" />
-                      <p className="line-clamp-1 text-sm font-medium text-slate-700">{document.filename}</p>
+              {documents.map((document) => {
+                const isDeletingThisDocument = deletingDocumentId === document.id;
+                const canDelete = !!onRequestDeleteDocument && !isUploading && !isDeletingDocuments;
+                return (
+                  <li key={document.id} className="rounded-lg border border-slate-200 bg-white px-3 py-2">
+                    <div className="flex items-center justify-between gap-2">
+                      <div className="flex min-w-0 items-center gap-2">
+                        <FileText className="h-4 w-4 shrink-0 text-slate-500" />
+                        <p className="line-clamp-1 text-sm font-medium text-slate-700">{document.filename}</p>
+                      </div>
+                      <div className="flex items-center gap-2">
+                        <Badge variant="outline" className={`capitalize ${statusBadgeClass(document.status)}`}>
+                          {document.status === "ready" ? "sẵn sàng" : document.status === "error" ? "lỗi" : document.status === "uploading" ? "đang tải" : "đang xử lý"}
+                        </Badge>
+                        {onRequestDeleteDocument ? (
+                          <Button
+                            type="button"
+                            size="sm"
+                            variant="outline"
+                            disabled={!canDelete}
+                            onClick={() => onRequestDeleteDocument(document)}
+                            className="h-8 gap-1 border-rose-300 bg-rose-50 px-2 text-rose-700 hover:bg-rose-100 disabled:cursor-not-allowed disabled:opacity-50"
+                            title={isDeletingThisDocument ? "Đang xóa tài liệu..." : "Xóa tài liệu"}
+                          >
+                            <Trash2 className="h-3.5 w-3.5" />
+                            <span className="text-xs">{isDeletingThisDocument ? "Đang xóa" : "Xóa"}</span>
+                          </Button>
+                        ) : null}
+                      </div>
                     </div>
-                    <Badge variant="outline" className={`capitalize ${statusBadgeClass(document.status)}`}>
-                      {document.status === "ready" ? "sẵn sàng" : document.status === "error" ? "lỗi" : document.status === "uploading" ? "đang tải" : "đang xử lý"}
-                    </Badge>
-                  </div>
-                  <div className="mt-1 text-xs text-slate-500">
-                    số đoạn: {document.chunkCount ?? "n/a"} • tạo lúc: {formatCreatedTime(document.createdAt)}
-                  </div>
-                </li>
-              ))}
+                    <div className="mt-1 text-xs text-slate-500">
+                      số đoạn: {document.chunkCount ?? "n/a"} • tạo lúc: {formatCreatedTime(document.createdAt)}
+                    </div>
+                  </li>
+                );
+              })}
             </ul>
           )}
         </div>

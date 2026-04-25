@@ -68,6 +68,19 @@ export type ApiDocumentStatusResponse = ApiDocument;
 
 export type ApiListDocumentsResponse = ApiDocument[] | { documents: ApiDocument[] };
 
+export type ApiDeleteAllDocumentsResponse = {
+  status: "deleted";
+  deleted_documents: number;
+  deleted_files: number;
+};
+
+export type ApiDeleteDocumentResponse = {
+  status: "deleted";
+  document_id: string;
+  remaining_documents: number;
+  deleted_files: number;
+};
+
 export type ApiHealthResponse = {
   status: string;
   llm_model?: string | null;

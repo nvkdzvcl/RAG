@@ -1,4 +1,6 @@
 import type {
+  ApiDeleteAllDocumentsResponse,
+  ApiDeleteDocumentResponse,
   ApiDocument,
   ApiDocumentStatusResponse,
   ApiHealthResponse,
@@ -121,6 +123,42 @@ function normalizeDocumentList(payload: unknown): ApiDocument[] {
   throw new Error("Invalid documents list payload");
 }
 
+function normalizeDeleteAllDocumentsResponse(payload: unknown): ApiDeleteAllDocumentsResponse {
+  if (!isObject(payload)) {
+    throw new Error("Invalid delete-all documents payload");
+  }
+
+  const deletedDocuments = optionalNumber(payload.deleted_documents);
+  const deletedFiles = optionalNumber(payload.deleted_files);
+
+  return {
+    status: payload.status === "deleted" ? "deleted" : "deleted",
+    deleted_documents: typeof deletedDocuments === "number" ? deletedDocuments : 0,
+    deleted_files: typeof deletedFiles === "number" ? deletedFiles : 0,
+  };
+}
+
+function normalizeDeleteDocumentResponse(payload: unknown): ApiDeleteDocumentResponse {
+  if (!isObject(payload)) {
+    throw new Error("Invalid delete document payload");
+  }
+
+  const documentId = typeof payload.document_id === "string" ? payload.document_id : "";
+  const remainingDocuments = optionalNumber(payload.remaining_documents);
+  const deletedFiles = optionalNumber(payload.deleted_files);
+
+  if (!documentId) {
+    throw new Error("Invalid delete document payload: missing document_id");
+  }
+
+  return {
+    status: payload.status === "deleted" ? "deleted" : "deleted",
+    document_id: documentId,
+    remaining_documents: typeof remainingDocuments === "number" ? remainingDocuments : 0,
+    deleted_files: typeof deletedFiles === "number" ? deletedFiles : 0,
+  };
+}
+
 export async function postQuery(request: ApiQueryRequest): Promise<ApiQueryResponse> {
   const response = await fetch(`${API_BASE_URL}/query`, {
     method: "POST",
@@ -230,4 +268,30 @@ export async function listDocuments(): Promise<ApiDocument[]> {
 
   const payload = await parseJsonResponse(response);
   return normalizeDocumentList(payload);
+}
+
+export async function deleteAllDocuments(): Promise<ApiDeleteAllDocumentsResponse> {
+  const response = await fetch(DOCUMENTS_BASE_URL, {
+    method: "DELETE",
+  });
+
+  if (!response.ok) {
+    await handleApiFailure(response);
+  }
+
+  const payload = await parseJsonResponse(response);
+  return normalizeDeleteAllDocumentsResponse(payload);
+}
+
+export async function deleteDocument(documentId: string): Promise<ApiDeleteDocumentResponse> {
+  const response = await fetch(`${DOCUMENTS_BASE_URL}/${encodeURIComponent(documentId)}`, {
+    method: "DELETE",
+  });
+
+  if (!response.ok) {
+    await handleApiFailure(response);
+  }
+
+  const payload = await parseJsonResponse(response);
+  return normalizeDeleteDocumentResponse(payload);
 }

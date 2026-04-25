@@ -170,3 +170,33 @@ class RuntimeIndexManager:
     def get_active_chunk_count(self) -> int:
         with self._lock:
             return self._active_chunk_count
+
+    def clear_uploaded_indexes(self) -> int:
+        """Clear active uploaded indexes and remove persisted local index artifacts.
+
+        Returns:
+            Number of persisted index files deleted from index_dir.
+        """
+        with self._lock:
+            self._retriever = EmptyRetriever()
+            self._active_source = "none"
+            self._active_chunk_count = 0
+
+        deleted_files = 0
+        index_root = self.index_dir.resolve()
+        for filename in ("vector_index.json", "bm25_index.json"):
+            candidate = (self.index_dir / filename).resolve()
+            try:
+                candidate.relative_to(index_root)
+            except ValueError:
+                logger.warning("Skipped deleting index file outside index_dir", extra={"path": str(candidate)})
+                continue
+
+            if candidate.exists() and candidate.is_file():
+                try:
+                    candidate.unlink()
+                    deleted_files += 1
+                except OSError:
+                    logger.exception("Failed to delete persisted index file", extra={"path": str(candidate)})
+
+        return deleted_files

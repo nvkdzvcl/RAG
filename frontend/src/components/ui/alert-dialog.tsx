@@ -7,10 +7,12 @@ type AlertDialogProps = {
   onOpenChange: (open: boolean) => void;
   title: string;
   description: string;
-  onConfirm: () => void;
+  onConfirm: () => void | boolean | Promise<void | boolean>;
   confirmText?: string;
   cancelText?: string;
   variant?: "default" | "destructive";
+  confirmDisabled?: boolean;
+  cancelDisabled?: boolean;
 };
 
 export function AlertDialog({
@@ -22,12 +24,24 @@ export function AlertDialog({
   confirmText = "Xác nhận",
   cancelText = "Hủy",
   variant = "default",
+  confirmDisabled = false,
+  cancelDisabled = false,
 }: AlertDialogProps) {
   if (!open) return null;
 
-  const handleConfirm = () => {
-    onConfirm();
-    onOpenChange(false);
+  const handleConfirm = async () => {
+    if (confirmDisabled) {
+      return;
+    }
+    try {
+      const result = await onConfirm();
+      if (result === false) {
+        return;
+      }
+      onOpenChange(false);
+    } catch {
+      // Keep dialog open when confirm action fails.
+    }
   };
 
   return (
@@ -42,12 +56,14 @@ export function AlertDialog({
             <Button
               type="button"
               variant="outline"
+              disabled={cancelDisabled}
               onClick={() => onOpenChange(false)}
             >
               {cancelText}
             </Button>
             <Button
               type="button"
+              disabled={confirmDisabled}
               onClick={handleConfirm}
               className={
                 variant === "destructive"

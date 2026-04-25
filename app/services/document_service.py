@@ -13,6 +13,8 @@ from fastapi import UploadFile
 from app.ingestion import BaseLoader, Chunker, DocxLoader, MarkdownLoader, PdfLoader, TextCleaner, TextLoader
 from app.ingestion.base_loader import build_doc_id
 from app.schemas.documents import (
+    DeleteAllDocumentsResponse,
+    DeleteDocumentResponse,
     DocumentListResponse,
     DocumentProcessingStatus,
     DocumentResponse,
@@ -106,6 +108,41 @@ class DocumentService:
         except Exception:  # pragma: no cover - defensive fallback path.
             logger.exception("Failed to refresh indexes from uploaded docs, falling back to seeded corpus.")
             self.index_manager.activate_from_seeded_corpus()
+
+    @staticmethod
+    def _is_within_directory(path: Path, root: Path) -> bool:
+        try:
+            path.resolve().relative_to(root.resolve())
+            return True
+        except ValueError:
+            return False
+
+    def _safe_delete_uploaded_file(self, file_path: Path) -> bool:
+        if not self._is_within_directory(file_path, self.raw_dir):
+            logger.warning(
+                "Skipped deleting file outside configured raw_dir",
+                extra={"path": str(file_path), "raw_dir": str(self.raw_dir)},
+            )
+            return False
+
+        if not file_path.exists() or not file_path.is_file():
+            return False
+
+        try:
+            file_path.unlink()
+            return True
+        except OSError:
+            logger.exception("Failed to delete uploaded file", extra={"path": str(file_path)})
+            return False
+
+    def _rebuild_after_deletion(self) -> None:
+        ready_paths = self._ready_paths()
+        if ready_paths:
+            self.index_manager.refresh(ready_paths)
+            return
+
+        self.index_manager.clear_uploaded_indexes()
+        self.index_manager.activate_from_seeded_corpus()
 
     def _upsert_record(self, record: StoredDocumentRecord) -> None:
         with self._lock:
@@ -217,3 +254,50 @@ class DocumentService:
         if record is None:
             raise KeyError(f"Document not found: {document_id}")
         return DocumentResponse.from_record(record)
+
+    def delete_all_documents(self) -> DeleteAllDocumentsResponse:
+        with self._lock:
+            deleted_documents = len(self._records)
+            stored_paths = [Path(record.stored_path) for record in self._records.values()]
+            self._records.clear()
+            self._persist_records()
+
+        deleted_files = 0
+        for file_path in stored_paths:
+            if self._safe_delete_uploaded_file(file_path):
+                deleted_files += 1
+
+        # Also clean stray files under raw_dir, still bounded to raw_dir.
+        for file_path in sorted(self.raw_dir.rglob("*")):
+            if not file_path.is_file():
+                continue
+            if self._safe_delete_uploaded_file(file_path):
+                deleted_files += 1
+
+        self.index_manager.clear_uploaded_indexes()
+        self.index_manager.activate_from_seeded_corpus()
+
+        return DeleteAllDocumentsResponse(
+            status="deleted",
+            deleted_documents=deleted_documents,
+            deleted_files=deleted_files,
+        )
+
+    def delete_document(self, document_id: str) -> DeleteDocumentResponse:
+        with self._lock:
+            record = self._records.get(document_id)
+            if record is None:
+                raise KeyError(f"Document not found: {document_id}")
+            self._records.pop(document_id)
+            self._persist_records()
+            remaining_documents = len(self._records)
+
+        deleted_files = 1 if self._safe_delete_uploaded_file(Path(record.stored_path)) else 0
+        self._rebuild_after_deletion()
+
+        return DeleteDocumentResponse(
+            status="deleted",
+            document_id=document_id,
+            remaining_documents=remaining_documents,
+            deleted_files=deleted_files,
+        )

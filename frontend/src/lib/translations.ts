@@ -32,7 +32,7 @@ export const translations = {
   sidebar: {
     newChat: "Cuộc trò chuyện mới",
     recentChats: "Lịch sử gần đây",
-    noRecentChats: "Chưa có lịch sử",
+    noRecentChats: "Chưa có cuộc trò chuyện nào",
   },
 
   // Document upload

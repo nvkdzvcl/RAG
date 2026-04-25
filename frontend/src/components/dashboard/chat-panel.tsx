@@ -4,21 +4,22 @@ import { CompareView } from "@/components/dashboard/compare-view";
 import { Card, CardContent } from "@/components/ui/card";
 import { translations } from "@/lib/translations";
 import { ChatMessage } from "@/components/dashboard/chat-message";
+import type { ChatSessionMessage } from "@/types/chat-session";
 
 type ChatPanelProps = {
-  submittedQuery: string | null;
+  messages: ChatSessionMessage[];
   result: QueryResult | null;
   isLoading: boolean;
   error: string | null;
+  notice?: string | null;
 };
 
 function isCompare(result: QueryResult): result is Extract<QueryResult, { mode: "compare" }> {
   return result.mode === "compare";
 }
 
-export function ChatPanel({ submittedQuery, result, isLoading, error }: ChatPanelProps) {
-  // Show chat messages if we have a query
-  const showChatMessages = submittedQuery || result;
+export function ChatPanel({ messages, result, isLoading, error, notice = null }: ChatPanelProps) {
+  const showChatMessages = messages.length > 0 || result;
 
   return (
     <div className="space-y-4">
@@ -30,9 +31,9 @@ export function ChatPanel({ submittedQuery, result, isLoading, error }: ChatPane
         </Card>
       ) : null}
 
-      {showChatMessages && submittedQuery ? (
-        <ChatMessage role="user" content={submittedQuery} />
-      ) : null}
+      {messages.map((message) => (
+        <ChatMessage key={`${message.role}-${message.timestamp}-${message.content.slice(0, 12)}`} role={message.role} content={message.content} />
+      ))}
 
       {isLoading ? (
         <ChatMessage role="assistant" content={translations.answer.loading} />
@@ -42,6 +43,14 @@ export function ChatPanel({ submittedQuery, result, isLoading, error }: ChatPane
         <Card className="border-rose-200 bg-rose-50 shadow-sm">
           <CardContent className="py-3">
             <p className="text-sm text-rose-700">❌ {error}</p>
+          </CardContent>
+        </Card>
+      ) : null}
+
+      {notice ? (
+        <Card className="border-amber-200 bg-amber-50 shadow-sm">
+          <CardContent className="py-3">
+            <p className="text-sm text-amber-700">{notice}</p>
           </CardContent>
         </Card>
       ) : null}

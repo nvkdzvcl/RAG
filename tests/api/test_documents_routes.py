@@ -214,3 +214,144 @@ def test_standard_mode_retrieves_vietnamese_uploaded_chunks(
     citations = body["citations"]
     assert citations
     assert any(citation["doc_id"] == uploaded_document_id for citation in citations)
+
+
+def test_delete_all_documents_clears_registry_raw_files_and_runtime_indexes(
+    isolated_client: tuple[TestClient, Path],
+) -> None:
+    client, data_dir = isolated_client
+
+    first_upload = client.post(
+        "/api/v1/documents/upload",
+        files={"file": ("doc-a.txt", b"alpha token xoa-all-001", "text/plain")},
+    )
+    second_upload = client.post(
+        "/api/v1/documents/upload",
+        files={"file": ("doc-b.txt", b"beta token xoa-all-002", "text/plain")},
+    )
+    assert first_upload.status_code == 201
+    assert second_upload.status_code == 201
+
+    listed_before = client.get("/api/v1/documents")
+    assert listed_before.status_code == 200
+    assert len(listed_before.json()["documents"]) == 2
+
+    delete_response = client.delete("/api/v1/documents")
+    assert delete_response.status_code == 200
+    payload = delete_response.json()
+    assert payload["status"] == "deleted"
+    assert payload["deleted_documents"] == 2
+    assert payload["deleted_files"] >= 2
+
+    listed_after = client.get("/api/v1/documents")
+    assert listed_after.status_code == 200
+    assert listed_after.json()["documents"] == []
+
+    raw_files = [path for path in (data_dir / "raw").rglob("*") if path.is_file()]
+    assert raw_files == []
+
+
+def test_delete_all_documents_when_empty_is_idempotent(
+    isolated_client: tuple[TestClient, Path],
+) -> None:
+    client, _ = isolated_client
+
+    response = client.delete("/api/v1/documents")
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["status"] == "deleted"
+    assert payload["deleted_documents"] == 0
+    assert payload["deleted_files"] == 0
+
+
+def test_delete_single_document_rebuilds_runtime_from_remaining_uploaded_docs(
+    isolated_client: tuple[TestClient, Path],
+) -> None:
+    client, data_dir = isolated_client
+
+    first_upload = client.post(
+        "/api/v1/documents/upload",
+        files={"file": ("first.txt", b"first doc token remove-this-doc", "text/plain")},
+    )
+    second_upload = client.post(
+        "/api/v1/documents/upload",
+        files={"file": ("second.txt", b"second doc token keep-this-doc-999", "text/plain")},
+    )
+    assert first_upload.status_code == 201
+    assert second_upload.status_code == 201
+    first_id = first_upload.json()["document_id"]
+    second_id = second_upload.json()["document_id"]
+
+    delete_response = client.delete(f"/api/v1/documents/{first_id}")
+    assert delete_response.status_code == 200
+    payload = delete_response.json()
+    assert payload["status"] == "deleted"
+    assert payload["document_id"] == first_id
+    assert payload["remaining_documents"] == 1
+    assert payload["deleted_files"] >= 1
+
+    listed = client.get("/api/v1/documents")
+    assert listed.status_code == 200
+    listed_ids = [item["document_id"] for item in listed.json()["documents"]]
+    assert first_id not in listed_ids
+    assert second_id in listed_ids
+
+    raw_files = [path.name for path in (data_dir / "raw").rglob("*") if path.is_file()]
+    assert len(raw_files) == 1
+
+    query_response = client.post(
+        "/api/v1/query",
+        json={
+            "query": "keep-this-doc-999 có trong tài liệu nào?",
+            "mode": "standard",
+            "chat_history": [],
+        },
+    )
+    assert query_response.status_code == 200
+    body = query_response.json()
+    assert body["trace"][0]["index_source"] == "uploaded"
+    assert any(citation["doc_id"] == second_id for citation in body["citations"])
+
+
+def test_delete_missing_document_returns_404(
+    isolated_client: tuple[TestClient, Path],
+) -> None:
+    client, _ = isolated_client
+
+    response = client.delete("/api/v1/documents/missing-document-id")
+    assert response.status_code == 404
+    assert "Document not found" in response.json()["detail"]
+
+
+def test_query_falls_back_to_seeded_after_delete_all_uploaded_documents(
+    isolated_client: tuple[TestClient, Path],
+) -> None:
+    client, _ = isolated_client
+
+    upload_response = client.post(
+        "/api/v1/documents/upload",
+        files={
+            "file": (
+                "to-delete.txt",
+                b"uploaded-doc-token that will be removed before query",
+                "text/plain",
+            )
+        },
+    )
+    assert upload_response.status_code == 201
+
+    deleted = client.delete("/api/v1/documents")
+    assert deleted.status_code == 200
+    assert deleted.json()["deleted_documents"] == 1
+
+    query_response = client.post(
+        "/api/v1/query",
+        json={
+            "query": "What is in the seeded corpus?",
+            "mode": "standard",
+            "chat_history": [],
+        },
+    )
+    assert query_response.status_code == 200
+    body = query_response.json()
+    assert body["trace"][0]["index_source"] == "seeded"

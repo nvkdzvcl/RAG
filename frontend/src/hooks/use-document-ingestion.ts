@@ -3,6 +3,8 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   ApiFeatureUnavailableError,
   ApiRequestError,
+  deleteAllDocuments,
+  deleteDocument,
   getDocumentStatus,
   listDocuments,
   uploadDocument,
@@ -107,17 +109,23 @@ export type UseDocumentIngestionResult = {
   documents: DocumentRecord[];
   activeDocument: DocumentRecord | null;
   isUploading: boolean;
+  isDeletingDocuments: boolean;
+  deletingDocumentId: string | null;
   uploadMessage: string | null;
   uploadError: string | null;
   canQuery: boolean;
   queryDisabledReason: string | null;
   uploadFile: (file: File) => Promise<void>;
+  clearAllUploadedDocuments: () => Promise<{ deletedDocuments: number; deletedFiles: number }>;
+  deleteUploadedDocument: (documentId: string) => Promise<{ documentId: string; remainingDocuments: number }>;
 };
 
 export function useDocumentIngestion(): UseDocumentIngestionResult {
   const [documents, setDocuments] = useState<DocumentRecord[]>([]);
   const [backendAvailability, setBackendAvailability] = useState<BackendAvailability>("unknown");
   const [isUploading, setIsUploading] = useState(false);
+  const [isDeletingDocuments, setIsDeletingDocuments] = useState(false);
+  const [deletingDocumentId, setDeletingDocumentId] = useState<string | null>(null);
   const [uploadMessage, setUploadMessage] = useState<string | null>(null);
   const [uploadError, setUploadError] = useState<string | null>(null);
   const [activeDocumentId, setActiveDocumentId] = useState<string | null>(null);
@@ -370,6 +378,69 @@ export function useDocumentIngestion(): UseDocumentIngestionResult {
     [backendAvailability, runFallbackSimulation, startBackendPolling, updateDocument, upsertDocument],
   );
 
+  const clearAllUploadedDocuments = useCallback(async () => {
+    setUploadError(null);
+    setUploadMessage(null);
+    setIsDeletingDocuments(true);
+    setDeletingDocumentId(null);
+    setIsUploading(false);
+
+    try {
+      const deleted = await deleteAllDocuments();
+
+      for (const timer of pollingRef.current.values()) {
+        window.clearInterval(timer);
+      }
+      pollingRef.current.clear();
+
+      setDocuments([]);
+      setActiveDocumentId(null);
+      setBackendAvailability("available");
+      setUploadMessage(
+        `Đã xóa ${deleted.deleted_documents} tài liệu và ${deleted.deleted_files} tệp khỏi bộ nhớ tải lên.`,
+      );
+      return {
+        deletedDocuments: deleted.deleted_documents,
+        deletedFiles: deleted.deleted_files,
+      };
+    } catch (error) {
+      const message = toErrorMessage(error, "Không thể xóa toàn bộ tài liệu đã tải.");
+      setUploadError(message);
+      throw new Error(message);
+    } finally {
+      setIsDeletingDocuments(false);
+      setDeletingDocumentId(null);
+    }
+  }, []);
+
+  const deleteUploadedDocument = useCallback(async (documentId: string) => {
+    setUploadError(null);
+    setUploadMessage(null);
+    setDeletingDocumentId(documentId);
+    setIsDeletingDocuments(true);
+
+    try {
+      const deleted = await deleteDocument(documentId);
+
+      clearPolling(documentId);
+      setDocuments((previous) => previous.filter((item) => item.id !== documentId));
+      setActiveDocumentId((previous) => (previous === documentId ? null : previous));
+      setBackendAvailability("available");
+      setUploadMessage(`Đã xóa tài liệu ${documentId}.`);
+      return {
+        documentId: deleted.document_id,
+        remainingDocuments: deleted.remaining_documents,
+      };
+    } catch (error) {
+      const message = toErrorMessage(error, "Không thể xóa tài liệu đã chọn.");
+      setUploadError(message);
+      throw new Error(message);
+    } finally {
+      setDeletingDocumentId(null);
+      setIsDeletingDocuments(false);
+    }
+  }, [clearPolling]);
+
   const activeDocument = useMemo(() => {
     if (activeDocumentId) {
       const explicit = documents.find((item) => item.id === activeDocumentId);
@@ -413,10 +484,14 @@ export function useDocumentIngestion(): UseDocumentIngestionResult {
     documents,
     activeDocument,
     isUploading,
+    isDeletingDocuments,
+    deletingDocumentId,
     uploadMessage,
     uploadError,
     canQuery: queryState.canQuery,
     queryDisabledReason: queryState.reason,
     uploadFile,
+    clearAllUploadedDocuments,
+    deleteUploadedDocument,
   };
 }

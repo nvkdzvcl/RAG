@@ -4,7 +4,12 @@ from __future__ import annotations
 
 from fastapi import APIRouter, Depends, File, HTTPException, UploadFile, status
 
-from app.schemas.documents import DocumentListResponse, DocumentResponse
+from app.schemas.documents import (
+    DeleteAllDocumentsResponse,
+    DeleteDocumentResponse,
+    DocumentListResponse,
+    DocumentResponse,
+)
 from app.services.document_service import DocumentService
 from app.services.runtime import get_document_service
 
@@ -57,3 +62,23 @@ def get_document_status_compat(
 ) -> DocumentResponse:
     """Backward-compatible status route."""
     return get_document_status(document_id=document_id, document_service=document_service)
+
+
+@router.delete("", response_model=DeleteAllDocumentsResponse)
+def delete_all_documents(
+    document_service: DocumentService = Depends(get_document_service),
+) -> DeleteAllDocumentsResponse:
+    """Delete all uploaded documents, raw files, and uploaded runtime indexes."""
+    return document_service.delete_all_documents()
+
+
+@router.delete("/{document_id}", response_model=DeleteDocumentResponse)
+def delete_document(
+    document_id: str,
+    document_service: DocumentService = Depends(get_document_service),
+) -> DeleteDocumentResponse:
+    """Delete one uploaded document and rebuild runtime indexes from remaining ready documents."""
+    try:
+        return document_service.delete_document(document_id)
+    except KeyError as exc:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)) from exc
