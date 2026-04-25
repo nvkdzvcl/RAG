@@ -31,6 +31,7 @@ class StubLLMClient:
         responder: Callable[..., str] | None = None,
     ) -> None:
         self._responder = responder or self._default_responder
+        self.last_call_used_fallback = False
 
     @staticmethod
     def _default_responder(
@@ -111,6 +112,7 @@ class OpenAICompatibleLLMClient:
         self.temperature = float(temperature)
         self.max_tokens = int(max_tokens)
         self.timeout_seconds = int(timeout_seconds)
+        self.last_call_used_fallback = False
         self._client = client or httpx.Client(
             base_url=f"{self.api_base}/",
             timeout=httpx.Timeout(self.timeout_seconds),
@@ -193,6 +195,7 @@ class FallbackLLMClient:
     def __init__(self, primary: LLMClient, fallback: LLMClient) -> None:
         self.primary = primary
         self.fallback = fallback
+        self.last_call_used_fallback = False
 
     def complete(
         self,
@@ -200,6 +203,7 @@ class FallbackLLMClient:
         system_prompt: str | None = None,
         model: str | None = None,
     ) -> str:
+        self.last_call_used_fallback = False
         try:
             return complete_with_model(
                 self.primary,
@@ -208,6 +212,7 @@ class FallbackLLMClient:
                 model=model,
             )
         except Exception as exc:
+            self.last_call_used_fallback = True
             logger.warning(
                 "Primary LLM client failed; falling back to stub client.",
                 exc_info=exc,
@@ -218,6 +223,12 @@ class FallbackLLMClient:
                 system_prompt=system_prompt,
                 model=model,
             )
+
+
+def did_use_fallback(llm_client: LLMClient) -> bool:
+    """Best-effort flag indicating whether the latest call used fallback."""
+    value = getattr(llm_client, "last_call_used_fallback", False)
+    return bool(value)
 
 
 OPENAI_COMPATIBLE_PROVIDER_NAMES = {

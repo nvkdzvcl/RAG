@@ -5,10 +5,12 @@ from app.schemas.common import Mode
 from app.schemas.retrieval import RetrievalResult
 from app.schemas.workflow import CritiqueResult
 from app.generation import StubLLMClient
+from app.retrieval import ScoreOnlyReranker
 from app.workflows.advanced import AdvancedWorkflow
 from app.workflows.critique import HeuristicCritic
 from app.workflows.query_rewrite import QueryRewriter
 from app.workflows.runner import WorkflowRunner
+from app.workflows.standard import StandardWorkflow
 
 
 def _sample_context() -> list[RetrievalResult]:
@@ -162,3 +164,92 @@ def test_critic_uses_llm_json_when_valid() -> None:
     assert critique.note == "llm_json_used"
     assert critique.confidence == 0.93
     assert critique.should_refine_answer is True
+
+
+def test_advanced_answer_includes_citations_when_context_exists() -> None:
+    class _FakeRetriever:
+        def retrieve(self, query: str, top_k: int = 5) -> list[RetrievalResult]:
+            _ = query
+            _ = top_k
+            return [
+                RetrievalResult(
+                    chunk_id="adv_ctx_001",
+                    doc_id="adv_doc_001",
+                    source="seeded://adv",
+                    content="Self-RAG truy xuất ngữ cảnh rồi phản biện để giảm suy diễn.",
+                    score=0.92,
+                    score_type="hybrid",
+                    rank=1,
+                )
+            ]
+
+    class _FakeIndexManager:
+        def get_retriever(self) -> _FakeRetriever:
+            return _FakeRetriever()
+
+        def get_active_source(self) -> str:
+            return "seeded"
+
+    llm = StubLLMClient(
+        responder=lambda prompt, system, model=None: (
+            '{"answer":"Self-RAG truy xuất ngữ cảnh rồi phản biện để giảm suy diễn.",'
+            '"confidence":0.82,"status":"answered"}'
+        )
+    )
+    standard = StandardWorkflow(
+        index_manager=_FakeIndexManager(),
+        llm_client=llm,
+        reranker=ScoreOnlyReranker(),
+    )
+    workflow = AdvancedWorkflow(standard_workflow=standard, max_loops=1)
+
+    response = workflow.run("Self-RAG hoạt động thế nào?")
+
+    assert response.status == "answered"
+    assert response.citations
+    assert response.citation_count >= 1
+    assert response.grounded_score > 0
+
+
+def test_advanced_marks_hallucination_when_answer_outside_context() -> None:
+    class _FakeRetriever:
+        def retrieve(self, query: str, top_k: int = 5) -> list[RetrievalResult]:
+            _ = query
+            _ = top_k
+            return [
+                RetrievalResult(
+                    chunk_id="adv_ctx_002",
+                    doc_id="adv_doc_002",
+                    source="seeded://adv",
+                    content="Self-RAG dùng retrieval và critique để bám tài liệu gốc.",
+                    score=0.9,
+                    score_type="hybrid",
+                    rank=1,
+                )
+            ]
+
+    class _FakeIndexManager:
+        def get_retriever(self) -> _FakeRetriever:
+            return _FakeRetriever()
+
+        def get_active_source(self) -> str:
+            return "seeded"
+
+    llm = StubLLMClient(
+        responder=lambda prompt, system, model=None: (
+            '{"answer":"Chu de tra loi la blockchain va thi truong tien so.",'
+            '"confidence":0.95,"status":"answered"}'
+        )
+    )
+    standard = StandardWorkflow(
+        index_manager=_FakeIndexManager(),
+        llm_client=llm,
+        reranker=ScoreOnlyReranker(),
+    )
+    workflow = AdvancedWorkflow(standard_workflow=standard, max_loops=1)
+
+    response = workflow.run("Self-RAG hoạt động thế nào?")
+
+    assert response.status in {"answered", "partial"}
+    assert response.hallucination_detected is True
+    assert response.grounded_score < 0.08

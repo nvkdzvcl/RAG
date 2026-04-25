@@ -155,3 +155,33 @@ def localized_insufficient_evidence(response_language: ResponseLanguage) -> str:
     if response_language == "vi":
         return "Không đủ bằng chứng để đưa ra câu trả lời có căn cứ."
     return "Insufficient evidence to provide a grounded answer."
+
+
+def _normalized_terms(text: str) -> set[str]:
+    terms = {token.lower() for token in _WORD_PATTERN.findall(text)}
+    return {term for term in terms if len(term) >= 3}
+
+
+def grounded_overlap_score(answer: str, context_chunks: list[str]) -> float:
+    """Compute a lightweight groundedness proxy via token overlap ratio."""
+    answer_terms = _normalized_terms(answer)
+    if not answer_terms:
+        return 0.0
+
+    context_terms = _normalized_terms(" ".join(context_chunks))
+    if not context_terms:
+        return 0.0
+
+    overlap_count = len(answer_terms.intersection(context_terms))
+    return round(overlap_count / max(len(answer_terms), 1), 4)
+
+
+def detect_hallucination(answer: str, context_chunks: list[str], *, status: str | None = None) -> bool:
+    """Heuristic hallucination marker based on low overlap with selected context."""
+    normalized_status = (status or "").strip().lower()
+    if normalized_status == "insufficient_evidence":
+        return False
+
+    score = grounded_overlap_score(answer, context_chunks)
+    # Answered/partial outputs with almost no lexical grounding are risky.
+    return score < 0.08

@@ -9,7 +9,7 @@ from app.core.config import get_settings
 from app.core.prompting import PromptRepository
 from app.generation.citations import CitationBuilder
 from app.generation.interfaces import Generator
-from app.generation.llm_client import LLMClient, complete_with_model
+from app.generation.llm_client import LLMClient, complete_with_model, did_use_fallback
 from app.generation.parser import StructuredOutputParser
 from app.schemas.common import Mode
 from app.schemas.generation import GeneratedAnswer
@@ -39,6 +39,11 @@ _STANDARD_PROMPT_FALLBACK = (
 
 _ADVANCED_PROMPT_FALLBACK = (
     "You are the advanced Self-RAG answerer.\n"
+    "ONLY use the provided context chunks.\n"
+    "Every answer must be supported by context.\n"
+    "Do NOT use external knowledge.\n"
+    "If the answer is not found in context, respond exactly: "
+    "\"Không đủ thông tin trong tài liệu đã cung cấp để trả lời chính xác.\"\n"
     "Answer in the required response language only.\n"
     "If response_language is Vietnamese, write fully in Vietnamese.\n"
     "Do not answer in Chinese unless the user asks in Chinese.\n"
@@ -97,6 +102,7 @@ class BaselineGenerator(Generator):
         *,
         response_language: str,
         raw_output: str | None = None,
+        llm_fallback_used: bool = False,
     ) -> GeneratedAnswer:
         return GeneratedAnswer(
             answer=localized_insufficient_evidence(response_language),
@@ -105,6 +111,7 @@ class BaselineGenerator(Generator):
             status="insufficient_evidence",
             stop_reason=reason,
             raw_output=raw_output,
+            llm_fallback_used=llm_fallback_used,
         )
 
     def generate_answer(
@@ -122,6 +129,7 @@ class BaselineGenerator(Generator):
                 response_language=response_language,
             )
 
+        llm_fallback_used = False
         prompt = self._build_prompt(
             query,
             non_empty_context,
@@ -135,11 +143,13 @@ class BaselineGenerator(Generator):
                 system_prompt=build_language_system_prompt(response_language),
                 model=model,
             )
+            llm_fallback_used = did_use_fallback(self.llm_client)
         except Exception as exc:
             logger.warning("LLM completion failed in BaselineGenerator.", exc_info=exc)
             return self._insufficient(
                 "llm_error",
                 response_language=response_language,
+                llm_fallback_used=did_use_fallback(self.llm_client),
             )
         parsed = self.parser.parse(raw_output)
 
@@ -148,6 +158,7 @@ class BaselineGenerator(Generator):
                 "model_insufficient_evidence",
                 response_language=response_language,
                 raw_output=raw_output,
+                llm_fallback_used=llm_fallback_used,
             )
 
         citations = self.citation_builder.build(non_empty_context)
@@ -158,4 +169,5 @@ class BaselineGenerator(Generator):
             status=parsed.status,
             stop_reason="generated",
             raw_output=raw_output,
+            llm_fallback_used=llm_fallback_used,
         )

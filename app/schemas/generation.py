@@ -29,3 +29,4 @@ class GeneratedAnswer(BaseModel):
     status: GenerationStatus = "answered"
     stop_reason: str | None = None
     raw_output: str | None = None
+    llm_fallback_used: bool = False

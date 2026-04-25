@@ -4,9 +4,7 @@ from __future__ import annotations
 
 import time
 
-from app.core.prompting import PromptRepository
 from app.core.config import get_settings
-from app.generation.llm_client import complete_with_model
 from app.schemas.api import AdvancedQueryResponse
 from app.schemas.common import Mode
 from app.schemas.workflow import WorkflowState
@@ -15,27 +13,14 @@ from app.workflows.query_rewrite import QueryRewriter
 from app.workflows.refine import AnswerRefiner
 from app.workflows.retrieval_gate import HeuristicRetrievalGate
 from app.workflows.shared import (
-    build_language_system_prompt,
     detect_response_language,
+    detect_hallucination,
+    grounded_overlap_score,
     is_language_mismatch,
     localized_insufficient_evidence,
     normalize_query,
-    response_language_name,
 )
 from app.workflows.standard import StandardWorkflow
-
-_ADVANCED_DIRECT_ANSWER_FALLBACK = (
-    "You are the advanced Self-RAG assistant.\n"
-    "No retrieval context is available for this turn.\n"
-    "Answer in the required response language only.\n"
-    "Do not answer in Chinese unless the user asks in Chinese.\n"
-    "If the question cannot be answered safely without context, set status=insufficient_evidence.\n"
-    "Return strict JSON with keys: answer, confidence, status.\n"
-    "response_language: $response_language ($response_language_name)\n"
-    "mode: $mode\n"
-    "question: $question\n"
-    "context:\n$context"
-)
 
 
 class AdvancedWorkflow:
@@ -57,24 +42,22 @@ class AdvancedWorkflow:
         self.standard_workflow = standard_workflow or StandardWorkflow()
         llm_client = self.standard_workflow.generator.llm_client
         self.llm_client = llm_client
-        prompt_repository = self.standard_workflow.generator.prompt_repository
-        self._prompt_repository: PromptRepository = prompt_repository
 
         self.retrieval_gate = retrieval_gate or HeuristicRetrievalGate(
             llm_client=llm_client,
-            prompt_repository=prompt_repository,
+            prompt_repository=self.standard_workflow.generator.prompt_repository,
         )
         self.query_rewriter = query_rewriter or QueryRewriter(
             llm_client=llm_client,
-            prompt_repository=prompt_repository,
+            prompt_repository=self.standard_workflow.generator.prompt_repository,
         )
         self.critic = critic or HeuristicCritic(
             llm_client=llm_client,
-            prompt_repository=prompt_repository,
+            prompt_repository=self.standard_workflow.generator.prompt_repository,
         )
         self.refiner = refiner or AnswerRefiner(
             llm_client=llm_client,
-            prompt_repository=prompt_repository,
+            prompt_repository=self.standard_workflow.generator.prompt_repository,
         )
 
     def _direct_answer_without_retrieval(
@@ -84,40 +67,14 @@ class AdvancedWorkflow:
         model: str | None = None,
         response_language: str = "en",
     ) -> tuple[str, float | None, str, str]:
-        prompt = self._prompt_repository.render(
-            "advanced_answer.md",
-            fallback=_ADVANCED_DIRECT_ANSWER_FALLBACK,
-            mode="advanced",
-            question=query,
-            context="(No retrieved context. Answer only if still safe and grounded.)",
-            response_language=response_language,
-            response_language_name=response_language_name(response_language),
+        _ = query
+        _ = model
+        return (
+            localized_insufficient_evidence(response_language),
+            0.0,
+            "insufficient_evidence",
+            "gate_no_retrieval_no_context",
         )
-        try:
-            raw = complete_with_model(
-                self.standard_workflow.llm_client,
-                prompt,
-                system_prompt=build_language_system_prompt(response_language),
-                model=model,
-            )
-        except Exception:
-            return (
-                localized_insufficient_evidence(response_language),
-                0.0,
-                "insufficient_evidence",
-                "gate_no_retrieval_llm_error",
-            )
-        parsed = self.standard_workflow.generator.parser.parse(raw)
-
-        if not parsed.answer.strip() or parsed.status == "insufficient_evidence":
-            return (
-                localized_insufficient_evidence(response_language),
-                0.0,
-                "insufficient_evidence",
-                "gate_no_retrieval_insufficient",
-            )
-
-        return parsed.answer.strip(), parsed.confidence, parsed.status, "gate_no_retrieval"
 
     def run(
         self,
@@ -161,17 +118,6 @@ class AdvancedWorkflow:
                 model=model,
                 response_language=resolved_language,
             )
-            mismatch = is_language_mismatch(answer, resolved_language)
-            if mismatch and status != "insufficient_evidence":
-                rewritten = self.standard_workflow._rewrite_answer_language(
-                    query=normalized_query,
-                    answer=answer,
-                    response_language=resolved_language,
-                    model=model,
-                )
-                if rewritten:
-                    answer = rewritten
-                    mismatch = is_language_mismatch(answer, resolved_language)
             elapsed_ms = int((time.perf_counter() - start) * 1000)
             return AdvancedQueryResponse(
                 mode="advanced",
@@ -183,7 +129,11 @@ class AdvancedWorkflow:
                 latency_ms=elapsed_ms,
                 loop_count=0,
                 response_language=resolved_language,
-                language_mismatch=mismatch,
+                language_mismatch=False,
+                grounded_score=0.0,
+                citation_count=0,
+                hallucination_detected=False,
+                llm_fallback_used=False,
                 trace=trace,
             )
 
@@ -283,6 +233,10 @@ class AdvancedWorkflow:
                 loop_count=state.loop_count,
                 response_language=resolved_language,
                 language_mismatch=False,
+                grounded_score=0.0,
+                citation_count=0,
+                hallucination_detected=False,
+                llm_fallback_used=False,
                 trace=trace,
             )
 
@@ -335,15 +289,37 @@ class AdvancedWorkflow:
                 if not language_mismatch and stop_reason == "critique_pass":
                     stop_reason = "language_refined"
 
+        context_texts = [item.content for item in pipeline.selected_context if item.content.strip()]
+        grounded_score = grounded_overlap_score(final_answer, context_texts)
+        hallucination_detected = detect_hallucination(
+            final_answer,
+            context_texts,
+            status=final_status,
+        )
+        citation_count = len(final_citations)
+        llm_fallback_used = bool(pipeline.generated.llm_fallback_used)
+
         state.final_answer = final_answer
         state.citations = final_citations
         state.stop_reason = stop_reason
         state.language_mismatch = language_mismatch
+        state.grounded_score = grounded_score
+        state.hallucination_detected = hallucination_detected
+        state.llm_fallback_used = llm_fallback_used
         trace.append(
             {
                 "step": "language_guard",
                 "response_language": resolved_language,
                 "language_mismatch": language_mismatch,
+            }
+        )
+        trace.append(
+            {
+                "step": "grounding_check",
+                "grounded_score": grounded_score,
+                "hallucination_detected": hallucination_detected,
+                "citation_count": citation_count,
+                "llm_fallback_used": llm_fallback_used,
             }
         )
 
@@ -359,5 +335,9 @@ class AdvancedWorkflow:
             loop_count=state.loop_count,
             response_language=resolved_language,
             language_mismatch=state.language_mismatch,
+            grounded_score=state.grounded_score,
+            citation_count=citation_count,
+            hallucination_detected=state.hallucination_detected,
+            llm_fallback_used=state.llm_fallback_used,
             trace=trace,
         )

@@ -24,7 +24,10 @@ from app.services.index_runtime import EmptyRetriever, RuntimeIndexManager
 from app.workflows.shared import (
     build_language_system_prompt,
     detect_response_language,
+    detect_hallucination,
+    grounded_overlap_score,
     is_language_mismatch,
+    localized_insufficient_evidence,
     normalize_query,
     response_language_name,
 )
@@ -162,13 +165,23 @@ class StandardWorkflow:
         retrieved = self._get_retriever().retrieve(normalized_query, top_k=retrieval_top_k)
         reranked = self.reranker.rerank(normalized_query, retrieved, top_k=self.rerank_top_k)
         selected_context = self.context_selector.select(reranked, top_k=self.context_top_k)
-        generated = self.generator.generate_answer(
-            query=normalized_query,
-            context=selected_context,
-            mode=mode,
-            model=model,
-            response_language=response_language,
-        )
+        if not selected_context:
+            generated = GeneratedAnswer(
+                answer=localized_insufficient_evidence(response_language),
+                citations=[],
+                confidence=0.0,
+                status="insufficient_evidence",
+                stop_reason="no_context",
+                llm_fallback_used=False,
+            )
+        else:
+            generated = self.generator.generate_answer(
+                query=normalized_query,
+                context=selected_context,
+                mode=mode,
+                model=model,
+                response_language=response_language,
+            )
 
         return StandardPipelineResult(
             normalized_query=normalized_query,
@@ -198,6 +211,7 @@ class StandardWorkflow:
         final_answer = pipeline.generated.answer
         language_mismatch = is_language_mismatch(final_answer, resolved_language)
         stop_reason = pipeline.generated.stop_reason
+        context_texts = [item.content for item in pipeline.selected_context if item.content.strip()]
 
         if language_mismatch and pipeline.generated.status != "insufficient_evidence":
             rewritten = self._rewrite_answer_language(
@@ -211,6 +225,15 @@ class StandardWorkflow:
                 language_mismatch = is_language_mismatch(final_answer, resolved_language)
                 if not language_mismatch:
                     stop_reason = "language_refined"
+
+        grounded_score = grounded_overlap_score(final_answer, context_texts)
+        hallucination_detected = detect_hallucination(
+            final_answer,
+            context_texts,
+            status=pipeline.generated.status,
+        )
+        citation_count = len(pipeline.generated.citations)
+        llm_fallback_used = bool(pipeline.generated.llm_fallback_used)
 
         elapsed_ms = int((time.perf_counter() - start_time) * 1000)
         trace = [
@@ -259,6 +282,9 @@ class StandardWorkflow:
                 "stop_reason": stop_reason,
                 "response_language": resolved_language,
                 "language_mismatch": language_mismatch,
+                "grounded_score": grounded_score,
+                "hallucination_detected": hallucination_detected,
+                "llm_fallback_used": llm_fallback_used,
             },
         ]
 
@@ -268,6 +294,15 @@ class StandardWorkflow:
                     "step": "language_guard",
                     "response_language": resolved_language,
                     "language_mismatch": language_mismatch,
+                }
+            )
+            trace.append(
+                {
+                    "step": "grounding_check",
+                    "grounded_score": grounded_score,
+                    "hallucination_detected": hallucination_detected,
+                    "citation_count": citation_count,
+                    "llm_fallback_used": llm_fallback_used,
                 }
             )
 
@@ -281,6 +316,10 @@ class StandardWorkflow:
             latency_ms=elapsed_ms,
             response_language=resolved_language,
             language_mismatch=language_mismatch,
+            grounded_score=grounded_score,
+            citation_count=citation_count,
+            hallucination_detected=hallucination_detected,
+            llm_fallback_used=llm_fallback_used,
             trace=trace,
         )
 

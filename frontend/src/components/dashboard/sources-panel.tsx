@@ -6,6 +6,40 @@ type SourcesPanelProps = {
   result: QueryResult | null;
 };
 
+function filenameFromSourcePath(path: string): string {
+  const trimmed = path.trim();
+  if (!trimmed) {
+    return "unknown";
+  }
+  const normalized = trimmed.replace(/\\/g, "/").replace(/\/+$/, "");
+  const candidate = normalized.split("/").filter(Boolean).pop();
+  return candidate && candidate.length > 0 ? candidate : trimmed;
+}
+
+function sourcePrimaryTitle(source: SourceReference): string {
+  if (source.source && source.source.trim().length > 0) {
+    return filenameFromSourcePath(source.source);
+  }
+  if (source.title && source.title.trim().length > 0) {
+    return filenameFromSourcePath(source.title);
+  }
+  return "unknown";
+}
+
+function sourceSecondaryMeta(source: SourceReference): string {
+  const parts: string[] = [];
+  if (source.page) {
+    parts.push(`${translations.citations.page} ${source.page}`);
+  }
+  if (source.section) {
+    parts.push(source.section);
+  }
+  if (source.rerankScore !== null && source.rerankScore !== undefined) {
+    parts.push(`${translations.sources.rerank} ${source.rerankScore.toFixed(4)}`);
+  }
+  return parts.join(" • ");
+}
+
 function SourceList({ sources }: { sources: SourceReference[] }) {
   if (sources.length === 0) {
     return <p className="text-sm text-slate-500">{translations.sources.noSources}</p>;
@@ -20,23 +54,31 @@ function SourceList({ sources }: { sources: SourceReference[] }) {
         >
           <p
             className="truncate text-sm font-medium text-slate-700"
-            title={source.title || source.source}
-          >
-            {source.title || source.source}
-          </p>
-          <p
-            className="mt-1 text-xs text-slate-500"
             title={source.source}
-            style={{ overflowWrap: "anywhere", wordBreak: "break-word" }}
           >
-            {source.source} • {translations.citations.chunk} {source.chunkId}
-            {source.docId ? ` • doc ${source.docId}` : ""}
-            {source.section ? ` • ${source.section}` : ""}
-            {source.page ? ` • ${translations.citations.page} ${source.page}` : ""}
-            {source.rerankScore !== null && source.rerankScore !== undefined
-              ? ` • ${translations.sources.rerank} ${source.rerankScore.toFixed(4)}`
-              : ""}
+            {sourcePrimaryTitle(source)}
           </p>
+          {sourceSecondaryMeta(source) ? (
+            <p className="mt-1 text-xs text-slate-500" style={{ overflowWrap: "anywhere", wordBreak: "break-word" }}>
+              {sourceSecondaryMeta(source)}
+            </p>
+          ) : null}
+          <details className="mt-1 rounded border border-slate-100 bg-slate-50 px-2 py-1">
+            <summary className="cursor-pointer text-[11px] text-slate-500">Chi tiết nguồn</summary>
+            <div className="mt-1 space-y-1 text-[11px] text-slate-500">
+              <p title={source.source} style={{ overflowWrap: "anywhere", wordBreak: "break-word" }}>
+                {translations.citations.source}: {source.source}
+              </p>
+              <p title={source.chunkId} style={{ overflowWrap: "anywhere", wordBreak: "break-word" }}>
+                {translations.citations.chunk}: {source.chunkId}
+              </p>
+              {source.docId ? (
+                <p title={source.docId} style={{ overflowWrap: "anywhere", wordBreak: "break-word" }}>
+                  doc: {source.docId}
+                </p>
+              ) : null}
+            </div>
+          </details>
         </li>
       ))}
     </ul>

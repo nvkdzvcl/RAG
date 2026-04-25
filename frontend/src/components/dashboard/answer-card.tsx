@@ -30,11 +30,27 @@ export function AnswerCard({ title = "Câu trả lời", result }: AnswerCardPro
           <Badge variant="outline">{result.status}</Badge>
           <Badge variant="muted">lang {result.responseLanguage}</Badge>
           <Badge variant="muted">{translations.metrics.confidence} {confidenceLabel(result.confidence)}</Badge>
+          <Badge variant="muted">{translations.metrics.grounded} {(result.groundedScore * 100).toFixed(0)}%</Badge>
           <Badge variant="muted">{translations.metrics.latency} {result.latencyMs === null ? "n/a" : `${result.latencyMs}ms`}</Badge>
-          <Badge variant="muted">{translations.citations.title} {result.citations.length}</Badge>
+          <Badge variant="muted">{translations.citations.title} {result.citationCount}</Badge>
+          {result.citationCount === 0 ? (
+            <Badge variant="outline" className="border-amber-300 bg-amber-50 text-amber-700">
+              {translations.answer.noCitationWarning}
+            </Badge>
+          ) : null}
+          {result.hallucinationDetected ? (
+            <Badge variant="outline" className="border-rose-300 bg-rose-50 text-rose-700">
+              {translations.answer.hallucinationWarning}
+            </Badge>
+          ) : null}
           {result.languageMismatch ? (
             <Badge variant="outline" className="border-amber-300 bg-amber-50 text-amber-700">
               {translations.answer.languageMismatch}
+            </Badge>
+          ) : null}
+          {result.llmFallbackUsed ? (
+            <Badge variant="outline" className="border-orange-300 bg-orange-50 text-orange-700">
+              {translations.answer.llmFallbackWarning}
             </Badge>
           ) : null}
         </div>

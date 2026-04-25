@@ -30,6 +30,10 @@ class ModeResult(BaseModel):
     loop_count: int | None = None
     response_language: str = "en"
     language_mismatch: bool = False
+    grounded_score: float = 0.0
+    citation_count: int = 0
+    hallucination_detected: bool = False
+    llm_fallback_used: bool = False
     trace: list[dict[str, Any]] = Field(default_factory=list)
 
 
@@ -51,6 +55,8 @@ class ComparisonSummary(BaseModel):
     confidence_delta: float | None = None
     latency_delta_ms: int | None = None
     citation_delta: int | None = None
+    grounded_score_delta: float | None = None
+    preferred_mode: str | None = None
     note: str | None = None
 
 

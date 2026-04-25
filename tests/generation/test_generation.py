@@ -57,6 +57,20 @@ def test_structured_output_parsing() -> None:
     assert parsed.status == "answered"
 
 
+def test_structured_output_parsing_extracts_nested_answer_json() -> None:
+    parser = StructuredOutputParser()
+    raw = (
+        '{"answer":"{\\"answer\\":\\"Noi dung tra loi\\",\\"confidence\\":0.6,\\"status\\":\\"answered\\"}",'
+        '"confidence":0.9,"status":"answered"}'
+    )
+
+    parsed = parser.parse(raw)
+
+    assert parsed.answer == "Noi dung tra loi"
+    assert parsed.confidence == 0.9
+    assert parsed.status == "answered"
+
+
 def test_insufficient_evidence_path() -> None:
     llm = StubLLMClient(
         responder=lambda prompt, system: '{"answer":"","confidence":0.1,"status":"insufficient_evidence"}'

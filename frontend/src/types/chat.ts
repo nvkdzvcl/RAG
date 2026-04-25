@@ -35,13 +35,17 @@ export type ModeResult = {
   mode: SingleMode;
   answer: string;
   citations: Citation[];
+  citationCount: number;
   confidence: number | null;
+  groundedScore: number;
   status: string;
   stopReason: string | null;
   latencyMs: number | null;
   loopCount: number | null;
   responseLanguage: string;
   languageMismatch: boolean;
+  hallucinationDetected: boolean;
+  llmFallbackUsed: boolean;
   sources: SourceReference[];
   trace: TraceEntry[];
 };
@@ -50,6 +54,8 @@ export type ComparisonSummary = {
   confidenceDelta: number | null;
   latencyDeltaMs: number | null;
   citationDelta: number | null;
+  groundedScoreDelta: number | null;
+  preferredMode: string | null;
   note: string | null;
 };
 

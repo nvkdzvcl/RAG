@@ -71,6 +71,81 @@ function isObject(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
+type ParsedEmbeddedAnswer = {
+  answer: string;
+  confidence: number | null;
+  status: string | null;
+};
+
+function parseAnswerObjectCandidate(raw: string): ParsedEmbeddedAnswer | null {
+  const trimmed = raw.trim();
+  if (!trimmed) {
+    return null;
+  }
+
+  try {
+    const parsed = JSON.parse(trimmed) as unknown;
+    if (!isObject(parsed) || typeof parsed.answer !== "string" || parsed.answer.trim().length === 0) {
+      return null;
+    }
+
+    const confidence =
+      typeof parsed.confidence === "number" && Number.isFinite(parsed.confidence) ? parsed.confidence : null;
+    const status = typeof parsed.status === "string" && parsed.status.trim().length > 0 ? parsed.status : null;
+    return {
+      answer: parsed.answer.trim(),
+      confidence,
+      status,
+    };
+  } catch {
+    return null;
+  }
+}
+
+function parseEmbeddedAnswer(rawAnswer: string): ParsedEmbeddedAnswer {
+  const trimmed = rawAnswer.trim();
+  if (!trimmed) {
+    return {
+      answer: rawAnswer,
+      confidence: null,
+      status: null,
+    };
+  }
+
+  const candidates: string[] = [trimmed];
+  const fencedMatch = trimmed.match(/```(?:json)?\s*([\s\S]*?)\s*```/i);
+  if (fencedMatch?.[1]) {
+    candidates.push(fencedMatch[1].trim());
+  }
+  const objectStart = trimmed.indexOf("{");
+  const objectEnd = trimmed.lastIndexOf("}");
+  if (objectStart >= 0 && objectEnd > objectStart) {
+    candidates.push(trimmed.slice(objectStart, objectEnd + 1).trim());
+  }
+
+  for (const candidate of candidates) {
+    const parsed = parseAnswerObjectCandidate(candidate);
+    if (parsed) {
+      // Handle nested answer payloads like {"answer":"{\"answer\":\"...\"}"}.
+      const nested = parseAnswerObjectCandidate(parsed.answer);
+      if (nested) {
+        return {
+          answer: nested.answer,
+          confidence: parsed.confidence ?? nested.confidence,
+          status: parsed.status ?? nested.status,
+        };
+      }
+      return parsed;
+    }
+  }
+
+  return {
+    answer: rawAnswer,
+    confidence: null,
+    status: null,
+  };
+}
+
 function inferTraceStatus(trace: Record<string, unknown>): TraceStatus {
   if (typeof trace.status === "string") {
     if (trace.status === "success" || trace.status === "warning" || trace.status === "info") {
@@ -115,17 +190,36 @@ function traceToUi(item: unknown): TraceEntry {
 function modeToUi(result: ApiModeResponse): ModeResult {
   const citations = result.citations.map(citationToUi);
   const rerankScores = extractRerankScoreMap(result.trace);
+  const embeddedAnswer = parseEmbeddedAnswer(result.answer);
+  const confidence =
+    typeof result.confidence === "number" && Number.isFinite(result.confidence)
+      ? result.confidence
+      : embeddedAnswer.confidence;
+  const status =
+    typeof result.status === "string" && result.status.trim().length > 0
+      ? result.status
+      : embeddedAnswer.status ?? "answered";
   return {
     mode: result.mode,
-    answer: result.answer,
+    answer: embeddedAnswer.answer,
     citations,
-    confidence: result.confidence,
-    status: result.status,
+    citationCount:
+      typeof result.citation_count === "number" && Number.isFinite(result.citation_count)
+        ? result.citation_count
+        : citations.length,
+    confidence,
+    groundedScore:
+      typeof result.grounded_score === "number" && Number.isFinite(result.grounded_score)
+        ? result.grounded_score
+        : 0,
+    status,
     stopReason: result.stop_reason ?? null,
     latencyMs: result.latency_ms ?? null,
     loopCount: result.loop_count ?? null,
     responseLanguage: result.response_language ?? "en",
     languageMismatch: result.language_mismatch ?? false,
+    hallucinationDetected: result.hallucination_detected ?? false,
+    llmFallbackUsed: result.llm_fallback_used ?? false,
     sources: citationsToSources(citations, rerankScores),
     trace: result.trace.map(traceToUi),
   };
@@ -141,6 +235,8 @@ export function apiToUi(result: ApiQueryResponse): QueryResult {
         confidenceDelta: result.comparison.confidence_delta ?? null,
         latencyDeltaMs: result.comparison.latency_delta_ms ?? null,
         citationDelta: result.comparison.citation_delta ?? null,
+        groundedScoreDelta: result.comparison.grounded_score_delta ?? null,
+        preferredMode: result.comparison.preferred_mode ?? null,
         note: result.comparison.note ?? null,
       },
     };

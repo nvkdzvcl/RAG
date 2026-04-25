@@ -19,32 +19,30 @@ function reliabilitySummary(result: CompareResult): string {
   const standard = result.standard;
   const advanced = result.advanced;
   const responseLanguage = standard.responseLanguage;
+  const preferred = result.comparison.preferredMode ?? "review";
+  const standardReliable =
+    standard.citationCount > 0 &&
+    !standard.hallucinationDetected &&
+    !standard.languageMismatch &&
+    !standard.llmFallbackUsed &&
+    standard.groundedScore >= 0.16;
+  const advancedReliable =
+    advanced.citationCount > 0 &&
+    !advanced.hallucinationDetected &&
+    !advanced.languageMismatch &&
+    !advanced.llmFallbackUsed &&
+    advanced.groundedScore >= 0.16;
 
-  const statusScore = (status: string): number => {
-    if (status === "answered") return 2;
-    if (status === "partial") return 1;
-    return 0;
-  };
-
-  const standardScore = statusScore(standard.status) + (standard.confidence ?? 0);
-  const advancedScore = statusScore(advanced.status) + (advanced.confidence ?? 0);
-
-  if (advancedScore > standardScore + 0.03) {
-    if (responseLanguage === "vi") {
-      return "Chế độ Nâng cao có vẻ đáng tin cậy hơn cho câu hỏi này (độ tin cậy/trạng thái cao hơn).";
-    }
-    return "Advanced mode appears more reliable for this query (higher confidence/status).";
+  if (!standardReliable && !advancedReliable) {
+    return responseLanguage === "vi" ? "Cả hai cần kiểm tra lại" : "Both need manual review";
   }
-  if (standardScore > advancedScore + 0.03) {
-    if (responseLanguage === "vi") {
-      return "Chế độ Chuẩn có vẻ đáng tin cậy hơn cho câu hỏi này (độ tin cậy/trạng thái cao hơn).";
-    }
-    return "Standard mode appears more reliable for this query (higher confidence/status).";
+  if (standard.citationCount > 0 && advanced.citationCount === 0) {
+    return responseLanguage === "vi" ? "Chuẩn đáng tin cậy hơn" : "Standard is more reliable";
   }
-  if (responseLanguage === "vi") {
-    return "Cả hai chế độ đều có độ tin cậy tương đương cho câu hỏi này.";
+  if (advancedReliable && preferred === "advanced") {
+    return responseLanguage === "vi" ? "Nâng cao đáng tin cậy hơn" : "Advanced is more reliable";
   }
-  return "Both modes appear similarly reliable for this query.";
+  return responseLanguage === "vi" ? "Chuẩn đáng tin cậy hơn" : "Standard is more reliable";
 }
 
 function ModeColumn({ title, result }: { title: string; result: ModeResult }) {
@@ -58,11 +56,27 @@ function ModeColumn({ title, result }: { title: string; result: ModeResult }) {
           <Badge variant="outline">trạng thái {result.status}</Badge>
           <Badge variant="muted">lang {result.responseLanguage}</Badge>
           <Badge variant="muted">{translations.metrics.confidence} {confidenceLabel(result.confidence)}</Badge>
+          <Badge variant="muted">{translations.metrics.grounded} {(result.groundedScore * 100).toFixed(0)}%</Badge>
           <Badge variant="muted">{translations.metrics.latency} {result.latencyMs === null ? "n/a" : `${result.latencyMs}ms`}</Badge>
-          <Badge variant="muted">{translations.citations.title} {result.citations.length}</Badge>
+          <Badge variant="muted">{translations.citations.title} {result.citationCount}</Badge>
+          {result.citationCount === 0 ? (
+            <Badge variant="outline" className="border-amber-300 bg-amber-50 text-amber-700">
+              {translations.answer.noCitationWarning}
+            </Badge>
+          ) : null}
+          {result.hallucinationDetected ? (
+            <Badge variant="outline" className="border-rose-300 bg-rose-50 text-rose-700">
+              {translations.answer.hallucinationWarning}
+            </Badge>
+          ) : null}
           {result.languageMismatch ? (
             <Badge variant="outline" className="border-amber-300 bg-amber-50 text-amber-700">
               {translations.answer.languageMismatch}
+            </Badge>
+          ) : null}
+          {result.llmFallbackUsed ? (
+            <Badge variant="outline" className="border-orange-300 bg-orange-50 text-orange-700">
+              {translations.answer.llmFallbackWarning}
             </Badge>
           ) : null}
         </div>
@@ -85,6 +99,8 @@ export function CompareView({ result }: CompareViewProps) {
     result.comparison.confidenceDelta === null ? "n/a" : result.comparison.confidenceDelta.toFixed(3);
   const latencyDelta = result.comparison.latencyDeltaMs === null ? "n/a" : `${result.comparison.latencyDeltaMs}ms`;
   const citationDelta = result.comparison.citationDelta === null ? "n/a" : `${result.comparison.citationDelta}`;
+  const groundedDelta =
+    result.comparison.groundedScoreDelta === null ? "n/a" : result.comparison.groundedScoreDelta.toFixed(3);
 
   return (
     <div className="space-y-4">
@@ -96,6 +112,7 @@ export function CompareView({ result }: CompareViewProps) {
           <p className="text-sm text-slate-700">{reliabilitySummary(result)}</p>
           <div className="flex flex-wrap gap-2">
             <Badge variant="outline">chênh lệch độ tin cậy {confidenceDelta}</Badge>
+            <Badge variant="outline">chênh lệch độ bám tài liệu {groundedDelta}</Badge>
             <Badge variant="outline">chênh lệch thời gian {latencyDelta}</Badge>
             <Badge variant="outline">chênh lệch trích dẫn {citationDelta}</Badge>
           </div>

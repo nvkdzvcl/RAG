@@ -1,3 +1,4 @@
+import { useEffect, useRef } from "react";
 import { SendHorizonal } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
@@ -24,15 +25,27 @@ export function ChatComposer({
   disabledReason = null,
 }: ChatComposerProps) {
   const composerDisabled = isLoading || disabled;
+  const textareaRef = useRef<HTMLTextAreaElement | null>(null);
+
+  useEffect(() => {
+    const textarea = textareaRef.current;
+    if (!textarea) {
+      return;
+    }
+
+    textarea.style.height = "0px";
+    textarea.style.height = `${Math.min(textarea.scrollHeight, 320)}px`;
+  }, [query]);
 
   return (
-    <div className="rounded-2xl border border-slate-200 bg-white p-3 shadow-sm">
+    <div className="rounded-3xl border border-slate-200/90 bg-white/95 p-4 shadow-[0_16px_48px_rgba(15,23,42,0.12)]">
       <Textarea
+        ref={textareaRef}
         value={query}
         onChange={(event) => onQueryChange(event.target.value)}
         placeholder={composerDisabled && disabledReason ? disabledReason : translations.chat.placeholder}
         disabled={composerDisabled}
-        className="min-h-[110px] resize-y border-slate-200 bg-white"
+        className="min-h-[140px] max-h-[320px] resize-none rounded-2xl border-slate-200 bg-white px-4 py-3 text-[15px] leading-7 shadow-inner"
         onKeyDown={(event) => {
           if (composerDisabled) {
             return;
@@ -50,13 +63,13 @@ export function ChatComposer({
       />
       <div className="mt-3 flex items-center justify-between">
         <p className="text-xs text-slate-500">
-          {disabled && disabledReason ? disabledReason : "Nhấn Ctrl/Cmd + Enter để gửi"}
+          {disabled && disabledReason ? disabledReason : translations.chat.submitHint}
         </p>
         <Button
           type="button"
           onClick={onSubmit}
           disabled={!canSubmit || composerDisabled}
-          className="gap-2 bg-primary hover:bg-primary/90 text-white"
+          className="h-11 rounded-full px-5 font-semibold gap-2 bg-primary text-white shadow-lg shadow-blue-200 hover:bg-primary/90"
         >
           <SendHorizonal className="h-4 w-4" />
           {isLoading ? translations.chat.sending : translations.chat.send}

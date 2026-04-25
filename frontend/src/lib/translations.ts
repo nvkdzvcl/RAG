@@ -52,10 +52,11 @@ export const translations = {
 
   // Chat composer
   chat: {
-    placeholder: "Đặt câu hỏi của bạn...",
+    placeholder: "Đặt câu hỏi về tài liệu của bạn...",
     send: "Gửi",
     sending: "Đang gửi...",
     disabled: "Vui lòng tải lên và xử lý tài liệu trước",
+    submitHint: "Enter để gửi • Shift+Enter để xuống dòng",
   },
 
   // Answer panel
@@ -69,7 +70,10 @@ export const translations = {
     status: "Trạng thái",
     stopReason: "Lý do dừng",
     loopCount: "Số vòng lặp",
-    languageMismatch: "Có thể sai ngôn ngữ trả lời",
+    languageMismatch: "Có thể sai ngôn ngữ",
+    noCitationWarning: "Không có trích dẫn",
+    hallucinationWarning: "Có dấu hiệu suy diễn ngoài tài liệu",
+    llmFallbackWarning: "Đã dùng fallback LLM",
   },
 
   // Citations
@@ -116,6 +120,7 @@ export const translations = {
   // Metrics
   metrics: {
     confidence: "Độ tin cậy",
+    grounded: "Độ bám tài liệu",
     latency: "Thời gian",
     sources: "Nguồn",
     loops: "Vòng lặp",

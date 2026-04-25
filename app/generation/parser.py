@@ -9,11 +9,22 @@ from app.schemas.generation import ParsedAnswer
 class StructuredOutputParser:
     """Parse raw LLM output into a typed answer object."""
 
+    @staticmethod
+    def _extract_nested_answer(answer: str) -> str:
+        nested = parse_json_object(answer)
+        if nested and isinstance(nested.get("answer"), str):
+            extracted = nested["answer"].strip()
+            if extracted:
+                return extracted
+        return answer
+
     def parse(self, raw_text: str) -> ParsedAnswer:
         payload = parse_json_object(raw_text)
         if payload:
             try:
-                return ParsedAnswer.model_validate(payload)
+                parsed = ParsedAnswer.model_validate(payload)
+                parsed.answer = self._extract_nested_answer(parsed.answer).strip()
+                return parsed
             except (TypeError, ValueError):
                 pass
 

@@ -20,6 +20,10 @@ export type ApiModeResponse = {
   loop_count?: number | null;
   response_language?: string;
   language_mismatch?: boolean;
+  llm_fallback_used?: boolean;
+  grounded_score?: number;
+  citation_count?: number;
+  hallucination_detected?: boolean;
   trace: Array<Record<string, unknown>>;
 };
 
@@ -27,6 +31,8 @@ export type ApiComparison = {
   confidence_delta?: number | null;
   latency_delta_ms?: number | null;
   citation_delta?: number | null;
+  grounded_score_delta?: number | null;
+  preferred_mode?: string | null;
   note?: string | null;
 };
 
