@@ -433,6 +433,32 @@ Minimum coverage targets:
 - standard mode run path
 - advanced mode run path
 
+### Test Execution Strategy
+
+Use these commands by default during development:
+
+- normal prompt/dev loop:
+  - `pytest -m "not slow and not e2e"`
+  - or `make test-fast`
+- backend logic only:
+  - `pytest tests/schemas tests/retrieval tests/generation -m "not slow"`
+- integration checks:
+  - `make test-integration`
+- full validation before push/release:
+  - `pytest`
+  - or `make test-full`
+
+Execution guidance for agents/contributors:
+
+- small frontend/UI-only changes:
+  - run `cd frontend && npm run build`
+- backend unit-level changes:
+  - run `make test-fast`
+- retrieval/indexing/reranker changes:
+  - run relevant integration tests (or `make test-integration`) in addition to fast tests
+- release/stabilization:
+  - run `make test-full`
+
 ---
 
 ## Evaluation Requirements

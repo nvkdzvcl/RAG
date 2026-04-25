@@ -32,7 +32,9 @@
 4. run evaluation set:
    `python scripts/run_eval.py --dataset data/eval/golden_dataset.jsonl --modes standard advanced compare`
 5. run tests:
-   `pytest`
+   - fast local loop: `pytest -m "not slow and not e2e"` (or `make test-fast`)
+   - integration only: `make test-integration`
+   - full validation: `pytest` (or `make test-full`)
 
 ## Embedding Configuration
 

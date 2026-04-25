@@ -274,8 +274,32 @@ Cách đọc kết quả:
 
 ## Tests
 
+Vòng lặp dev thông thường (nhanh, bỏ test nặng/e2e):
+
+```bash
+pytest -m "not slow and not e2e"
+# hoặc
+make test-fast
+```
+
+Chỉ kiểm tra backend logic cốt lõi (schema/retrieval/generation):
+
+```bash
+pytest tests/schemas tests/retrieval tests/generation -m "not slow"
+```
+
+Kiểm tra integration backend (không gồm slow/e2e):
+
+```bash
+make test-integration
+```
+
+Trước khi push/release (full suite):
+
 ```bash
 pytest
+# hoặc
+make test-full
 ```
 
 ## Ghi Chú
