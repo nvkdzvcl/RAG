@@ -16,6 +16,11 @@ def test_settings_defaults(monkeypatch) -> None:
         "CORPUS_DIR",
         "INDEX_DIR",
         "PROMPT_DIR",
+        "CHUNK_MODE",
+        "CHUNK_SIZE",
+        "CHUNK_OVERLAP",
+        "RETRIEVAL_MODE",
+        "RETRIEVAL_TOP_K",
         "EMBEDDING_PROVIDER",
         "EMBEDDING_MODEL",
         "EMBEDDING_DEVICE",
@@ -40,13 +45,22 @@ def test_settings_defaults(monkeypatch) -> None:
         "LLM_TEMPERATURE",
         "LLM_MAX_TOKENS",
         "LLM_TIMEOUT_SECONDS",
+        "LLM_GATE_MAX_TOKENS",
+        "LLM_REWRITE_MAX_TOKENS",
+        "LLM_CRITIQUE_MAX_TOKENS",
         "MAX_ADVANCED_LOOPS",
+        "MEMORY_WINDOW",
     ]:
         monkeypatch.delenv(key, raising=False)
 
     settings = Settings(_env_file=None)
     assert settings.app_name == "Self-RAG"
-    assert settings.max_advanced_loops == 2
+    assert settings.max_advanced_loops == 1
+    assert settings.chunk_mode == "preset"
+    assert settings.chunk_size == 1000
+    assert settings.chunk_overlap == 100
+    assert settings.retrieval_mode == "preset"
+    assert settings.retrieval_top_k == 8
     assert settings.embedding_provider == "sentence_transformers"
     assert settings.embedding_model == "intfloat/multilingual-e5-base"
     assert settings.embedding_device == "cpu"
@@ -70,6 +84,10 @@ def test_settings_defaults(monkeypatch) -> None:
     assert settings.llm_temperature == 0.2
     assert settings.llm_max_tokens == 2048
     assert settings.llm_timeout_seconds == 120
+    assert settings.llm_gate_max_tokens == 128
+    assert settings.llm_rewrite_max_tokens == 256
+    assert settings.llm_critique_max_tokens == 384
+    assert settings.memory_window == 3
 
 
 def test_query_request_mode_default() -> None:

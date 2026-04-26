@@ -19,5 +19,6 @@ class Generator(Protocol):
         mode: Mode,
         model: str | None = None,
         response_language: str = "en",
+        chat_history_context: str = "(empty)",
     ) -> GeneratedAnswer:
         """Generate grounded answer from query and selected context."""

@@ -73,6 +73,7 @@ export const translations = {
     languageMismatch: "Có thể sai ngôn ngữ",
     noCitationWarning: "Không có trích dẫn",
     hallucinationWarning: "Có dấu hiệu suy diễn ngoài tài liệu",
+    fallbackWarning: "Đã dùng cơ chế fallback an toàn",
     llmFallbackWarning: "Đã dùng fallback LLM",
   },
 

@@ -19,6 +19,7 @@ class LLMClient(Protocol):
         prompt: str,
         system_prompt: str | None = None,
         model: str | None = None,
+        max_tokens: int | None = None,
     ) -> str:
         """Return completion text for prompt/system_prompt."""
 
@@ -38,10 +39,12 @@ class StubLLMClient:
         prompt: str,
         system_prompt: str | None = None,
         model: str | None = None,
+        max_tokens: int | None = None,
     ) -> str:
         _ = system_prompt
         _ = prompt
         _ = model
+        _ = max_tokens
         return '{"answer":"Stub grounded answer.","confidence":0.5,"status":"answered"}'
 
     def complete(
@@ -49,12 +52,16 @@ class StubLLMClient:
         prompt: str,
         system_prompt: str | None = None,
         model: str | None = None,
+        max_tokens: int | None = None,
     ) -> str:
         try:
-            return self._responder(prompt, system_prompt, model)
+            return self._responder(prompt, system_prompt, model, max_tokens)
         except TypeError:
             # Backward compatibility for existing two-arg responder lambdas in tests.
-            return self._responder(prompt, system_prompt)
+            try:
+                return self._responder(prompt, system_prompt, model)
+            except TypeError:
+                return self._responder(prompt, system_prompt)
 
 
 def complete_with_model(
@@ -63,6 +70,7 @@ def complete_with_model(
     *,
     system_prompt: str | None = None,
     model: str | None = None,
+    max_tokens: int | None = None,
 ) -> str:
     """Invoke completion while safely supporting optional per-call model override."""
     normalized_model = model.strip() if isinstance(model, str) else ""
@@ -73,14 +81,28 @@ def complete_with_model(
                 prompt=prompt,
                 system_prompt=system_prompt,
                 model=normalized_model,
+                max_tokens=max_tokens,
             )
         except TypeError:
-            return llm_client.complete(
-                prompt=prompt,
-                system_prompt=system_prompt,
-            )
-
-    return llm_client.complete(prompt=prompt, system_prompt=system_prompt)
+            try:
+                return llm_client.complete(
+                    prompt=prompt,
+                    system_prompt=system_prompt,
+                    model=normalized_model,
+                )
+            except TypeError:
+                return llm_client.complete(
+                    prompt=prompt,
+                    system_prompt=system_prompt,
+                )
+    try:
+        return llm_client.complete(
+            prompt=prompt,
+            system_prompt=system_prompt,
+            max_tokens=max_tokens,
+        )
+    except TypeError:
+        return llm_client.complete(prompt=prompt, system_prompt=system_prompt)
 
 
 class OpenAICompatibleLLMClient:
@@ -160,6 +182,7 @@ class OpenAICompatibleLLMClient:
         prompt: str,
         system_prompt: str | None = None,
         model: str | None = None,
+        max_tokens: int | None = None,
     ) -> str:
         messages: list[dict[str, str]] = []
         if system_prompt and system_prompt.strip():
@@ -171,7 +194,7 @@ class OpenAICompatibleLLMClient:
             "model": selected_model,
             "messages": messages,
             "temperature": self.temperature,
-            "max_tokens": self.max_tokens,
+            "max_tokens": int(max_tokens) if isinstance(max_tokens, int) and max_tokens > 0 else self.max_tokens,
         }
 
         try:
@@ -202,6 +225,7 @@ class FallbackLLMClient:
         prompt: str,
         system_prompt: str | None = None,
         model: str | None = None,
+        max_tokens: int | None = None,
     ) -> str:
         self.last_call_used_fallback = False
         try:
@@ -210,6 +234,7 @@ class FallbackLLMClient:
                 prompt,
                 system_prompt=system_prompt,
                 model=model,
+                max_tokens=max_tokens,
             )
         except Exception as exc:
             self.last_call_used_fallback = True
@@ -222,6 +247,7 @@ class FallbackLLMClient:
                 prompt,
                 system_prompt=system_prompt,
                 model=model,
+                max_tokens=max_tokens,
             )
 
 

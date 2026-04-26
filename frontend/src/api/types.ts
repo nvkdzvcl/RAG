@@ -82,6 +82,54 @@ export type ApiDeleteDocumentResponse = {
   deleted_files: number;
 };
 
+export type ApiReindexDocumentsRequest = {
+  chunk_size: number;
+  chunk_overlap: number;
+};
+
+export type ApiReindexDocumentsResponse = {
+  status: "reindexed";
+  chunk_size: number;
+  chunk_overlap: number;
+  reindexed_documents: number;
+  active_chunks: number;
+};
+
+export type ApiChunkingMode = "small" | "medium" | "large" | "custom";
+export type ApiChunkConfigMode = "preset" | "custom";
+export type ApiRetrievalMode = "low" | "balanced" | "high" | "custom";
+export type ApiRetrievalConfigMode = "preset" | "custom";
+
+export type ApiUpdateChunkingSettingsRequest = {
+  mode: ApiChunkingMode;
+  chunk_size?: number;
+  chunk_overlap?: number;
+};
+
+export type ApiUpdateChunkingSettingsResponse = {
+  status: "reindexed";
+  mode: ApiChunkingMode;
+  chunk_mode: ApiChunkConfigMode;
+  chunk_size: number;
+  chunk_overlap: number;
+  reindexed_documents: number;
+  active_chunks: number;
+};
+
+export type ApiUpdateRetrievalSettingsRequest = {
+  mode: ApiRetrievalMode;
+  top_k?: number;
+};
+
+export type ApiUpdateRetrievalSettingsResponse = {
+  status: "updated";
+  mode: ApiRetrievalMode;
+  retrieval_mode: ApiRetrievalConfigMode;
+  top_k: number;
+  rerank_top_n: number;
+  context_top_k: number;
+};
+
 export type ApiHealthResponse = {
   status: string;
   llm_model?: string | null;

@@ -85,6 +85,8 @@ function timelineFromAdvanced(trace: TraceEntry[]): TimelineItem[] {
       const query = typeof meta.query === "string" ? meta.query : "n/a";
       const retrieved = typeof meta.retrieved_count === "number" ? meta.retrieved_count : 0;
       const reranked = typeof meta.reranked_count === "number" ? meta.reranked_count : 0;
+      const selected = typeof meta.selected_count === "number" ? meta.selected_count : 0;
+      const generatedStatus = typeof meta.generated_status === "string" ? meta.generated_status : "answered";
 
       timeline.push({
         label: `Viết lại câu hỏi (Vòng ${loop})`,
@@ -102,6 +104,12 @@ function timelineFromAdvanced(trace: TraceEntry[]): TimelineItem[] {
         label: `Xếp hạng lại (Vòng ${loop})`,
         detail: `số lượng=${reranked}`,
         status: reranked > 0 ? "success" : "warning",
+      });
+
+      timeline.push({
+        label: `Tạo bản nháp (Vòng ${loop})`,
+        detail: `trạng thái=${generatedStatus} | ngữ cảnh chọn=${selected}`,
+        status: generatedStatus === "insufficient_evidence" || selected === 0 ? "warning" : "success",
       });
 
       const critique = isObject(meta.critique) ? meta.critique : undefined;
@@ -126,7 +134,50 @@ function timelineFromAdvanced(trace: TraceEntry[]): TimelineItem[] {
         detail: finalDecision,
         status: retry || finalDecision === "từ chối trả lời" ? "warning" : "success",
       });
+      continue;
     }
+
+    if (meta.step === "grounding_check") {
+      const groundedScore = typeof meta.grounded_score === "number" ? meta.grounded_score : 0;
+      const citationCount = typeof meta.citation_count === "number" ? meta.citation_count : 0;
+      const hallucination = meta.hallucination_detected === true;
+      const llmFallbackUsed = meta.llm_fallback_used === true;
+      const warning = hallucination || citationCount === 0 || llmFallbackUsed;
+
+      timeline.push({
+        label: "Grounding",
+        detail: `grounded=${groundedScore.toFixed(3)} | citations=${citationCount}`,
+        status: warning ? "warning" : "success",
+      });
+      continue;
+    }
+
+    if (meta.step === "hallucination_guard") {
+      const triggered = meta.triggered === true;
+      const refinedHallucination = meta.refined_hallucination_detected === true;
+      timeline.push({
+        label: "Grounding (Hallucination Guard)",
+        detail: triggered
+          ? refinedHallucination
+            ? "đã refine nhưng vẫn không bám ngữ cảnh"
+            : "đã refine lại theo ngữ cảnh"
+          : "không kích hoạt",
+        status: refinedHallucination ? "warning" : "success",
+      });
+      continue;
+    }
+
+    if (meta.step === "language_guard") {
+      const mismatch = meta.language_mismatch === true;
+      timeline.push({
+        label: "Ngôn ngữ",
+        detail: mismatch ? "phát hiện lệch ngôn ngữ trả lời" : "ngôn ngữ phù hợp",
+        status: mismatch ? "warning" : "success",
+      });
+      continue;
+    }
+
+    timeline.push({ label: toTitleCase(entry.step), detail: entry.detail, status: entry.status });
   }
 
   if (timeline.length === 0) {

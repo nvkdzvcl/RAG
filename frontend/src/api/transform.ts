@@ -161,6 +161,18 @@ function inferTraceStatus(trace: Record<string, unknown>): TraceStatus {
   if (trace.step === "retrieval_gate" && trace.need_retrieval === false) {
     return "warning";
   }
+  if (trace.step === "grounding_check") {
+    if (trace.hallucination_detected === true || trace.citation_count === 0 || trace.llm_fallback_used === true) {
+      return "warning";
+    }
+    return "success";
+  }
+  if (trace.step === "hallucination_guard") {
+    if (trace.refined_hallucination_detected === true) {
+      return "warning";
+    }
+    return "success";
+  }
   return "info";
 }
 

@@ -15,11 +15,17 @@ from app.core.config import get_settings
 from app.ingestion import BaseLoader, Chunker, DocxLoader, MarkdownLoader, PdfLoader, TextCleaner, TextLoader
 from app.ingestion.base_loader import build_doc_id
 from app.schemas.documents import (
+    ChunkConfigMode,
+    ChunkingMode,
+    ChunkingSettingsRequest,
+    ChunkingSettingsResponse,
+    ChunkSettingsRequest,
     DeleteAllDocumentsResponse,
     DeleteDocumentResponse,
     DocumentListResponse,
     DocumentProcessingStatus,
     DocumentResponse,
+    ReindexDocumentsResponse,
     StoredDocumentRecord,
 )
 from app.schemas.ingestion import DocumentChunk, LoadedDocument
@@ -55,6 +61,11 @@ class DocumentService:
     """Manage uploaded documents and keep runtime retrieval indexes in sync."""
 
     SUPPORTED_EXTENSIONS = {".pdf", ".docx", ".txt", ".md", ".markdown"}
+    PRESET_CHUNKING: dict[str, tuple[int, int]] = {
+        "small": (500, 50),
+        "medium": (1000, 100),
+        "large": (1500, 200),
+    }
 
     def __init__(
         self,
@@ -62,15 +73,28 @@ class DocumentService:
         data_dir: Path | str,
         raw_dir: Path | str,
         index_manager: RuntimeIndexManager,
-        chunk_size: int = 320,
-        chunk_overlap: int = 40,
+        chunk_size: int | None = None,
+        chunk_overlap: int | None = None,
     ) -> None:
+        settings = get_settings()
         self.data_dir = Path(data_dir)
         self.raw_dir = Path(raw_dir)
         self.registry_path = self.data_dir / "document_registry.json"
         self.index_manager = index_manager
         self.cleaner = TextCleaner()
-        self.chunker = Chunker(chunk_size=chunk_size, chunk_overlap=chunk_overlap)
+        self.chunk_size = chunk_size if chunk_size is not None else int(getattr(settings, "chunk_size", 320))
+        self.chunk_overlap = (
+            chunk_overlap if chunk_overlap is not None else int(getattr(settings, "chunk_overlap", 40))
+        )
+        configured_chunk_mode = str(getattr(settings, "chunk_mode", "preset")).strip().lower()
+        inferred_mode = self._infer_chunking_mode(self.chunk_size, self.chunk_overlap)
+        if configured_chunk_mode == "custom":
+            self.selected_chunking_mode = "custom"
+            self.chunk_mode = "custom"
+        else:
+            self.selected_chunking_mode = inferred_mode if inferred_mode is not None else "custom"
+            self.chunk_mode = "preset" if inferred_mode is not None else "custom"
+        self.chunker = Chunker(chunk_size=self.chunk_size, chunk_overlap=self.chunk_overlap)
         self.loaders: list[BaseLoader] = [MarkdownLoader(), TextLoader(), PdfLoader(), DocxLoader()]
         self._lock = RLock()
 
@@ -79,6 +103,65 @@ class DocumentService:
 
         self._records = self._load_records()
         self._refresh_runtime_indexes()
+
+    @classmethod
+    def _infer_chunking_mode(cls, chunk_size: int, chunk_overlap: int) -> ChunkingMode | None:
+        for mode, (preset_size, preset_overlap) in cls.PRESET_CHUNKING.items():
+            if chunk_size == preset_size and chunk_overlap == preset_overlap:
+                if mode in {"small", "medium", "large"}:
+                    return mode
+        return None
+
+    @classmethod
+    def _resolve_chunking_values(
+        cls,
+        payload: ChunkingSettingsRequest,
+    ) -> tuple[ChunkingMode, ChunkConfigMode, int, int]:
+        if payload.mode in cls.PRESET_CHUNKING:
+            chunk_size, chunk_overlap = cls.PRESET_CHUNKING[payload.mode]
+            return payload.mode, "preset", chunk_size, chunk_overlap
+
+        if payload.chunk_size is None or payload.chunk_overlap is None:
+            raise ValueError("chunk_size and chunk_overlap are required when mode=custom.")
+        return "custom", "custom", int(payload.chunk_size), int(payload.chunk_overlap)
+
+    def _apply_chunking(
+        self,
+        *,
+        selected_mode: ChunkingMode,
+        chunk_mode: ChunkConfigMode,
+        chunk_size: int,
+        chunk_overlap: int,
+    ) -> tuple[int, int]:
+        with self._lock:
+            self.selected_chunking_mode = selected_mode
+            self.chunk_mode = chunk_mode
+            self.chunk_size = int(chunk_size)
+            self.chunk_overlap = int(chunk_overlap)
+            self.chunker = Chunker(chunk_size=self.chunk_size, chunk_overlap=self.chunk_overlap)
+
+        self.index_manager.set_chunking(
+            chunk_size=self.chunk_size,
+            chunk_overlap=self.chunk_overlap,
+        )
+        cleared_files = self.index_manager.clear_uploaded_indexes()
+        self._rebuild_after_deletion()
+        ready_documents = len(self._ready_records())
+        active_chunks = self.index_manager.get_active_chunk_count()
+        logger.info(
+            (
+                "Applied chunking settings | selected_mode=%s | chunk_mode=%s | chunk_size=%s "
+                "| chunk_overlap=%s | reindexed_documents=%s | active_chunks=%s | cleared_index_files=%s"
+            ),
+            selected_mode,
+            chunk_mode,
+            self.chunk_size,
+            self.chunk_overlap,
+            ready_documents,
+            active_chunks,
+            cleared_files,
+        )
+        return ready_documents, active_chunks
 
     def _resolve_loader(self, path: Path) -> BaseLoader | None:
         for loader in self.loaders:
@@ -424,4 +507,44 @@ class DocumentService:
             document_id=document_id,
             remaining_documents=remaining_documents,
             deleted_files=deleted_files,
+        )
+
+    def update_chunk_settings(self, payload: ChunkSettingsRequest) -> ReindexDocumentsResponse:
+        """Apply chunk settings and rebuild active uploaded indexes."""
+        chunk_size = int(payload.chunk_size)
+        chunk_overlap = int(payload.chunk_overlap)
+        inferred_mode = self._infer_chunking_mode(chunk_size, chunk_overlap)
+        selected_mode: ChunkingMode = inferred_mode if inferred_mode is not None else "custom"
+        chunk_mode: ChunkConfigMode = "preset" if inferred_mode is not None else "custom"
+        ready_documents, active_chunks = self._apply_chunking(
+            selected_mode=selected_mode,
+            chunk_mode=chunk_mode,
+            chunk_size=chunk_size,
+            chunk_overlap=chunk_overlap,
+        )
+        return ReindexDocumentsResponse(
+            status="reindexed",
+            chunk_size=chunk_size,
+            chunk_overlap=chunk_overlap,
+            reindexed_documents=ready_documents,
+            active_chunks=active_chunks,
+        )
+
+    def apply_chunking_settings(self, payload: ChunkingSettingsRequest) -> ChunkingSettingsResponse:
+        """Apply preset/custom chunking settings and rebuild uploaded indexes."""
+        selected_mode, chunk_mode, chunk_size, chunk_overlap = self._resolve_chunking_values(payload)
+        ready_documents, active_chunks = self._apply_chunking(
+            selected_mode=selected_mode,
+            chunk_mode=chunk_mode,
+            chunk_size=chunk_size,
+            chunk_overlap=chunk_overlap,
+        )
+        return ChunkingSettingsResponse(
+            status="reindexed",
+            mode=selected_mode,
+            chunk_mode=chunk_mode,
+            chunk_size=chunk_size,
+            chunk_overlap=chunk_overlap,
+            reindexed_documents=ready_documents,
+            active_chunks=active_chunks,
         )

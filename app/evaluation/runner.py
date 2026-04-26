@@ -155,6 +155,7 @@ def _collect_mode_eval_output(
     answer = getattr(response, "answer", "") if response is not None else ""
     citations = list(getattr(response, "citations", []))
     confidence = getattr(response, "confidence", None)
+    grounded_score = getattr(response, "grounded_score", None)
     status = getattr(response, "status", None)
     loop_count = getattr(response, "loop_count", None)
     stop_reason = getattr(response, "stop_reason", None)
@@ -167,6 +168,7 @@ def _collect_mode_eval_output(
         answer=answer,
         citations=citations,
         confidence=confidence,
+        grounded_score=grounded_score,
         status=status,
         loop_count=loop_count,
         stop_reason=stop_reason,
@@ -206,6 +208,7 @@ def _error_mode_output(example: EvalExample, mode: Mode, error: str, run_source:
         answer="",
         citations=[],
         confidence=None,
+        grounded_score=0.0,
         status="error",
         loop_count=None,
         stop_reason="evaluation_error",

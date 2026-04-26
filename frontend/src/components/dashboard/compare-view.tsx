@@ -15,6 +15,11 @@ function confidenceLabel(confidence: number | null): string {
   return `${Math.round(confidence * 100)}%`;
 }
 
+function isFallbackUsed(result: ModeResult): boolean {
+  const stopReason = result.stopReason?.toLowerCase() ?? "";
+  return result.llmFallbackUsed || stopReason.includes("fallback");
+}
+
 function reliabilitySummary(result: CompareResult): string {
   const standard = result.standard;
   const advanced = result.advanced;
@@ -46,6 +51,8 @@ function reliabilitySummary(result: CompareResult): string {
 }
 
 function ModeColumn({ title, result }: { title: string; result: ModeResult }) {
+  const fallbackUsed = isFallbackUsed(result);
+
   return (
     <Card className="border-slate-200 shadow-sm">
       <CardHeader className="pb-3">
@@ -72,6 +79,11 @@ function ModeColumn({ title, result }: { title: string; result: ModeResult }) {
           {result.languageMismatch ? (
             <Badge variant="outline" className="border-amber-300 bg-amber-50 text-amber-700">
               {translations.answer.languageMismatch}
+            </Badge>
+          ) : null}
+          {fallbackUsed ? (
+            <Badge variant="outline" className="border-orange-300 bg-orange-50 text-orange-700">
+              {translations.answer.fallbackWarning}
             </Badge>
           ) : null}
           {result.llmFallbackUsed ? (

@@ -170,3 +170,63 @@ def test_standard_workflow_passes_model_override_to_llm_client() -> None:
     assert response.answer == "Model override answer."
     assert llm_client.models
     assert set(llm_client.models) == {"qwen2.5:7b"}
+
+
+def test_standard_workflow_includes_recent_chat_history_for_follow_up() -> None:
+    class _RecordingLLMClient:
+        def __init__(self) -> None:
+            self.prompts: list[str] = []
+
+        def complete(
+            self,
+            prompt: str,
+            system_prompt: str | None = None,
+            model: str | None = None,
+        ) -> str:
+            _ = system_prompt
+            _ = model
+            self.prompts.append(prompt)
+            return '{"answer":"Điều 3 quy định nghĩa vụ tuân thủ.","confidence":0.84,"status":"answered"}'
+
+    class _FakeRetriever:
+        def retrieve(self, query: str, top_k: int = 5) -> list[RetrievalResult]:
+            _ = query
+            _ = top_k
+            return [
+                RetrievalResult(
+                    chunk_id="c-memory-001",
+                    doc_id="d-memory-001",
+                    source="seeded://memory",
+                    content="Điều 2 quy định phạm vi. Điều 3 quy định nghĩa vụ tuân thủ.",
+                    score=0.92,
+                    score_type="hybrid",
+                    rank=1,
+                )
+            ]
+
+    class _FakeIndexManager:
+        def get_retriever(self) -> _FakeRetriever:
+            return _FakeRetriever()
+
+        def get_active_source(self) -> str:
+            return "seeded"
+
+    llm = _RecordingLLMClient()
+    workflow = StandardWorkflow(
+        index_manager=_FakeIndexManager(),
+        llm_client=llm,
+    )
+    history = [
+        {"role": "user", "content": "Điều 2 là gì?"},
+        {"role": "assistant", "content": "Điều 2 quy định phạm vi áp dụng."},
+        {"role": "user", "content": "còn điều 3 thì sao"},
+    ]
+
+    response = workflow.run(query="còn điều 3 thì sao", chat_history=history)
+
+    assert response.answer
+    assert llm.prompts
+    prompt = llm.prompts[-1]
+    assert "Chat history (latest turns):" in prompt
+    assert "Điều 2 là gì?" in prompt
+    assert "còn điều 3 thì sao" in prompt

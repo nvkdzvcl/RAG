@@ -61,10 +61,7 @@ export function ChatComposer({
           }
         }}
       />
-      <div className="mt-3 flex items-center justify-between">
-        <p className="text-xs text-slate-500">
-          {disabled && disabledReason ? disabledReason : translations.chat.submitHint}
-        </p>
+      <div className="mt-3 flex items-center justify-end">
         <Button
           type="button"
           onClick={onSubmit}

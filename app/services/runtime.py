@@ -31,6 +31,8 @@ def build_app_services(settings: Settings) -> AppServices:
     index_manager = RuntimeIndexManager(
         corpus_dir=settings.corpus_dir,
         index_dir=settings.index_dir,
+        chunk_size=settings.chunk_size,
+        chunk_overlap=settings.chunk_overlap,
         embedding_provider_name=settings.embedding_provider,
         embedding_model=settings.embedding_model,
         embedding_device=settings.embedding_device,
@@ -42,6 +44,8 @@ def build_app_services(settings: Settings) -> AppServices:
         data_dir=data_dir,
         raw_dir=raw_dir,
         index_manager=index_manager,
+        chunk_size=settings.chunk_size,
+        chunk_overlap=settings.chunk_overlap,
     )
     query_service = QueryService(
         runner=WorkflowRunner(index_manager=index_manager),

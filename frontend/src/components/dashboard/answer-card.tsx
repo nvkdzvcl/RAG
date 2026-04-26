@@ -16,7 +16,14 @@ function confidenceLabel(confidence: number | null): string {
   return `${Math.round(confidence * 100)}%`;
 }
 
+function isFallbackUsed(result: ModeResult): boolean {
+  const stopReason = result.stopReason?.toLowerCase() ?? "";
+  return result.llmFallbackUsed || stopReason.includes("fallback");
+}
+
 export function AnswerCard({ title = "Câu trả lời", result }: AnswerCardProps) {
+  const fallbackUsed = isFallbackUsed(result);
+
   return (
     <Card className="border-slate-200 shadow-sm">
       <CardHeader className="pb-3">
@@ -46,6 +53,11 @@ export function AnswerCard({ title = "Câu trả lời", result }: AnswerCardPro
           {result.languageMismatch ? (
             <Badge variant="outline" className="border-amber-300 bg-amber-50 text-amber-700">
               {translations.answer.languageMismatch}
+            </Badge>
+          ) : null}
+          {fallbackUsed ? (
+            <Badge variant="outline" className="border-orange-300 bg-orange-50 text-orange-700">
+              {translations.answer.fallbackWarning}
             </Badge>
           ) : null}
           {result.llmFallbackUsed ? (

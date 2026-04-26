@@ -7,6 +7,7 @@ Rules:
 - Keep notes short and actionable.
 - Keep text fields (`note`, `missing_aspects`, `better_queries`) in `response_language`.
 - Do not answer in Chinese unless the user explicitly asks in Chinese.
+- Use chat history only to resolve follow-up references.
 
 Output format:
 Return strict JSON only with this schema:
@@ -24,6 +25,8 @@ Return strict JSON only with this schema:
 
 Question: `$question`
 Response language: `$response_language` (`$response_language_name`)
+Chat history:
+$chat_history
 Draft answer: `$draft_answer`
 Selected context:
 $selected_context

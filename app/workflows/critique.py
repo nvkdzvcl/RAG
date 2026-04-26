@@ -12,7 +12,7 @@ from app.core.prompting import PromptRepository
 from app.generation.llm_client import LLMClient, complete_with_model
 from app.schemas.retrieval import RetrievalResult
 from app.schemas.workflow import CritiqueResult
-from app.workflows.shared import build_language_system_prompt, response_language_name
+from app.workflows.shared import build_chat_history_context, build_language_system_prompt, response_language_name
 
 _CRITIQUE_PROMPT_FALLBACK = (
     "Critique the draft answer against selected context.\\n"
@@ -31,6 +31,7 @@ _CRITIQUE_PROMPT_FALLBACK = (
     "}\\n"
     "Keep note/missing_aspects/better_queries in $response_language_name.\\n"
     "response_language: $response_language\\n"
+    "chat_history: $chat_history\\n"
     "question: $question\\n"
     "draft_answer: $draft_answer\\n"
     "selected_context: $selected_context\\n"
@@ -54,6 +55,8 @@ class HeuristicCritic:
         settings = get_settings()
         self.llm_client = llm_client
         self.use_llm = use_llm
+        self.memory_window = max(0, int(getattr(settings, "memory_window", 3)))
+        self.max_tokens = max(1, int(getattr(settings, "llm_critique_max_tokens", 384)))
         resolved_prompt_dir = prompt_dir or settings.prompt_dir
         self.prompt_repository = prompt_repository or PromptRepository(resolved_prompt_dir)
 
@@ -172,6 +175,7 @@ class HeuristicCritic:
         loop_count: int,
         max_loops: int,
         fallback: CritiqueResult,
+        chat_history: list[dict[str, str]] | None = None,
         model: str | None = None,
         response_language: str = "en",
     ) -> CritiqueResult | None:
@@ -193,6 +197,10 @@ class HeuristicCritic:
             question=query,
             draft_answer=draft_answer,
             selected_context=json.dumps(context_payload, ensure_ascii=False),
+            chat_history=build_chat_history_context(
+                chat_history,
+                memory_window=self.memory_window,
+            ),
             loop_count=loop_count,
             max_loops=max_loops,
             response_language=response_language,
@@ -205,6 +213,7 @@ class HeuristicCritic:
                 prompt,
                 system_prompt=build_language_system_prompt(response_language),
                 model=model,
+                max_tokens=self.max_tokens,
             )
         except Exception:
             return None
@@ -247,6 +256,7 @@ class HeuristicCritic:
         *,
         loop_count: int,
         max_loops: int,
+        chat_history: list[dict[str, str]] | None = None,
         model: str | None = None,
         response_language: str = "en",
     ) -> CritiqueResult:
@@ -269,6 +279,7 @@ class HeuristicCritic:
             loop_count=loop_count,
             max_loops=max_loops,
             fallback=heuristic,
+            chat_history=chat_history,
             model=model,
             response_language=response_language,
         )

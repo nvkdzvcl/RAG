@@ -26,6 +26,8 @@ logger = logging.getLogger(__name__)
 
 _STANDARD_PROMPT_FALLBACK = (
     "You are a grounded RAG assistant.\n"
+    "Use chat history only to resolve follow-up references (for example: \"còn điều 3 thì sao\").\n"
+    "Do not let chat history override provided evidence context.\n"
     "Answer in the required response language only.\n"
     "If response_language is Vietnamese, write fully in Vietnamese.\n"
     "Do not answer in Chinese unless the user asks in Chinese.\n"
@@ -34,12 +36,14 @@ _STANDARD_PROMPT_FALLBACK = (
     "return it exactly as: \"Tên của Điều X là: <exact title>.\"\n"
     "Do not use the title format for compare/explain questions (for example: \"phân biệt\", \"so sánh\", \"giải thích\", \"trình bày\").\n"
     "For compare questions (for example \"Phân biệt A và B\"), explain differences based only on provided context.\n"
+    "For factual definition/name queries (for example containing \"là gì\", \"định nghĩa\", \"tên\"), answer directly and concisely.\n"
     "Do not paraphrase official title text.\n"
     "Use only the provided context; do not invent unsupported facts.\n"
     "If evidence is insufficient, set status to insufficient_evidence.\n"
     "Return strict JSON with keys: answer, confidence, status.\n"
     "response_language: $response_language ($response_language_name)\n"
     "mode: $mode\n"
+    "chat_history:\n$chat_history\n"
     "question: $question\n"
     "context:\n$context"
 )
@@ -49,8 +53,10 @@ _ADVANCED_PROMPT_FALLBACK = (
     "ONLY use the provided context chunks.\n"
     "Every answer must be supported by context.\n"
     "Do NOT use external knowledge.\n"
+    "Use chat history only to resolve follow-up references (for example: \"còn điều 3 thì sao\").\n"
+    "Do not let chat history override provided evidence context.\n"
     "If the answer is not found in context, respond exactly: "
-    "\"Không đủ thông tin trong tài liệu đã cung cấp để trả lời chính xác.\"\n"
+    "\"Không đủ thông tin từ tài liệu để trả lời\"\n"
     "Answer in the required response language only.\n"
     "If response_language is Vietnamese, write fully in Vietnamese.\n"
     "Do not answer in Chinese unless the user asks in Chinese.\n"
@@ -59,11 +65,13 @@ _ADVANCED_PROMPT_FALLBACK = (
     "return it exactly as: \"Tên của Điều X là: <exact title>.\"\n"
     "Do not use the title format for compare/explain questions (for example: \"phân biệt\", \"so sánh\", \"giải thích\", \"trình bày\").\n"
     "For compare questions (for example \"Phân biệt A và B\"), explain differences based only on provided context.\n"
+    "For factual definition/name queries (for example containing \"là gì\", \"định nghĩa\", \"tên\"), answer directly and concisely.\n"
     "Do not paraphrase official title text.\n"
     "Ground every claim in the context. If evidence is weak, abstain with status=insufficient_evidence.\n"
     "Return strict JSON with keys: answer, confidence, status.\n"
     "response_language: $response_language ($response_language_name)\n"
     "mode: $mode\n"
+    "chat_history:\n$chat_history\n"
     "question: $question\n"
     "context:\n$context"
 )
@@ -117,6 +125,7 @@ class BaselineGenerator(Generator):
         context: list[RetrievalResult],
         mode: Mode,
         response_language: str,
+        chat_history_context: str,
     ) -> str:
         joined_context = "\n\n".join(
             f"[chunk_id={doc.chunk_id}] {doc.content}" for doc in context
@@ -129,6 +138,7 @@ class BaselineGenerator(Generator):
             mode=mode.value,
             question=query,
             context=joined_context,
+            chat_history=chat_history_context,
             response_language=response_language,
             response_language_name=response_language_name(response_language),
         )
@@ -234,6 +244,7 @@ class BaselineGenerator(Generator):
         mode: Mode,
         model: str | None = None,
         response_language: str = "en",
+        chat_history_context: str = "(empty)",
     ) -> GeneratedAnswer:
         non_empty_context = [doc for doc in context if doc.content.strip()]
         if not non_empty_context:
@@ -256,6 +267,7 @@ class BaselineGenerator(Generator):
             non_empty_context,
             mode,
             response_language,
+            chat_history_context,
         )
         try:
             raw_output = complete_with_model(
