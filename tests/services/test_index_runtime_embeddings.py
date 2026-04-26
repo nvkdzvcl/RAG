@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -25,6 +26,25 @@ class _CountingEmbeddingProvider(BaseEmbeddingProvider):
     def embed_documents(self, texts: list[str]) -> list[list[float]]:
         self.document_inputs.extend(texts)
         return [self._vectorize(text) for text in texts]
+
+    def embed_query(self, text: str) -> list[float]:
+        self.query_inputs.append(text)
+        return self._vectorize(text)
+
+
+class _NoRebuildEmbeddingProvider(BaseEmbeddingProvider):
+    def __init__(self, dimension: int = 6) -> None:
+        self.name = "counting-provider"
+        self.dimension = dimension
+        self.query_inputs: list[str] = []
+
+    def _vectorize(self, text: str) -> list[float]:
+        base = sum(ord(char) for char in text) % 997
+        return [float((base + index) % 97) for index in range(self.dimension)]
+
+    def embed_documents(self, texts: list[str]) -> list[list[float]]:
+        _ = texts
+        raise AssertionError("embed_documents should not be called when loading matching persisted uploaded index")
 
     def embed_query(self, text: str) -> list[float]:
         self.query_inputs.append(text)
@@ -311,3 +331,68 @@ def test_runtime_chunk_strategy_update_changes_chunk_count(tmp_path: Path) -> No
     assert manager.chunk_overlap == 80
     assert large_chunk_count > 0
     assert large_chunk_count < small_chunk_count
+
+
+def test_uploaded_manifest_allows_loading_persisted_uploaded_indexes_without_rebuild(tmp_path: Path) -> None:
+    provider_first = _CountingEmbeddingProvider(dimension=8)
+    manager_first = RuntimeIndexManager(
+        corpus_dir=tmp_path / "corpus",
+        index_dir=tmp_path / "indexes",
+        embedding_provider=provider_first,
+    )
+
+    uploaded = tmp_path / "manifest-doc.txt"
+    uploaded.write_text("manifest-match-token-6066 appears in uploaded document.", encoding="utf-8")
+    doc_id = build_doc_id(uploaded)
+
+    first_count = manager_first.activate_from_uploaded_files([uploaded], active_document_ids={doc_id})
+    assert first_count > 0
+    manifest_path = tmp_path / "indexes" / "uploaded_index_manifest.json"
+    assert manifest_path.exists()
+
+    provider_second = _NoRebuildEmbeddingProvider(dimension=8)
+    manager_second = RuntimeIndexManager(
+        corpus_dir=tmp_path / "corpus",
+        index_dir=tmp_path / "indexes",
+        embedding_provider=provider_second,
+    )
+    loaded_count = manager_second.activate_from_uploaded_files([uploaded], active_document_ids={doc_id})
+
+    assert loaded_count == first_count
+    assert manager_second.get_active_source() == "uploaded"
+    assert manager_second.get_active_uploaded_document_ids() == {doc_id}
+    results = manager_second.get_retriever().retrieve("manifest-match-token-6066", top_k=3)
+    assert results
+    assert all(item.doc_id == doc_id for item in results)
+
+
+def test_uploaded_manifest_mismatch_triggers_rebuild_from_ready_documents(tmp_path: Path) -> None:
+    provider_first = _CountingEmbeddingProvider(dimension=8)
+    manager_first = RuntimeIndexManager(
+        corpus_dir=tmp_path / "corpus",
+        index_dir=tmp_path / "indexes",
+        embedding_provider=provider_first,
+    )
+
+    uploaded = tmp_path / "manifest-mismatch.txt"
+    uploaded.write_text("manifest-mismatch-token-8282", encoding="utf-8")
+    doc_id = build_doc_id(uploaded)
+    assert manager_first.activate_from_uploaded_files([uploaded], active_document_ids={doc_id}) > 0
+
+    manifest_path = tmp_path / "indexes" / "uploaded_index_manifest.json"
+    payload = json.loads(manifest_path.read_text(encoding="utf-8"))
+    payload["fingerprint"] = "tampered-fingerprint"
+    manifest_path.write_text(json.dumps(payload, ensure_ascii=True, indent=2), encoding="utf-8")
+
+    provider_second = _CountingEmbeddingProvider(dimension=8)
+    manager_second = RuntimeIndexManager(
+        corpus_dir=tmp_path / "corpus",
+        index_dir=tmp_path / "indexes",
+        embedding_provider=provider_second,
+    )
+    rebuilt_count = manager_second.activate_from_uploaded_files([uploaded], active_document_ids={doc_id})
+
+    assert rebuilt_count > 0
+    assert provider_second.document_inputs
+    manifest_after = json.loads(manifest_path.read_text(encoding="utf-8"))
+    assert manifest_after["fingerprint"] != "tampered-fingerprint"

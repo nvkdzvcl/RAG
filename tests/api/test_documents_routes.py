@@ -429,6 +429,46 @@ def test_delete_single_document_rebuilds_runtime_from_remaining_uploaded_docs(
     assert all(citation["doc_id"] != first_id for citation in body["citations"])
 
 
+def test_upload_then_delete_same_document_never_returns_deleted_doc(
+    isolated_client: tuple[TestClient, Path],
+) -> None:
+    client, _ = isolated_client
+
+    upload = client.post(
+        "/api/v1/documents/upload",
+        files={"file": ("single-delete.txt", b"single-delete-token-4477", "text/plain")},
+    )
+    assert upload.status_code == 201
+    doc_id = upload.json()["document_id"]
+
+    before_delete = client.post(
+        "/api/v1/query",
+        json={
+            "query": "single-delete-token-4477 la gi?",
+            "mode": "standard",
+            "chat_history": [],
+        },
+    )
+    assert before_delete.status_code == 200
+    assert any(citation["doc_id"] == doc_id for citation in before_delete.json()["citations"])
+
+    deleted = client.delete(f"/api/v1/documents/{doc_id}")
+    assert deleted.status_code == 200
+
+    after_delete = client.post(
+        "/api/v1/query",
+        json={
+            "query": "single-delete-token-4477 la gi?",
+            "mode": "standard",
+            "chat_history": [],
+        },
+    )
+    assert after_delete.status_code == 200
+    body = after_delete.json()
+    assert body["trace"][0]["index_source"] == "seeded"
+    assert all(citation["doc_id"] != doc_id for citation in body["citations"])
+
+
 def test_delete_missing_document_returns_404(
     isolated_client: tuple[TestClient, Path],
 ) -> None:

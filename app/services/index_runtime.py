@@ -2,15 +2,19 @@
 
 from __future__ import annotations
 
+import hashlib
+import json
 import logging
 from pathlib import Path
 from threading import RLock
+from typing import Any
 
 from app.core.config import get_settings
 from app.indexing import BaseEmbeddingProvider, IndexBuilder, LocalIndexStore, create_embedding_provider
 from app.ingestion.base_loader import build_doc_id
 from app.ingestion import BaseLoader, Chunker, DocxLoader, MarkdownLoader, PdfLoader, TextCleaner, TextLoader
 from app.retrieval import DenseRetriever, HybridRetriever, SparseRetriever
+from app.schemas.index_manifest import UploadedIndexFileEntry, UploadedIndexManifest
 from app.schemas.ingestion import DocumentChunk, LoadedDocument
 from app.schemas.retrieval import RetrievalResult
 
@@ -57,6 +61,12 @@ class _ResultFilteringRetriever:
 
 class RuntimeIndexManager:
     """Build and swap active retrieval indexes at runtime."""
+
+    UPLOADED_VECTOR_FILENAME = "uploaded_vector_index.json"
+    UPLOADED_BM25_FILENAME = "uploaded_bm25_index.json"
+    UPLOADED_MANIFEST_FILENAME = "uploaded_index_manifest.json"
+    SEEDED_VECTOR_FILENAME = "seeded_vector_index.json"
+    SEEDED_BM25_FILENAME = "seeded_bm25_index.json"
 
     def __init__(
         self,
@@ -174,12 +184,179 @@ class RuntimeIndexManager:
         )
         return chunks
 
+    @staticmethod
+    def _stable_hash(payload: dict[str, Any]) -> str:
+        serialized = json.dumps(
+            payload,
+            ensure_ascii=True,
+            sort_keys=True,
+            separators=(",", ":"),
+        )
+        return hashlib.sha256(serialized.encode("utf-8")).hexdigest()
+
+    def _build_uploaded_manifest(
+        self,
+        uploaded_files: list[Path],
+        *,
+        active_document_ids: set[str],
+    ) -> UploadedIndexManifest:
+        entries: list[UploadedIndexFileEntry] = []
+        expected_doc_ids = set(active_document_ids)
+
+        for path in sorted(uploaded_files):
+            if not path.exists() or not path.is_file():
+                continue
+            doc_id = build_doc_id(path)
+            if expected_doc_ids and doc_id not in expected_doc_ids:
+                continue
+            stat = path.stat()
+            entries.append(
+                UploadedIndexFileEntry(
+                    doc_id=doc_id,
+                    stored_path=str(path.resolve()),
+                    size_bytes=int(stat.st_size),
+                    modified_ns=int(stat.st_mtime_ns),
+                )
+            )
+
+        if not expected_doc_ids:
+            expected_doc_ids = {entry.doc_id for entry in entries}
+
+        payload_without_fingerprint: dict[str, Any] = {
+            "schema_version": 1,
+            "source": "uploaded",
+            "chunk_size": int(self.chunk_size),
+            "chunk_overlap": int(self.chunk_overlap),
+            "embedding_provider": self.embedding_provider.name,
+            "embedding_dimension": int(self.embedding_provider.dimension),
+            "active_doc_ids": sorted(expected_doc_ids),
+            "files": [entry.model_dump(mode="json") for entry in entries],
+        }
+        fingerprint = self._stable_hash(payload_without_fingerprint)
+        return UploadedIndexManifest.model_validate(
+            {
+                **payload_without_fingerprint,
+                "fingerprint": fingerprint,
+            }
+        )
+
+    def _manifest_path(self) -> Path:
+        return self.index_dir / self.UPLOADED_MANIFEST_FILENAME
+
+    def _save_uploaded_manifest(self, manifest: UploadedIndexManifest) -> None:
+        payload = manifest.model_dump(mode="json")
+        self._manifest_path().write_text(
+            json.dumps(payload, ensure_ascii=True, indent=2),
+            encoding="utf-8",
+        )
+
+    def _load_uploaded_manifest(self) -> UploadedIndexManifest | None:
+        path = self._manifest_path()
+        if not path.exists() or not path.is_file():
+            return None
+        try:
+            payload = json.loads(path.read_text(encoding="utf-8"))
+            return UploadedIndexManifest.model_validate(payload)
+        except Exception:
+            logger.warning("Invalid uploaded index manifest; forcing uploaded index rebuild.")
+            return None
+
+    def _is_uploaded_manifest_match(
+        self,
+        *,
+        expected: UploadedIndexManifest,
+        stored: UploadedIndexManifest,
+    ) -> bool:
+        stored_without_fingerprint = stored.model_dump(mode="json")
+        stored_without_fingerprint.pop("fingerprint", None)
+        stored_fingerprint = self._stable_hash(stored_without_fingerprint)
+        if stored.fingerprint != stored_fingerprint:
+            return False
+        return stored_fingerprint == expected.fingerprint
+
+    def _remove_uploaded_persisted_artifacts(self, *, include_legacy_generic: bool) -> int:
+        deleted_files = 0
+        index_root = self.index_dir.resolve()
+        target_filenames = [
+            self.UPLOADED_VECTOR_FILENAME,
+            self.UPLOADED_BM25_FILENAME,
+            self.UPLOADED_MANIFEST_FILENAME,
+        ]
+        if include_legacy_generic:
+            target_filenames.extend(["vector_index.json", "bm25_index.json"])
+
+        for filename in target_filenames:
+            candidate = (self.index_dir / filename).resolve()
+            try:
+                candidate.relative_to(index_root)
+            except ValueError:
+                logger.warning("Skipped deleting index file outside index_dir", extra={"path": str(candidate)})
+                continue
+
+            if candidate.exists() and candidate.is_file():
+                try:
+                    candidate.unlink()
+                    deleted_files += 1
+                except OSError:
+                    logger.exception("Failed to delete persisted index file", extra={"path": str(candidate)})
+        return deleted_files
+
+    def _load_uploaded_indexes_from_disk(
+        self,
+        *,
+        expected_manifest: UploadedIndexManifest,
+    ) -> int | None:
+        stored_manifest = self._load_uploaded_manifest()
+        if stored_manifest is None:
+            return None
+        if not self._is_uploaded_manifest_match(expected=expected_manifest, stored=stored_manifest):
+            logger.info("Uploaded index manifest mismatch; stale uploaded indexes will be rebuilt.")
+            self._remove_uploaded_persisted_artifacts(include_legacy_generic=False)
+            return None
+
+        try:
+            vector_index = self.index_store.load_vector_index(filename=self.UPLOADED_VECTOR_FILENAME)
+            bm25_index = self.index_store.load_bm25_index(filename=self.UPLOADED_BM25_FILENAME)
+        except Exception:
+            logger.warning("Failed loading persisted uploaded indexes; rebuilding from ready documents.")
+            self._remove_uploaded_persisted_artifacts(include_legacy_generic=False)
+            return None
+
+        ocr_chunk_count = sum(
+            1
+            for chunk in vector_index.chunks
+            if chunk.metadata.get("block_type") == "ocr_text" or bool(chunk.metadata.get("ocr"))
+        )
+        chunk_count = len(vector_index.chunks)
+        dense = DenseRetriever(vector_index, self.embedding_provider)
+        sparse = SparseRetriever(bm25_index)
+        hybrid = HybridRetriever(dense, sparse)
+
+        with self._lock:
+            self._retriever = hybrid
+            self._active_source = "uploaded"
+            self._active_chunk_count = chunk_count
+            self._active_uploaded_doc_ids = set(expected_manifest.active_doc_ids)
+            self._last_activation_stats = {
+                "chunk_count": chunk_count,
+                "ocr_chunks": ocr_chunk_count,
+                "source": "uploaded",
+            }
+
+        logger.info(
+            "Loaded uploaded runtime indexes from persisted artifacts | chunk_count=%s | ocr_chunks=%s",
+            chunk_count,
+            ocr_chunk_count,
+        )
+        return chunk_count
+
     def _activate_chunks(
         self,
         chunks: list[DocumentChunk],
         *,
         source: str,
         active_uploaded_doc_ids: set[str] | None = None,
+        uploaded_files: list[Path] | None = None,
     ) -> int:
         resolved_uploaded_ids = set(active_uploaded_doc_ids or set())
         if source == "uploaded" and not resolved_uploaded_ids:
@@ -211,11 +388,28 @@ class RuntimeIndexManager:
         self.index_store.save_vector_index(built.vector_index)
         self.index_store.save_bm25_index(built.bm25_index)
         if source == "uploaded":
-            self.index_store.save_vector_index(built.vector_index, filename="uploaded_vector_index.json")
-            self.index_store.save_bm25_index(built.bm25_index, filename="uploaded_bm25_index.json")
+            self.index_store.save_vector_index(
+                built.vector_index,
+                filename=self.UPLOADED_VECTOR_FILENAME,
+            )
+            self.index_store.save_bm25_index(
+                built.bm25_index,
+                filename=self.UPLOADED_BM25_FILENAME,
+            )
+            manifest = self._build_uploaded_manifest(
+                uploaded_files or [],
+                active_document_ids=resolved_uploaded_ids,
+            )
+            self._save_uploaded_manifest(manifest)
         elif source == "seeded":
-            self.index_store.save_vector_index(built.vector_index, filename="seeded_vector_index.json")
-            self.index_store.save_bm25_index(built.bm25_index, filename="seeded_bm25_index.json")
+            self.index_store.save_vector_index(
+                built.vector_index,
+                filename=self.SEEDED_VECTOR_FILENAME,
+            )
+            self.index_store.save_bm25_index(
+                built.bm25_index,
+                filename=self.SEEDED_BM25_FILENAME,
+            )
 
         with self._lock:
             self._retriever = hybrid
@@ -246,7 +440,6 @@ class RuntimeIndexManager:
         *,
         active_document_ids: set[str] | None = None,
     ) -> int:
-        chunks = self._build_chunks(uploaded_files, source_label="uploaded")
         expected_doc_ids = set(active_document_ids or set())
         if not expected_doc_ids:
             expected_doc_ids = {
@@ -254,12 +447,24 @@ class RuntimeIndexManager:
                 for path in uploaded_files
                 if path.exists() and path.is_file()
             }
+        expected_manifest = self._build_uploaded_manifest(
+            uploaded_files,
+            active_document_ids=expected_doc_ids,
+        )
+        loaded_chunk_count = self._load_uploaded_indexes_from_disk(
+            expected_manifest=expected_manifest,
+        )
+        if loaded_chunk_count is not None:
+            return loaded_chunk_count
+
+        chunks = self._build_chunks(uploaded_files, source_label="uploaded")
         if expected_doc_ids:
             chunks = [chunk for chunk in chunks if chunk.doc_id in expected_doc_ids]
         return self._activate_chunks(
             chunks,
             source="uploaded",
             active_uploaded_doc_ids=expected_doc_ids,
+            uploaded_files=uploaded_files,
         )
 
     def activate_from_seeded_corpus(self) -> int:
@@ -344,30 +549,6 @@ class RuntimeIndexManager:
                     "source": "none",
                 }
             self._active_uploaded_doc_ids = set()
-
-        deleted_files = 0
-        index_root = self.index_dir.resolve()
-        target_filenames = [
-            "uploaded_vector_index.json",
-            "uploaded_bm25_index.json",
-        ]
-        # Legacy uploaded artifacts were persisted under generic names.
-        if previous_source != "seeded":
-            target_filenames.extend(["vector_index.json", "bm25_index.json"])
-
-        for filename in target_filenames:
-            candidate = (self.index_dir / filename).resolve()
-            try:
-                candidate.relative_to(index_root)
-            except ValueError:
-                logger.warning("Skipped deleting index file outside index_dir", extra={"path": str(candidate)})
-                continue
-
-            if candidate.exists() and candidate.is_file():
-                try:
-                    candidate.unlink()
-                    deleted_files += 1
-                except OSError:
-                    logger.exception("Failed to delete persisted index file", extra={"path": str(candidate)})
-
-        return deleted_files
+        return self._remove_uploaded_persisted_artifacts(
+            include_legacy_generic=(previous_source != "seeded"),
+        )
