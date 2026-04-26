@@ -53,6 +53,10 @@ export type ModeResult = {
 };
 
 export type ComparisonSummary = {
+  winner: "standard" | "advanced" | "tie" | "both_weak" | null;
+  reasons: string[];
+  standardScore: number | null;
+  advancedScore: number | null;
   confidenceDelta: number | null;
   latencyDeltaMs: number | null;
   citationDelta: number | null;

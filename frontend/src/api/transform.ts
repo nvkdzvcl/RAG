@@ -246,6 +246,16 @@ export function apiToUi(result: ApiQueryResponse): QueryResult {
       standard: modeToUi(result.standard),
       advanced: modeToUi(result.advanced),
       comparison: {
+        winner: result.comparison.winner ?? null,
+        reasons: Array.isArray(result.comparison.reasons) ? result.comparison.reasons : [],
+        standardScore:
+          typeof result.comparison.standard_score === "number" && Number.isFinite(result.comparison.standard_score)
+            ? result.comparison.standard_score
+            : null,
+        advancedScore:
+          typeof result.comparison.advanced_score === "number" && Number.isFinite(result.comparison.advanced_score)
+            ? result.comparison.advanced_score
+            : null,
         confidenceDelta: result.comparison.confidence_delta ?? null,
         latencyDeltaMs: result.comparison.latency_delta_ms ?? null,
         citationDelta: result.comparison.citation_delta ?? null,

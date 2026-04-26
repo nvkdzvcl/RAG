@@ -46,8 +46,12 @@ class CompareWorkflow:
         advanced_grounded = advanced.grounded_score
         grounded_score_delta = advanced_grounded - standard_grounded
 
+        def _normalized_status(value: str | None) -> str:
+            return (value or "").strip().lower()
+
         def _branch_score(
             *,
+            status: str,
             grounded_score: float,
             confidence: float | None,
             citation_count: int,
@@ -55,18 +59,44 @@ class CompareWorkflow:
             language_mismatch: bool,
             llm_fallback_used: bool,
         ) -> float:
-            score = (grounded_score * 0.7) + ((confidence or 0.0) * 0.12) + (min(citation_count, 4) * 0.06)
-            if citation_count == 0:
-                score -= 0.42
+            # Reliability-first scoring. Confidence is intentionally secondary.
+            score = 0.0
+            score += min(citation_count, 4) * 1.8
+            score += max(0.0, min(grounded_score, 1.0)) * 3.2
+
+            if status == "answered":
+                score += 1.4
+            elif status == "partial":
+                score += 0.5
+            elif status == "insufficient_evidence":
+                score -= 1.4
+
             if hallucination:
-                score -= 0.5
+                score -= 3.0
+            else:
+                score += 0.9
+
             if language_mismatch:
-                score -= 0.45
+                score -= 1.2
+            else:
+                score += 0.35
+
             if llm_fallback_used:
-                score -= 0.25
+                score -= 0.9
+            else:
+                score += 0.25
+
+            if citation_count == 0:
+                score -= 0.8
+
+            score += max(0.0, min(confidence or 0.0, 1.0)) * 0.2
             return round(score, 4)
 
+        standard_status = _normalized_status(standard.status)
+        advanced_status = _normalized_status(advanced.status)
+
         standard_score = _branch_score(
+            status=standard_status,
             grounded_score=standard_grounded,
             confidence=standard.confidence,
             citation_count=standard_citation_count,
@@ -75,6 +105,7 @@ class CompareWorkflow:
             llm_fallback_used=standard.llm_fallback_used,
         )
         advanced_score = _branch_score(
+            status=advanced_status,
             grounded_score=advanced_grounded,
             confidence=advanced.confidence,
             citation_count=advanced_citation_count,
@@ -83,49 +114,139 @@ class CompareWorkflow:
             llm_fallback_used=advanced.llm_fallback_used,
         )
 
-        standard_strong = (
-            standard_citation_count > 0
-            and not standard.hallucination_detected
-            and not standard.language_mismatch
-            and not standard.llm_fallback_used
-            and standard_grounded >= 0.16
+        standard_weak = (
+            standard_status == "insufficient_evidence"
+            or standard_citation_count == 0
+            or standard.hallucination_detected
+            or standard.language_mismatch
+            or standard.llm_fallback_used
+            or standard_grounded < 0.08
         )
-        advanced_strong = (
-            advanced_citation_count > 0
-            and not advanced.hallucination_detected
-            and not advanced.language_mismatch
-            and not advanced.llm_fallback_used
-            and advanced_grounded >= 0.16
+        advanced_weak = (
+            advanced_status == "insufficient_evidence"
+            or advanced_citation_count == 0
+            or advanced.hallucination_detected
+            or advanced.language_mismatch
+            or advanced.llm_fallback_used
+            or advanced_grounded < 0.08
         )
 
-        standard_weak = not standard_strong
-        advanced_weak = not advanced_strong
+        winner = "tie"
+        reasons: list[str] = []
 
-        if standard_weak and advanced_weak:
-            preferred_mode = "review"
-        elif standard_citation_count > 0 and advanced_citation_count == 0:
-            preferred_mode = "standard"
-        elif advanced_strong and advanced_score > standard_score + 0.02:
-            preferred_mode = "advanced"
+        if standard_status == "insufficient_evidence" and advanced_status != "insufficient_evidence" and advanced_citation_count > 0:
+            winner = "advanced"
+            if response_language == "vi":
+                reasons.append("Nâng cao có trích dẫn trong khi Chuẩn trả về thiếu bằng chứng.")
+            else:
+                reasons.append("Advanced has citations while Standard returned insufficient evidence.")
+        elif advanced_status == "insufficient_evidence" and standard_status != "insufficient_evidence" and standard_citation_count > 0:
+            winner = "standard"
+            if response_language == "vi":
+                reasons.append("Chuẩn có trích dẫn trong khi Nâng cao trả về thiếu bằng chứng.")
+            else:
+                reasons.append("Standard has citations while Advanced returned insufficient evidence.")
+        elif standard.hallucination_detected and not advanced.hallucination_detected:
+            winner = "advanced"
+            if response_language == "vi":
+                reasons.append("Chuẩn có dấu hiệu suy diễn không được hỗ trợ.")
+            else:
+                reasons.append("Standard shows hallucination risk.")
+        elif advanced.hallucination_detected and not standard.hallucination_detected:
+            winner = "standard"
+            if response_language == "vi":
+                reasons.append("Nâng cao có dấu hiệu suy diễn không được hỗ trợ.")
+            else:
+                reasons.append("Advanced shows hallucination risk.")
+        elif standard_weak and advanced_weak:
+            winner = "both_weak"
+            if response_language == "vi":
+                reasons.append("Cả hai nhánh đều thiếu tín hiệu độ tin cậy mạnh.")
+            else:
+                reasons.append("Both branches lack strong reliability signals.")
         else:
-            preferred_mode = "standard"
+            # Advanced with zero citations cannot win by confidence alone.
+            if (
+                advanced_citation_count == 0
+                and standard_citation_count > 0
+                and advanced_score > standard_score
+            ):
+                winner = "standard"
+                if response_language == "vi":
+                    reasons.append("Nâng cao không có trích dẫn nên không thể thắng chỉ nhờ độ tự tin.")
+                else:
+                    reasons.append("Advanced cannot win on confidence alone when it has zero citations.")
+            else:
+                score_gap = standard_score - advanced_score
+                if abs(score_gap) <= 0.35:
+                    winner = "tie"
+                    if response_language == "vi":
+                        reasons.append("Hai nhánh có điểm độ tin cậy tương đương.")
+                    else:
+                        reasons.append("Both branches have similar reliability scores.")
+                elif score_gap > 0:
+                    winner = "standard"
+                else:
+                    winner = "advanced"
+
+        if winner in {"standard", "advanced"} and not reasons:
+            if winner == "standard":
+                if response_language == "vi":
+                    if standard_citation_count > advanced_citation_count and standard_grounded >= advanced_grounded:
+                        reasons.append("Chuẩn có nhiều trích dẫn và độ bám tài liệu cao hơn.")
+                    elif standard_citation_count > advanced_citation_count:
+                        reasons.append("Chuẩn có nhiều trích dẫn hơn.")
+                    else:
+                        reasons.append("Chuẩn ổn định hơn về groundedness và tín hiệu an toàn.")
+                else:
+                    if standard_citation_count > advanced_citation_count and standard_grounded >= advanced_grounded:
+                        reasons.append("Standard has more citations and higher groundedness.")
+                    elif standard_citation_count > advanced_citation_count:
+                        reasons.append("Standard has more citations.")
+                    else:
+                        reasons.append("Standard is more stable on groundedness and safety signals.")
+            else:
+                if response_language == "vi":
+                    if advanced_citation_count > standard_citation_count and advanced_grounded >= standard_grounded:
+                        reasons.append("Nâng cao có nhiều trích dẫn và độ bám tài liệu cao hơn.")
+                    elif advanced_citation_count > standard_citation_count:
+                        reasons.append("Nâng cao có nhiều trích dẫn hơn.")
+                    else:
+                        reasons.append("Nâng cao ổn định hơn về groundedness và tín hiệu an toàn.")
+                else:
+                    if advanced_citation_count > standard_citation_count and advanced_grounded >= standard_grounded:
+                        reasons.append("Advanced has more citations and higher groundedness.")
+                    elif advanced_citation_count > standard_citation_count:
+                        reasons.append("Advanced has more citations.")
+                    else:
+                        reasons.append("Advanced is more stable on groundedness and safety signals.")
+
+        preferred_mode = winner if winner in {"standard", "advanced"} else "review"
 
         if response_language == "vi":
-            if preferred_mode == "advanced":
-                note = "Nâng cao đáng tin cậy hơn"
-            elif preferred_mode == "standard":
-                note = "Chuẩn đáng tin cậy hơn"
+            if winner == "advanced":
+                note = "Nâng cao đáng tin cậy hơn vì có trích dẫn và độ bám tài liệu cao hơn"
+            elif winner == "standard":
+                note = "Chuẩn đáng tin cậy hơn vì có trích dẫn và độ bám tài liệu cao hơn"
+            elif winner == "both_weak":
+                note = "Cả hai cần kiểm tra lại vì thiếu bằng chứng đủ mạnh"
             else:
-                note = "Cả hai cần kiểm tra lại"
+                note = "Hai chế độ có độ tin cậy tương đương, cần kiểm tra thêm theo ngữ cảnh"
         else:
-            if preferred_mode == "advanced":
-                note = "Advanced is more reliable"
-            elif preferred_mode == "standard":
-                note = "Standard is more reliable"
+            if winner == "advanced":
+                note = "Advanced is more reliable due to stronger citations and groundedness."
+            elif winner == "standard":
+                note = "Standard is more reliable due to stronger citations and groundedness."
+            elif winner == "both_weak":
+                note = "Both branches need review due to weak evidence."
             else:
-                note = "Both need manual review"
+                note = "Both branches are similarly reliable; review context to choose."
 
         return ComparisonSummary(
+            winner=winner,
+            reasons=reasons,
+            standard_score=standard_score,
+            advanced_score=advanced_score,
             confidence_delta=confidence_delta,
             latency_delta_ms=latency_delta_ms,
             citation_delta=citation_delta,

@@ -29,6 +29,10 @@ export type ApiModeResponse = {
 };
 
 export type ApiComparison = {
+  winner?: "standard" | "advanced" | "tie" | "both_weak" | null;
+  reasons?: string[] | null;
+  standard_score?: number | null;
+  advanced_score?: number | null;
   confidence_delta?: number | null;
   latency_delta_ms?: number | null;
   citation_delta?: number | null;

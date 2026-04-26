@@ -53,6 +53,10 @@ class AdvancedQueryResponse(ModeResult):
 class ComparisonSummary(BaseModel):
     """Aggregated metrics for compare mode output."""
 
+    winner: Literal["standard", "advanced", "tie", "both_weak"] | None = None
+    reasons: list[str] = Field(default_factory=list)
+    standard_score: float | None = None
+    advanced_score: float | None = None
     confidence_delta: float | None = None
     latency_delta_ms: int | None = None
     citation_delta: int | None = None
