@@ -18,9 +18,9 @@ export function CitationList({ citations, compact = false }: CitationListProps) 
           key={citation.id}
           className={`rounded-lg border border-slate-200 bg-slate-50 px-3 py-2 ${compact ? "text-xs" : "text-sm"}`}
         >
-          <p className="font-medium text-slate-700">{citation.title || citation.source}</p>
+          <p className="font-medium text-slate-700">{citation.fileName || citation.title || citation.source}</p>
           <p className="mt-0.5 text-slate-500">
-            {citation.source} • {translations.citations.chunk}: {citation.chunkId}
+            {citation.fileName || citation.source} • {translations.citations.chunk}: {citation.chunkId}
             {citation.section ? ` • ${translations.citations.section}: ${citation.section}` : ""}
             {citation.page ? ` • ${translations.citations.page}: ${citation.page}` : ""}
           </p>

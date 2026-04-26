@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import re
 from hashlib import sha1
+from pathlib import Path
 
 from app.ingestion.parsers.utils import split_paragraphs
 from app.schemas.ingestion import DocumentChunk, LoadedDocument
@@ -56,14 +57,24 @@ class Chunker:
     ) -> DocumentChunk:
         chunk_id = self.generate_chunk_id(doc.doc_id, chunk_index, content)
         metadata = dict(doc.metadata)
+        fallback_file_name = Path(doc.source).name
+        file_extension = str(metadata.get("file_extension") or Path(doc.source).suffix.lower())
+        file_type = str(metadata.get("file_type") or file_extension.lstrip("."))
         source_block_type = str(metadata.get("block_type") or doc.block_type)
         metadata.update(
             {
                 "chunk_index": chunk_index,
                 "token_start": token_start,
                 "token_end": token_end,
+                "doc_id": doc.doc_id,
+                "file_name": str(metadata.get("file_name") or metadata.get("filename") or fallback_file_name),
+                "filename": str(metadata.get("filename") or metadata.get("file_name") or fallback_file_name),
+                "file_extension": file_extension,
+                "file_type": file_type,
+                "page": doc.page,
                 # Preserve parser-level block subtype (for example `ocr_text`) when available.
                 "block_type": source_block_type,
+                "ocr": bool(metadata.get("ocr", False)),
                 "language": doc.language,
             }
         )

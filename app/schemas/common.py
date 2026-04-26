@@ -22,4 +22,9 @@ class Citation(BaseModel):
     title: str | None = None
     section: str | None = None
     page: int | None = None
+    file_name: str | None = None
+    file_type: str | None = None
+    uploaded_at: str | None = None
+    created_at: str | None = None
     block_type: str | None = None
+    ocr: bool | None = None

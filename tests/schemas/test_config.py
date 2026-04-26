@@ -1,5 +1,7 @@
 """Configuration and schema smoke tests."""
 
+from datetime import datetime, timezone
+
 from app.core.config import Settings
 from app.schemas.api import QueryRequest
 from app.schemas.common import Mode
@@ -100,6 +102,34 @@ def test_query_request_accepts_optional_model_override() -> None:
     payload = QueryRequest(query="What is Self-RAG?", model="qwen2.5:7b")
     assert payload.mode == Mode.STANDARD
     assert payload.model == "qwen2.5:7b"
+
+
+def test_query_request_filters_default_to_none() -> None:
+    payload = QueryRequest(query="What is Self-RAG?")
+    assert payload.doc_ids is None
+    assert payload.filenames is None
+    assert payload.file_types is None
+    assert payload.uploaded_after is None
+    assert payload.uploaded_before is None
+    assert payload.include_ocr is None
+
+
+def test_query_request_accepts_optional_filters_payload() -> None:
+    payload = QueryRequest(
+        query="What is Self-RAG?",
+        doc_ids=["doc_a", "doc_b"],
+        filenames=["policy.pdf"],
+        file_types=["pdf"],
+        uploaded_after=datetime(2026, 1, 1, tzinfo=timezone.utc),
+        uploaded_before=datetime(2026, 1, 31, tzinfo=timezone.utc),
+        include_ocr=True,
+    )
+    assert payload.doc_ids == ["doc_a", "doc_b"]
+    assert payload.filenames == ["policy.pdf"]
+    assert payload.file_types == ["pdf"]
+    assert payload.uploaded_after is not None
+    assert payload.uploaded_before is not None
+    assert payload.include_ocr is True
 
 
 def test_workflow_state_schema() -> None:

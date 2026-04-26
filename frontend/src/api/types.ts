@@ -7,6 +7,8 @@ export type ApiCitation = {
   title?: string | null;
   section?: string | null;
   page?: number | null;
+  file_name?: string | null;
+  file_type?: string | null;
   block_type?: string | null;
 };
 
@@ -55,6 +57,12 @@ export type ApiQueryRequest = {
   mode: Mode;
   chat_history: Array<Record<string, string>>;
   model?: string | null;
+  doc_ids?: string[] | null;
+  filenames?: string[] | null;
+  file_types?: string[] | null;
+  uploaded_after?: string | null;
+  uploaded_before?: string | null;
+  include_ocr?: boolean | null;
 };
 
 export type ApiDocument = {

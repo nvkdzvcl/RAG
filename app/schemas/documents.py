@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from datetime import datetime, timezone
 from enum import Enum
+from pathlib import Path
 from typing import Literal
 
 from pydantic import BaseModel, Field, model_validator
@@ -25,6 +26,8 @@ class StoredDocumentRecord(BaseModel):
 
     document_id: str
     filename: str
+    original_filename: str | None = None
+    file_type: str | None = None
     stored_path: str
     status: DocumentProcessingStatus
     chunk_count: int | None = None
@@ -38,13 +41,19 @@ class StoredDocumentRecord(BaseModel):
         *,
         document_id: str,
         filename: str,
+        original_filename: str | None = None,
+        file_type: str | None = None,
         stored_path: str,
         status: DocumentProcessingStatus = DocumentProcessingStatus.UPLOADED,
     ) -> "StoredDocumentRecord":
         now = datetime.now(timezone.utc)
+        resolved_original_filename = original_filename or filename
+        resolved_file_type = file_type or Path(filename).suffix.lower().lstrip(".") or None
         return cls(
             document_id=document_id,
             filename=filename,
+            original_filename=resolved_original_filename,
+            file_type=resolved_file_type,
             stored_path=stored_path,
             status=status,
             chunk_count=None,
@@ -76,6 +85,8 @@ class DocumentResponse(BaseModel):
     document_id: str
     id: str
     filename: str
+    original_filename: str | None = None
+    file_type: str | None = None
     status: DocumentProcessingStatus
     stage: DocumentProcessingStatus
     chunk_count: int | None = None
@@ -87,6 +98,7 @@ class DocumentResponse(BaseModel):
     total_chunks: int | None = None
     ocr_chunks: int | None = None
     created_at: datetime
+    uploaded_at: datetime
     message: str | None = None
 
     @classmethod
@@ -97,10 +109,14 @@ class DocumentResponse(BaseModel):
         debug_stats: dict[str, int] | None = None,
     ) -> "DocumentResponse":
         stats = debug_stats or {}
+        resolved_file_type = record.file_type or Path(record.filename).suffix.lower().lstrip(".") or None
+        resolved_original_filename = record.original_filename or record.filename
         return cls(
             document_id=record.document_id,
             id=record.document_id,
             filename=record.filename,
+            original_filename=resolved_original_filename,
+            file_type=resolved_file_type,
             status=record.status,
             stage=record.status,
             chunk_count=record.chunk_count,
@@ -112,6 +128,7 @@ class DocumentResponse(BaseModel):
             total_chunks=stats.get("total_chunks"),
             ocr_chunks=stats.get("ocr_chunks"),
             created_at=record.created_at,
+            uploaded_at=record.created_at,
             message=record.message,
         )
 

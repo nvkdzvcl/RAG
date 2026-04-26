@@ -280,6 +280,33 @@ def test_runtime_uploaded_retrieval_filters_to_active_document_ids(tmp_path: Pat
     assert all(item.doc_id != doc_b for item in results)
 
 
+def test_runtime_uploaded_chunks_include_metadata_fields(tmp_path: Path) -> None:
+    provider = _CountingEmbeddingProvider(dimension=8)
+    manager = RuntimeIndexManager(
+        corpus_dir=tmp_path / "corpus",
+        index_dir=tmp_path / "indexes",
+        embedding_provider=provider,
+    )
+
+    uploaded = tmp_path / "meta-runtime.txt"
+    uploaded.write_text("metadata-runtime-token-441 appears in this uploaded file.", encoding="utf-8")
+
+    chunk_count = manager.activate_from_uploaded_files([uploaded])
+    results = manager.get_retriever().retrieve("metadata-runtime-token-441", top_k=3)
+
+    assert chunk_count > 0
+    assert results
+    first = results[0]
+    assert first.metadata.get("doc_id") == first.doc_id
+    assert first.metadata.get("file_name") == "meta-runtime.txt"
+    assert first.metadata.get("file_type") == "txt"
+    assert first.metadata.get("uploaded_at")
+    assert first.metadata.get("created_at")
+    assert "page" in first.metadata
+    assert "block_type" in first.metadata
+    assert "ocr" in first.metadata
+
+
 def test_clear_uploaded_indexes_preserves_seeded_runtime_state(tmp_path: Path) -> None:
     corpus_dir = tmp_path / "corpus"
     corpus_dir.mkdir(parents=True, exist_ok=True)

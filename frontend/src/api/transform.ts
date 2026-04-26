@@ -1,12 +1,25 @@
 import type { ApiCitation, ApiModeResponse, ApiQueryResponse } from "@/api/types";
 import type { Citation, CompareResult, ModeResult, QueryResult, SourceReference, TraceEntry, TraceStatus } from "@/types/chat";
 
+function filenameFromSourcePath(path: string): string | null {
+  const trimmed = path.trim();
+  if (!trimmed) {
+    return null;
+  }
+  const normalized = trimmed.replace(/\\/g, "/").replace(/\/+$/, "");
+  const candidate = normalized.split("/").filter(Boolean).pop();
+  return candidate && candidate.length > 0 ? candidate : trimmed;
+}
+
 function citationToUi(citation: ApiCitation, index: number): Citation {
+  const derivedFilename = filenameFromSourcePath(citation.source);
   return {
     id: `${citation.chunk_id}-${index}`,
     chunkId: citation.chunk_id,
     docId: citation.doc_id,
     source: citation.source,
+    fileName: citation.file_name ?? derivedFilename ?? null,
+    fileType: citation.file_type ?? null,
     title: citation.title ?? null,
     section: citation.section ?? null,
     page: citation.page ?? null,
@@ -58,6 +71,8 @@ function citationsToSources(citations: Citation[], rerankScores: Map<string, num
         chunkId: citation.chunkId,
         docId: citation.docId,
         source: citation.source,
+        fileName: citation.fileName ?? null,
+        fileType: citation.fileType ?? null,
         title: citation.title,
         section: citation.section,
         page: citation.page,

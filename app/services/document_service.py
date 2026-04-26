@@ -301,7 +301,12 @@ class DocumentService:
             self._persist_records()
             return updated
 
-    def _load_file(self, file_path: Path) -> list[LoadedDocument]:
+    def _load_file(
+        self,
+        file_path: Path,
+        *,
+        record: StoredDocumentRecord | None = None,
+    ) -> list[LoadedDocument]:
         loader = self._resolve_loader(file_path)
         if loader is None:
             raise ValueError(f"Unsupported file type: {file_path.suffix.lower()}")
@@ -319,17 +324,35 @@ class DocumentService:
                 settings.ocr_render_dpi,
                 settings.ocr_confidence_threshold,
             )
+        extension = file_path.suffix.lower()
+        file_type = (record.file_type if record is not None else extension.lstrip(".")) or None
+        file_name = record.filename if record is not None else file_path.name
+        metadata: dict[str, str] = {
+            "source_collection": "uploaded",
+            "relative_path": file_path.name,
+            "filename": file_name,
+            "file_name": file_name,
+            "file_extension": extension,
+            "file_type": file_type or "",
+        }
+        if record is not None:
+            metadata["doc_id"] = record.document_id
+            metadata["uploaded_at"] = record.created_at.isoformat()
+            metadata["created_at"] = record.created_at.isoformat()
+            metadata["status"] = record.status.value
+
         return loader.load(
             file_path,
-            metadata={
-                "source_collection": "uploaded",
-                "relative_path": file_path.name,
-                "file_extension": file_path.suffix.lower(),
-            },
+            metadata=metadata,
         )
 
-    def _chunk_file(self, file_path: Path) -> tuple[list[DocumentChunk], UploadDebugStats]:
-        loaded = self._load_file(file_path)
+    def _chunk_file(
+        self,
+        file_path: Path,
+        *,
+        record: StoredDocumentRecord | None = None,
+    ) -> tuple[list[DocumentChunk], UploadDebugStats]:
+        loaded = self._load_file(file_path, record=record)
         debug_stats = UploadDebugStats(
             total_blocks=len(loaded),
             text_blocks=sum(1 for doc in loaded if doc.block_type == "text"),
@@ -369,7 +392,7 @@ class DocumentService:
         file_path = Path(record.stored_path)
         self._update_status(record.document_id, DocumentProcessingStatus.SPLITTING)
 
-        chunks, debug_stats = self._chunk_file(file_path)
+        chunks, debug_stats = self._chunk_file(file_path, record=record)
         if not chunks:
             raise ValueError(f"No chunks produced from uploaded document: {record.filename}")
         per_document_chunk_count = len(chunks)
@@ -426,6 +449,8 @@ class DocumentService:
         created = StoredDocumentRecord.create(
             document_id=document_id,
             filename=safe_filename,
+            original_filename=safe_filename,
+            file_type=extension.lstrip(".") or None,
             stored_path=str(stored_path),
             status=DocumentProcessingStatus.UPLOADED,
         )

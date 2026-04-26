@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import time
+from typing import Any
 
 from app.core.config import get_settings
 from app.generation.citations import CitationBuilder
@@ -122,6 +123,7 @@ class AdvancedWorkflow:
         chat_history: list[dict[str, str]] | None = None,
         model: str | None = None,
         response_language: str | None = None,
+        query_filters: dict[str, Any] | None = None,
     ) -> AdvancedQueryResponse:
         start = time.perf_counter()
         normalized_query = normalize_query(query)
@@ -214,6 +216,7 @@ class AdvancedWorkflow:
                 model=model,
                 response_language=resolved_language,
                 chat_history=normalized_history,
+                query_filters=query_filters,
             )
 
             state.retrieved_docs = [item.model_dump() for item in pipeline.retrieved]
@@ -242,11 +245,25 @@ class AdvancedWorkflow:
                     "chunk_size": self.standard_workflow.chunk_size,
                     "chunk_overlap": self.standard_workflow.chunk_overlap,
                     "retrieved_count": len(pipeline.retrieved),
+                    "applied_filters": pipeline.retrieval_debug.get("applied_filters", {}),
+                    "candidate_count_before_filter": pipeline.retrieval_debug.get(
+                        "candidate_count_before_filter",
+                        len(pipeline.retrieved),
+                    ),
+                    "candidate_count_after_filter": pipeline.retrieval_debug.get(
+                        "candidate_count_after_filter",
+                        len(pipeline.retrieved),
+                    ),
                     "reranked_count": len(pipeline.reranked),
                     "reranked_docs": [
                         {
                             "chunk_id": item.chunk_id,
                             "doc_id": item.doc_id,
+                            "file_name": item.metadata.get("file_name") or item.metadata.get("filename"),
+                            "file_type": item.metadata.get("file_type"),
+                            "uploaded_at": item.metadata.get("uploaded_at"),
+                            "created_at": item.metadata.get("created_at"),
+                            "page": item.page,
                             "rank": item.rank,
                             "block_type": item.metadata.get("block_type"),
                             "ocr": bool(item.metadata.get("ocr")),
@@ -262,6 +279,11 @@ class AdvancedWorkflow:
                         {
                             "chunk_id": item.chunk_id,
                             "doc_id": item.doc_id,
+                            "file_name": item.metadata.get("file_name") or item.metadata.get("filename"),
+                            "file_type": item.metadata.get("file_type"),
+                            "uploaded_at": item.metadata.get("uploaded_at"),
+                            "created_at": item.metadata.get("created_at"),
+                            "page": item.page,
                             "block_type": item.metadata.get("block_type"),
                             "ocr": bool(item.metadata.get("ocr")),
                             "content": item.content,

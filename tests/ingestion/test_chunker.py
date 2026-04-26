@@ -28,8 +28,13 @@ def test_chunker_preserves_required_metadata() -> None:
     assert first.section == "Intro"
     assert first.page == 3
     assert first.metadata["author"] == "team"
+    assert first.metadata["doc_id"] == "doc_abc"
+    assert first.metadata["file_name"] == "doc.md"
+    assert first.metadata["file_type"] == "md"
     assert first.block_type == "text"
     assert first.language == "vi"
+    assert first.metadata["page"] == 3
+    assert first.metadata["ocr"] is False
     assert first.metadata["block_type"] == "text"
     assert first.metadata["language"] == "vi"
 

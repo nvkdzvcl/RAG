@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from datetime import datetime
 from typing import Annotated, Any, Literal, TypeAlias
 
 from pydantic import BaseModel, Field, TypeAdapter
@@ -16,6 +17,12 @@ class QueryRequest(BaseModel):
     mode: Mode = Mode.STANDARD
     chat_history: list[dict[str, str]] = Field(default_factory=list)
     model: str | None = Field(default=None, min_length=1)
+    doc_ids: list[str] | None = None
+    filenames: list[str] | None = None
+    file_types: list[str] | None = None
+    uploaded_after: datetime | None = None
+    uploaded_before: datetime | None = None
+    include_ocr: bool | None = None
 
 
 class ModeResult(BaseModel):

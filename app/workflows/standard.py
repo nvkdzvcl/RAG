@@ -4,8 +4,9 @@ from __future__ import annotations
 
 import logging
 import time
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
+from typing import Any
 
 from app.core.config import get_settings
 from app.core.json_utils import parse_json_object
@@ -47,6 +48,7 @@ class StandardPipelineResult:
     reranked: list[RetrievalResult]
     selected_context: list[RetrievalResult]
     generated: GeneratedAnswer
+    retrieval_debug: dict[str, Any] = field(default_factory=dict)
 
 
 class StandardWorkflow:
@@ -151,9 +153,20 @@ class StandardWorkflow:
         store.save_vector_index(vector_index)
         store.save_bm25_index(bm25_index)
 
-    def _get_retriever(self) -> HybridRetriever | EmptyRetriever:
+    def _get_retriever(
+        self,
+        *,
+        query_filters: dict[str, Any] | None = None,
+    ) -> HybridRetriever | EmptyRetriever:
         if self.index_manager is not None:
-            return self.index_manager.get_retriever()
+            getter = getattr(self.index_manager, "get_retriever")
+            if query_filters is None:
+                return getter()
+            try:
+                return getter(query_filters=query_filters)
+            except TypeError:
+                # Backward-compatible with tests/fakes exposing legacy get_retriever() signature.
+                return getter()
         if self._fallback_retriever is None:
             return EmptyRetriever()
         return self._fallback_retriever
@@ -196,12 +209,20 @@ class StandardWorkflow:
         model: str | None = None,
         response_language: str = "en",
         chat_history: list[dict[str, str]] | None = None,
+        query_filters: dict[str, Any] | None = None,
     ) -> StandardPipelineResult:
         """Run one retrieval-generation pass and return intermediate artifacts."""
         self._sync_chunk_settings_from_runtime()
         normalized_query = normalize_query(query)
         retrieval_top_k = max(1, self.hybrid_top_k)
-        retrieved = self._get_retriever().retrieve(normalized_query, top_k=retrieval_top_k)
+        retriever = self._get_retriever(query_filters=query_filters)
+        retrieved = retriever.retrieve(normalized_query, top_k=retrieval_top_k)
+        retrieval_debug: dict[str, Any] = {}
+        debug_getter = getattr(retriever, "get_last_filter_debug", None)
+        if callable(debug_getter):
+            debug_payload = debug_getter()
+            if isinstance(debug_payload, dict):
+                retrieval_debug = debug_payload
         reranked = self.reranker.rerank(normalized_query, retrieved, top_k=self.rerank_top_k)
         selected_context = self.context_selector.select(reranked, top_k=self.context_top_k)
         if not selected_context:
@@ -242,6 +263,7 @@ class StandardWorkflow:
             reranked=reranked,
             selected_context=selected_context,
             generated=generated,
+            retrieval_debug=retrieval_debug,
         )
 
     def run(
@@ -250,6 +272,7 @@ class StandardWorkflow:
         chat_history: list[dict[str, str]] | None = None,
         model: str | None = None,
         response_language: str | None = None,
+        query_filters: dict[str, Any] | None = None,
     ) -> StandardQueryResponse:
         start_time = time.perf_counter()
         normalized_history = trim_chat_history(
@@ -264,6 +287,7 @@ class StandardWorkflow:
             model=model,
             response_language=resolved_language,
             chat_history=normalized_history,
+            query_filters=query_filters,
         )
         final_answer = pipeline.generated.answer
         language_mismatch = is_language_mismatch(final_answer, resolved_language)
@@ -312,6 +336,15 @@ class StandardWorkflow:
                 "index_source": self._get_index_source(),
                 "count": len(pipeline.retrieved),
                 "chunk_ids": [item.chunk_id for item in pipeline.retrieved],
+                "applied_filters": pipeline.retrieval_debug.get("applied_filters", {}),
+                "candidate_count_before_filter": pipeline.retrieval_debug.get(
+                    "candidate_count_before_filter",
+                    len(pipeline.retrieved),
+                ),
+                "candidate_count_after_filter": pipeline.retrieval_debug.get(
+                    "candidate_count_after_filter",
+                    len(pipeline.retrieved),
+                ),
             },
             {
                 "step": "rerank",
@@ -324,6 +357,11 @@ class StandardWorkflow:
                     {
                         "chunk_id": item.chunk_id,
                         "doc_id": item.doc_id,
+                        "file_name": item.metadata.get("file_name") or item.metadata.get("filename"),
+                        "file_type": item.metadata.get("file_type"),
+                        "uploaded_at": item.metadata.get("uploaded_at"),
+                        "created_at": item.metadata.get("created_at"),
+                        "page": item.page,
                         "rank": item.rank,
                         "block_type": item.metadata.get("block_type"),
                         "ocr": bool(item.metadata.get("ocr")),
@@ -344,6 +382,11 @@ class StandardWorkflow:
                     {
                         "chunk_id": item.chunk_id,
                         "doc_id": item.doc_id,
+                        "file_name": item.metadata.get("file_name") or item.metadata.get("filename"),
+                        "file_type": item.metadata.get("file_type"),
+                        "uploaded_at": item.metadata.get("uploaded_at"),
+                        "created_at": item.metadata.get("created_at"),
+                        "page": item.page,
                         "block_type": item.metadata.get("block_type"),
                         "ocr": bool(item.metadata.get("ocr")),
                         "content": item.content,

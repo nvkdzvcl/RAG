@@ -5,6 +5,8 @@ from __future__ import annotations
 import hashlib
 import json
 import logging
+from dataclasses import dataclass
+from datetime import datetime, timezone
 from pathlib import Path
 from threading import RLock
 from typing import Any
@@ -19,6 +21,163 @@ from app.schemas.ingestion import DocumentChunk, LoadedDocument
 from app.schemas.retrieval import RetrievalResult
 
 logger = logging.getLogger(__name__)
+
+
+@dataclass(frozen=True)
+class QueryMetadataFilters:
+    """Optional query-time metadata filters for uploaded retrieval results."""
+
+    doc_ids: tuple[str, ...] | None = None
+    filenames: tuple[str, ...] | None = None
+    file_types: tuple[str, ...] | None = None
+    uploaded_after: datetime | None = None
+    uploaded_before: datetime | None = None
+    include_ocr: bool | None = None
+
+    @staticmethod
+    def _normalize_string_list(values: Any) -> tuple[str, ...] | None:
+        if not isinstance(values, list):
+            return None
+        normalized = sorted({str(item).strip() for item in values if str(item).strip()})
+        return tuple(normalized) if normalized else None
+
+    @staticmethod
+    def _coerce_datetime(value: Any) -> datetime | None:
+        if value is None:
+            return None
+        if isinstance(value, datetime):
+            resolved = value
+        elif isinstance(value, str):
+            candidate = value.strip()
+            if not candidate:
+                return None
+            if candidate.endswith("Z"):
+                candidate = candidate[:-1] + "+00:00"
+            try:
+                resolved = datetime.fromisoformat(candidate)
+            except ValueError:
+                return None
+        else:
+            return None
+
+        if resolved.tzinfo is None:
+            return resolved.replace(tzinfo=timezone.utc)
+        return resolved.astimezone(timezone.utc)
+
+    @classmethod
+    def from_payload(cls, payload: dict[str, Any] | None) -> "QueryMetadataFilters":
+        if not payload:
+            return cls()
+
+        raw_doc_ids = cls._normalize_string_list(payload.get("doc_ids"))
+        raw_filenames = cls._normalize_string_list(payload.get("filenames"))
+        raw_file_types = cls._normalize_string_list(payload.get("file_types"))
+
+        normalized_filenames = (
+            tuple(sorted({Path(name).name.lower() for name in raw_filenames}))
+            if raw_filenames
+            else None
+        )
+        normalized_file_types = (
+            tuple(
+                sorted(
+                    {
+                        file_type.strip().lower().lstrip(".")
+                        for file_type in raw_file_types
+                        if file_type.strip()
+                    }
+                )
+            )
+            if raw_file_types
+            else None
+        )
+        if normalized_file_types == tuple():
+            normalized_file_types = None
+
+        include_ocr = payload.get("include_ocr")
+        resolved_include_ocr = include_ocr if isinstance(include_ocr, bool) else None
+
+        return cls(
+            doc_ids=raw_doc_ids,
+            filenames=normalized_filenames,
+            file_types=normalized_file_types,
+            uploaded_after=cls._coerce_datetime(payload.get("uploaded_after")),
+            uploaded_before=cls._coerce_datetime(payload.get("uploaded_before")),
+            include_ocr=resolved_include_ocr,
+        )
+
+    def has_any_filter(self) -> bool:
+        return any(
+            [
+                bool(self.doc_ids),
+                bool(self.filenames),
+                bool(self.file_types),
+                self.uploaded_after is not None,
+                self.uploaded_before is not None,
+                self.include_ocr is not None,
+            ]
+        )
+
+    def requires_uploaded_scope(self) -> bool:
+        # Requirement-8 filters are applied to uploaded document metadata.
+        return self.has_any_filter()
+
+    def as_debug_payload(self) -> dict[str, Any]:
+        payload: dict[str, Any] = {}
+        if self.doc_ids:
+            payload["doc_ids"] = list(self.doc_ids)
+        if self.filenames:
+            payload["filenames"] = list(self.filenames)
+        if self.file_types:
+            payload["file_types"] = list(self.file_types)
+        if self.uploaded_after is not None:
+            payload["uploaded_after"] = self.uploaded_after.isoformat()
+        if self.uploaded_before is not None:
+            payload["uploaded_before"] = self.uploaded_before.isoformat()
+        if self.include_ocr is not None:
+            payload["include_ocr"] = self.include_ocr
+        return payload
+
+    def _matches_uploaded_time(self, metadata: dict[str, Any]) -> bool:
+        if self.uploaded_after is None and self.uploaded_before is None:
+            return True
+        timestamp = self._coerce_datetime(metadata.get("uploaded_at") or metadata.get("created_at"))
+        if timestamp is None:
+            return False
+        if self.uploaded_after is not None and timestamp < self.uploaded_after:
+            return False
+        if self.uploaded_before is not None and timestamp > self.uploaded_before:
+            return False
+        return True
+
+    def matches(self, result: RetrievalResult) -> bool:
+        metadata = dict(result.metadata)
+
+        if self.doc_ids and result.doc_id not in self.doc_ids:
+            return False
+
+        if self.filenames:
+            filename = str(metadata.get("file_name") or metadata.get("filename") or "").strip().lower()
+            filename = Path(filename).name if filename else ""
+            if filename not in self.filenames:
+                return False
+
+        if self.file_types:
+            file_type = str(metadata.get("file_type") or metadata.get("file_extension") or "").strip().lower()
+            if file_type.startswith("."):
+                file_type = file_type[1:]
+            if file_type not in self.file_types:
+                return False
+
+        if self.include_ocr is not None:
+            is_ocr = bool(metadata.get("ocr")) or str(metadata.get("block_type", "")).strip().lower() == "ocr_text"
+            if is_ocr != self.include_ocr:
+                return False
+
+        if not self._matches_uploaded_time(metadata):
+            return False
+
+        return True
 
 
 class EmptyRetriever:
@@ -38,24 +197,60 @@ class _ResultFilteringRetriever:
         retriever: HybridRetriever | EmptyRetriever,
         *,
         allowed_doc_ids: set[str] | None = None,
+        active_source: str = "none",
+        query_filters: QueryMetadataFilters | None = None,
     ) -> None:
         self._retriever = retriever
         self._allowed_doc_ids = set(allowed_doc_ids or set())
+        self._active_source = active_source
+        self._query_filters = query_filters or QueryMetadataFilters()
+        self._last_filter_debug: dict[str, Any] = {
+            "applied_filters": self._query_filters.as_debug_payload(),
+            "candidate_count_before_filter": 0,
+            "candidate_count_after_filter": 0,
+        }
+
+    def get_last_filter_debug(self) -> dict[str, Any]:
+        return dict(self._last_filter_debug)
 
     def retrieve(self, query: str, top_k: int = 5) -> list[RetrievalResult]:
+        applied_filters = self._query_filters.as_debug_payload()
         if top_k <= 0:
+            self._last_filter_debug = {
+                "applied_filters": applied_filters,
+                "candidate_count_before_filter": 0,
+                "candidate_count_after_filter": 0,
+            }
+            return []
+
+        if self._query_filters.requires_uploaded_scope() and self._active_source != "uploaded":
+            # Explicit uploaded-metadata filters must not fall back to unrelated seeded corpus.
+            self._last_filter_debug = {
+                "applied_filters": applied_filters,
+                "candidate_count_before_filter": 0,
+                "candidate_count_after_filter": 0,
+                "filtered_source": self._active_source,
+            }
             return []
 
         candidate_k = top_k
-        if self._allowed_doc_ids:
-            # Ask for a wider candidate set so filtering by active doc IDs still returns enough rows.
-            candidate_k = max(top_k * 4, top_k)
+        if self._allowed_doc_ids or self._query_filters.has_any_filter():
+            # Ask for a wider candidate set so post-filter rows still have enough candidates.
+            candidate_k = max(top_k * 8, top_k)
 
         results = self._retriever.retrieve(query, top_k=candidate_k)
-        if not self._allowed_doc_ids:
-            return results[:top_k]
+        filtered = list(results)
+        if self._allowed_doc_ids:
+            # Keep stale-index safety first: only active uploaded doc IDs are allowed.
+            filtered = [item for item in filtered if item.doc_id in self._allowed_doc_ids]
+        if self._query_filters.has_any_filter():
+            filtered = [item for item in filtered if self._query_filters.matches(item)]
 
-        filtered = [item for item in results if item.doc_id in self._allowed_doc_ids]
+        self._last_filter_debug = {
+            "applied_filters": applied_filters,
+            "candidate_count_before_filter": len(results),
+            "candidate_count_after_filter": len(filtered),
+        }
         return filtered[:top_k]
 
 
@@ -133,6 +328,22 @@ class RuntimeIndexManager:
                 return loader
         return None
 
+    @staticmethod
+    def _display_filename(path: Path, *, source_label: str) -> str:
+        filename = path.name
+        if source_label != "uploaded":
+            return filename
+
+        prefix, sep, remainder = filename.partition("_")
+        if (
+            sep
+            and remainder
+            and len(prefix) == 10
+            and all(char in "0123456789abcdef" for char in prefix.lower())
+        ):
+            return remainder
+        return filename
+
     def _ingest_files(self, paths: list[Path], *, source_label: str) -> list[LoadedDocument]:
         loaded: list[LoadedDocument] = []
         for path in sorted(paths):
@@ -142,11 +353,23 @@ class RuntimeIndexManager:
             if loader is None:
                 continue
 
+            extension = path.suffix.lower()
+            stat = path.stat()
+            created_at = datetime.fromtimestamp(stat.st_mtime, tz=timezone.utc).isoformat()
+            doc_id = build_doc_id(path)
+            display_filename = self._display_filename(path, source_label=source_label)
             metadata = {
                 "source_collection": source_label,
                 "relative_path": path.name,
-                "file_extension": path.suffix.lower(),
+                "filename": display_filename,
+                "file_name": display_filename,
+                "file_extension": extension,
+                "file_type": extension.lstrip("."),
+                "doc_id": doc_id,
+                "created_at": created_at,
             }
+            if source_label == "uploaded":
+                metadata["uploaded_at"] = created_at
             loaded.extend(loader.load(path, metadata=metadata))
         return loaded
 
@@ -488,15 +711,22 @@ class RuntimeIndexManager:
             )
         return self.activate_from_seeded_corpus()
 
-    def get_retriever(self) -> HybridRetriever | EmptyRetriever | _ResultFilteringRetriever:
+    def get_retriever(
+        self,
+        *,
+        query_filters: dict[str, Any] | None = None,
+    ) -> HybridRetriever | EmptyRetriever | _ResultFilteringRetriever:
         with self._lock:
             retriever = self._retriever
             active_source = self._active_source
             uploaded_doc_ids = set(self._active_uploaded_doc_ids)
-        if active_source == "uploaded":
+        normalized_filters = QueryMetadataFilters.from_payload(query_filters)
+        if active_source == "uploaded" or normalized_filters.has_any_filter():
             return _ResultFilteringRetriever(
                 retriever,
-                allowed_doc_ids=uploaded_doc_ids,
+                allowed_doc_ids=uploaded_doc_ids if active_source == "uploaded" else set(),
+                active_source=active_source,
+                query_filters=normalized_filters,
             )
         return retriever
 

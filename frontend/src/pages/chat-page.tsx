@@ -8,6 +8,7 @@ import { ChatComposer } from "@/components/dashboard/chat-composer";
 import { ChatPanel } from "@/components/dashboard/chat-panel";
 import { DocumentUploadCard } from "@/components/dashboard/document-upload-card";
 import { ModeSelector } from "@/components/dashboard/mode-selector";
+import { QueryFilters } from "@/components/dashboard/query-filters";
 import { Sidebar, type RecentChat } from "@/components/dashboard/sidebar";
 import { SourcesPanel } from "@/components/dashboard/sources-panel";
 import { WorkflowTrace } from "@/components/dashboard/workflow-trace";
@@ -94,6 +95,8 @@ export function ChatPage() {
   const [isDeletingAllDocuments, setIsDeletingAllDocuments] = useState(false);
   const [isDeletingSingleDocument, setIsDeletingSingleDocument] = useState(false);
   const [showSettingsModal, setShowSettingsModal] = useState(false);
+  const [selectedFilterDocIds, setSelectedFilterDocIds] = useState<string[]>([]);
+  const [includeOcrOnly, setIncludeOcrOnly] = useState(false);
   const documentsSectionRef = useRef<HTMLDivElement | null>(null);
 
   const {
@@ -198,6 +201,21 @@ export function ChatPage() {
   }, [sessions]);
 
   const canSubmit = query.trim().length > 0 && !isLoading && canQuery;
+  const readyDocuments = useMemo(
+    () => documents.filter((item) => item.status === "ready"),
+    [documents],
+  );
+
+  useEffect(() => {
+    if (selectedFilterDocIds.length === 0) {
+      return;
+    }
+    const readyIds = new Set(readyDocuments.map((item) => item.id));
+    const next = selectedFilterDocIds.filter((item) => readyIds.has(item));
+    if (next.length !== selectedFilterDocIds.length) {
+      setSelectedFilterDocIds(next);
+    }
+  }, [readyDocuments, selectedFilterDocIds]);
 
   const updateSessionById = (sessionId: string, updater: (previous: ChatSession) => ChatSession) => {
     setSessions((previous) =>
@@ -286,11 +304,17 @@ export function ChatPage() {
     setQuery("");
 
     try {
+      const selectedDocuments = selectedFilterDocIds.length > 0
+        ? readyDocuments.filter((item) => selectedFilterDocIds.includes(item.id))
+        : [];
       const payload = await postQuery({
         query: normalized,
         mode: requestMode,
         chat_history: requestChatHistoryPayload,
         model: requestModel,
+        doc_ids: selectedFilterDocIds.length > 0 ? selectedFilterDocIds : undefined,
+        filenames: selectedDocuments.length > 0 ? selectedDocuments.map((item) => item.filename) : undefined,
+        include_ocr: includeOcrOnly ? true : undefined,
       });
 
       const mapped = apiToUi(payload);
@@ -498,6 +522,14 @@ export function ChatPage() {
         />
       </div>
       <ChatPanel messages={messages} result={result} isLoading={isLoading} error={error} notice={notice} />
+      <QueryFilters
+        documents={documents}
+        selectedDocIds={selectedFilterDocIds}
+        onSelectedDocIdsChange={setSelectedFilterDocIds}
+        includeOcrOnly={includeOcrOnly}
+        onIncludeOcrOnlyChange={setIncludeOcrOnly}
+        disabled={isLoading}
+      />
       <ChatComposer
         query={query}
         onQueryChange={setQuery}

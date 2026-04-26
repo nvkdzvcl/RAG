@@ -6,6 +6,8 @@ export type Citation = {
   chunkId: string;
   docId: string;
   source: string;
+  fileName?: string | null;
+  fileType?: string | null;
   title?: string | null;
   section?: string | null;
   page?: number | null;
@@ -17,6 +19,8 @@ export type SourceReference = {
   chunkId: string;
   docId: string;
   source: string;
+  fileName?: string | null;
+  fileType?: string | null;
   title?: string | null;
   section?: string | null;
   page?: number | null;

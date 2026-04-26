@@ -1,6 +1,7 @@
 """Workflow router that dispatches based on selected mode."""
 
 import logging
+from typing import Any
 
 from app.core.config import get_settings
 from app.schemas.api import QueryResponse
@@ -61,6 +62,7 @@ class WorkflowRunner:
         chat_history: list[dict[str, str]] | None = None,
         model: str | None = None,
         response_language: str | None = None,
+        query_filters: dict[str, Any] | None = None,
     ) -> QueryResponse:
         if mode == Mode.STANDARD:
             return self._standard.run(
@@ -68,6 +70,7 @@ class WorkflowRunner:
                 chat_history=chat_history,
                 model=model,
                 response_language=response_language,
+                query_filters=query_filters,
             )
         if mode == Mode.ADVANCED:
             return self._advanced.run(
@@ -75,6 +78,7 @@ class WorkflowRunner:
                 chat_history=chat_history,
                 model=model,
                 response_language=response_language,
+                query_filters=query_filters,
             )
         if mode == Mode.COMPARE:
             return self._compare.run(
@@ -82,6 +86,7 @@ class WorkflowRunner:
                 chat_history=chat_history,
                 model=model,
                 response_language=response_language,
+                query_filters=query_filters,
             )
         raise NotImplementedError(f"Unsupported mode: {mode}")
 
