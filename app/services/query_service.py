@@ -37,20 +37,25 @@ class QueryService:
 
     def run_request(self, payload: QueryRequest) -> QueryResponse:
         """Execute query from typed API request payload."""
-        query_filters: dict[str, Any] = {
-            "doc_ids": payload.doc_ids,
-            "filenames": payload.filenames,
-            "file_types": payload.file_types,
-            "uploaded_after": payload.uploaded_after,
-            "uploaded_before": payload.uploaded_before,
-            "include_ocr": payload.include_ocr,
-        }
+        query_filters: dict[str, Any] = {}
+        if payload.doc_ids:
+            query_filters["doc_ids"] = payload.doc_ids
+        if payload.filenames:
+            query_filters["filenames"] = payload.filenames
+        if payload.file_types:
+            query_filters["file_types"] = payload.file_types
+        if payload.uploaded_after is not None:
+            query_filters["uploaded_after"] = payload.uploaded_after
+        if payload.uploaded_before is not None:
+            query_filters["uploaded_before"] = payload.uploaded_before
+        if payload.include_ocr is not None:
+            query_filters["include_ocr"] = payload.include_ocr
         return self.runner.run(
             query=payload.query,
             mode=payload.mode,
             chat_history=payload.chat_history,
             model=payload.model,
-            query_filters=query_filters,
+            query_filters=query_filters or None,
         )
 
     def update_retrieval_settings(self, payload: RetrievalSettingsRequest) -> RetrievalSettingsResponse:

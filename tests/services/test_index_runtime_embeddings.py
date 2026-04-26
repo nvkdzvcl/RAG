@@ -9,6 +9,7 @@ from types import SimpleNamespace
 from app.core.config import get_settings
 from app.ingestion.base_loader import build_doc_id
 from app.indexing import BaseEmbeddingProvider
+from app.schemas.ingestion import DocumentChunk
 from app.services.index_runtime import RuntimeIndexManager
 
 
@@ -423,3 +424,110 @@ def test_uploaded_manifest_mismatch_triggers_rebuild_from_ready_documents(tmp_pa
     assert provider_second.document_inputs
     manifest_after = json.loads(manifest_path.read_text(encoding="utf-8"))
     assert manifest_after["fingerprint"] != "tampered-fingerprint"
+
+
+def test_get_retriever_accepts_query_filters_and_exposes_filter_debug(tmp_path: Path) -> None:
+    manager = RuntimeIndexManager(
+        corpus_dir=tmp_path / "corpus",
+        index_dir=tmp_path / "indexes",
+        embedding_provider=_CountingEmbeddingProvider(dimension=8),
+    )
+
+    retriever = manager.get_retriever(query_filters={"doc_ids": ["uploaded-doc-1"]})
+    results = retriever.retrieve("token", top_k=3)
+    debug = retriever.get_last_filter_debug()
+
+    assert results == []
+    assert debug["applied_filters"] == {"doc_ids": ["uploaded-doc-1"]}
+    assert debug["candidate_count_before_filter"] == 0
+    assert debug["candidate_count_after_filter"] == 0
+
+
+def test_runtime_query_filter_include_ocr_false_excludes_ocr_chunks(tmp_path: Path) -> None:
+    manager = RuntimeIndexManager(
+        corpus_dir=tmp_path / "corpus",
+        index_dir=tmp_path / "indexes",
+        embedding_provider=_CountingEmbeddingProvider(dimension=8),
+    )
+
+    shared_token = "ocr-filter-shared-token-930"
+    chunks = [
+        DocumentChunk(
+            chunk_id="chunk-ocr-1",
+            doc_id="doc-ocr-1",
+            source="uploaded://scan-ocr.pdf",
+            content=f"{shared_token} extracted from scanned page",
+            metadata={
+                "file_name": "scan-ocr.pdf",
+                "file_type": "pdf",
+                "ocr": True,
+                "block_type": "ocr_text",
+            },
+        ),
+        DocumentChunk(
+            chunk_id="chunk-text-1",
+            doc_id="doc-text-1",
+            source="uploaded://notes.txt",
+            content=f"{shared_token} extracted from normal text block",
+            metadata={
+                "file_name": "notes.txt",
+                "file_type": "txt",
+                "ocr": False,
+                "block_type": "text",
+            },
+        ),
+    ]
+    manager._activate_chunks(  # noqa: SLF001 - intentional integration-style assertion of retrieval behavior
+        chunks,
+        source="uploaded",
+        active_uploaded_doc_ids={"doc-ocr-1", "doc-text-1"},
+    )
+
+    all_results = manager.get_retriever().retrieve(shared_token, top_k=5)
+    filtered_retriever = manager.get_retriever(query_filters={"include_ocr": False})
+    filtered_results = filtered_retriever.retrieve(shared_token, top_k=5)
+    debug = filtered_retriever.get_last_filter_debug()
+
+    assert all_results
+    assert any(bool(item.metadata.get("ocr")) for item in all_results)
+    assert filtered_results
+    assert all(not bool(item.metadata.get("ocr")) for item in filtered_results)
+    assert debug["applied_filters"] == {"include_ocr": False}
+    assert debug["candidate_count_before_filter"] >= debug["candidate_count_after_filter"]
+
+
+def test_filename_filter_uses_result_source_when_filename_metadata_missing(tmp_path: Path) -> None:
+    manager = RuntimeIndexManager(
+        corpus_dir=tmp_path / "corpus",
+        index_dir=tmp_path / "indexes",
+        embedding_provider=_CountingEmbeddingProvider(dimension=8),
+    )
+
+    marker = "source-fallback-filename-token-122"
+    chunks = [
+        DocumentChunk(
+            chunk_id="chunk-a",
+            doc_id="doc-a",
+            source="uploaded://filter-a.txt",
+            content=f"{marker} belongs to file A",
+            metadata={"ocr": False},
+        ),
+        DocumentChunk(
+            chunk_id="chunk-b",
+            doc_id="doc-b",
+            source="uploaded://filter-b.txt",
+            content=f"{marker} belongs to file B",
+            metadata={"ocr": False},
+        ),
+    ]
+    manager._activate_chunks(  # noqa: SLF001 - intentional integration-style assertion of retrieval behavior
+        chunks,
+        source="uploaded",
+        active_uploaded_doc_ids={"doc-a", "doc-b"},
+    )
+
+    retriever = manager.get_retriever(query_filters={"filenames": ["filter-b.txt"]})
+    results = retriever.retrieve(marker, top_k=5)
+
+    assert results
+    assert all(item.doc_id == "doc-b" for item in results)

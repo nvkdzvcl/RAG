@@ -150,22 +150,50 @@ class QueryMetadataFilters:
             return False
         return True
 
+    @staticmethod
+    def _normalize_source_filename(source: str | None) -> str:
+        if not source:
+            return ""
+        candidate = str(source).strip()
+        if not candidate:
+            return ""
+        if "://" in candidate:
+            candidate = candidate.split("://", maxsplit=1)[1]
+        return Path(candidate).name.strip().lower()
+
+    @staticmethod
+    def _resolve_filename(metadata: dict[str, Any], source: str | None) -> str:
+        filename = str(metadata.get("file_name") or metadata.get("filename") or "").strip().lower()
+        if filename:
+            return Path(filename).name
+        return QueryMetadataFilters._normalize_source_filename(source)
+
+    @staticmethod
+    def _resolve_file_type(metadata: dict[str, Any], source: str | None) -> str:
+        file_type = str(metadata.get("file_type") or metadata.get("file_extension") or "").strip().lower()
+        if file_type.startswith("."):
+            file_type = file_type[1:]
+        if file_type:
+            return file_type
+        filename = QueryMetadataFilters._resolve_filename(metadata, source)
+        if not filename:
+            return ""
+        return Path(filename).suffix.lower().lstrip(".")
+
     def matches(self, result: RetrievalResult) -> bool:
         metadata = dict(result.metadata)
+        source = str(result.source or "").strip()
 
         if self.doc_ids and result.doc_id not in self.doc_ids:
             return False
 
         if self.filenames:
-            filename = str(metadata.get("file_name") or metadata.get("filename") or "").strip().lower()
-            filename = Path(filename).name if filename else ""
+            filename = self._resolve_filename(metadata, source)
             if filename not in self.filenames:
                 return False
 
         if self.file_types:
-            file_type = str(metadata.get("file_type") or metadata.get("file_extension") or "").strip().lower()
-            if file_type.startswith("."):
-                file_type = file_type[1:]
+            file_type = self._resolve_file_type(metadata, source)
             if file_type not in self.file_types:
                 return False
 
