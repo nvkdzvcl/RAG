@@ -16,14 +16,21 @@ function citationToUi(citation: ApiCitation, index: number): Citation {
   return {
     id: `${citation.chunk_id}-${index}`,
     chunkId: citation.chunk_id,
+    sourceId: citation.source_id ?? citation.chunk_id,
     docId: citation.doc_id,
     source: citation.source,
-    fileName: citation.file_name ?? derivedFilename ?? null,
+    fileName: citation.file_name ?? citation.filename ?? derivedFilename ?? null,
     fileType: citation.file_type ?? null,
     title: citation.title ?? null,
     section: citation.section ?? null,
     page: citation.page ?? null,
     blockType: citation.block_type ?? null,
+    ocr: citation.ocr ?? null,
+    text: citation.text ?? null,
+    content: citation.content ?? citation.text ?? null,
+    snippet: citation.snippet ?? null,
+    score: citation.score ?? null,
+    rerankScore: citation.rerank_score ?? null,
   };
 }
 
@@ -77,7 +84,12 @@ function citationsToSources(citations: Citation[], rerankScores: Map<string, num
         section: citation.section,
         page: citation.page,
         blockType: citation.blockType,
-        rerankScore: rerankScores.get(citation.chunkId) ?? null,
+        ocr: citation.ocr ?? null,
+        text: citation.text ?? null,
+        content: citation.content ?? citation.text ?? null,
+        snippet: citation.snippet ?? null,
+        score: citation.score ?? null,
+        rerankScore: citation.rerankScore ?? rerankScores.get(citation.chunkId) ?? null,
       });
     }
   }

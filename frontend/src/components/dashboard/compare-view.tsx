@@ -103,7 +103,7 @@ function ModeColumn({ title, result }: { title: string; result: ModeResult }) {
 
         <div className="space-y-2">
           <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">{translations.citations.title}</p>
-          <CitationList citations={result.citations} compact />
+          <CitationList citations={result.citations} compact highlightText={result.answer} />
         </div>
       </CardContent>
     </Card>

@@ -2,14 +2,22 @@ import type { Mode } from "@/types/chat";
 
 export type ApiCitation = {
   chunk_id: string;
+  source_id?: string | null;
   doc_id: string;
   source: string;
   title?: string | null;
   section?: string | null;
   page?: number | null;
+  filename?: string | null;
   file_name?: string | null;
   file_type?: string | null;
   block_type?: string | null;
+  ocr?: boolean | null;
+  text?: string | null;
+  content?: string | null;
+  snippet?: string | null;
+  score?: number | null;
+  rerank_score?: number | null;
 };
 
 export type ApiModeResponse = {

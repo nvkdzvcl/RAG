@@ -4,6 +4,7 @@ export type SingleMode = Exclude<Mode, "compare">;
 export type Citation = {
   id: string;
   chunkId: string;
+  sourceId?: string | null;
   docId: string;
   source: string;
   fileName?: string | null;
@@ -12,6 +13,12 @@ export type Citation = {
   section?: string | null;
   page?: number | null;
   blockType?: string | null;
+  ocr?: boolean | null;
+  text?: string | null;
+  content?: string | null;
+  snippet?: string | null;
+  score?: number | null;
+  rerankScore?: number | null;
 };
 
 export type SourceReference = {
@@ -25,6 +32,11 @@ export type SourceReference = {
   section?: string | null;
   page?: number | null;
   blockType?: string | null;
+  ocr?: boolean | null;
+  text?: string | null;
+  content?: string | null;
+  snippet?: string | null;
+  score?: number | null;
   rerankScore?: number | null;
 };
 

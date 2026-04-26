@@ -42,6 +42,19 @@ def test_citation_formatting() -> None:
     assert "source=docs/a.md" in lines[0]
 
 
+def test_citation_builder_includes_context_preview_and_scores() -> None:
+    builder = CitationBuilder()
+    citations = builder.build(_sample_context())
+
+    first = citations[0]
+    assert first.source_id == first.chunk_id
+    assert first.text == "Self-RAG uses retrieval and critique to improve grounding."
+    assert first.content == first.text
+    assert first.snippet == first.text
+    assert first.score == 0.8
+    assert first.rerank_score is None
+
+
 def test_structured_output_parsing() -> None:
     parser = StructuredOutputParser()
     raw = (

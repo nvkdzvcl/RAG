@@ -9,6 +9,13 @@ from app.schemas.retrieval import RetrievalResult
 class CitationBuilder:
     """Build citation objects from selected retrieval context."""
 
+    @staticmethod
+    def _snippet(content: str, max_chars: int = 360) -> str:
+        normalized = " ".join(content.split())
+        if len(normalized) <= max_chars:
+            return normalized
+        return normalized[: max_chars - 3].rstrip() + "..."
+
     def build(self, docs: list[RetrievalResult], max_citations: int = 5) -> list[Citation]:
         if max_citations <= 0:
             return []
@@ -19,22 +26,32 @@ class CitationBuilder:
         for doc in docs:
             if doc.chunk_id in seen_chunk_ids:
                 continue
+            filename = (
+                str(doc.metadata.get("file_name") or doc.metadata.get("filename"))
+                if (doc.metadata.get("file_name") or doc.metadata.get("filename"))
+                else None
+            )
             citations.append(
                 Citation(
                     chunk_id=doc.chunk_id,
+                    source_id=doc.chunk_id,
                     doc_id=doc.doc_id,
                     source=doc.source,
                     title=doc.title,
                     section=doc.section,
                     page=doc.page,
-                    file_name=str(doc.metadata.get("file_name") or doc.metadata.get("filename"))
-                    if (doc.metadata.get("file_name") or doc.metadata.get("filename"))
-                    else None,
+                    filename=filename,
+                    file_name=filename,
                     file_type=str(doc.metadata.get("file_type")) if doc.metadata.get("file_type") else None,
                     uploaded_at=str(doc.metadata.get("uploaded_at")) if doc.metadata.get("uploaded_at") else None,
                     created_at=str(doc.metadata.get("created_at")) if doc.metadata.get("created_at") else None,
                     block_type=str(doc.metadata.get("block_type")) if doc.metadata.get("block_type") else None,
                     ocr=bool(doc.metadata.get("ocr")) if "ocr" in doc.metadata else None,
+                    text=doc.content,
+                    content=doc.content,
+                    snippet=self._snippet(doc.content),
+                    score=doc.score,
+                    rerank_score=doc.rerank_score,
                 )
             )
             seen_chunk_ids.add(doc.chunk_id)

@@ -73,7 +73,7 @@ export function AnswerCard({ title = "Câu trả lời", result }: AnswerCardPro
 
         <div className="space-y-2">
           <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">{translations.citations.title}</p>
-          <CitationList citations={result.citations} />
+          <CitationList citations={result.citations} highlightText={result.answer} />
         </div>
       </CardContent>
     </Card>

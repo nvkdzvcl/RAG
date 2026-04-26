@@ -336,6 +336,13 @@ def test_query_trace_and_citations_include_uploaded_file_metadata(
     assert any(citation.get("file_name") == "meta-source.txt" for citation in citations)
     assert any(citation.get("file_type") == "txt" for citation in citations)
     assert any(citation.get("doc_id") == uploaded_document_id for citation in citations)
+    first_citation = citations[0]
+    assert first_citation.get("source_id") == first_citation.get("chunk_id")
+    assert first_citation.get("filename") == "meta-source.txt"
+    assert "metadata-source-551" in first_citation.get("content", "")
+    assert "metadata-source-551" in first_citation.get("text", "")
+    assert "metadata-source-551" in first_citation.get("snippet", "")
+    assert isinstance(first_citation.get("score"), int | float)
 
 
 def test_query_filter_doc_id_a_returns_only_document_a(
