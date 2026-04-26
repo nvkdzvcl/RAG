@@ -5,8 +5,10 @@ from __future__ import annotations
 import time
 
 from app.core.config import get_settings
+from app.generation.citations import CitationBuilder
 from app.schemas.api import AdvancedQueryResponse
 from app.schemas.common import Mode
+from app.schemas.retrieval import RetrievalResult
 from app.schemas.workflow import WorkflowState
 from app.workflows.critique import HeuristicCritic
 from app.workflows.query_rewrite import QueryRewriter
@@ -26,6 +28,9 @@ from app.workflows.standard import StandardWorkflow
 
 class AdvancedWorkflow:
     """Practical Self-RAG workflow reusing standard retrieval/generation pipeline."""
+
+    STRONG_GROUNDED_THRESHOLD = 0.12
+    VERY_LOW_GROUNDED_THRESHOLD = 0.02
 
     def __init__(
         self,
@@ -60,6 +65,40 @@ class AdvancedWorkflow:
         self.refiner = refiner or AnswerRefiner(
             llm_client=llm_client,
             prompt_repository=self.standard_workflow.generator.prompt_repository,
+        )
+        self.citation_builder = CitationBuilder()
+
+    @staticmethod
+    def _critique_category(note: str | None) -> str | None:
+        if not note:
+            return None
+        lowered = note.strip().lower()
+        for category in ("no_evidence", "weak_evidence", "incomplete_answer", "hallucination", "grounded"):
+            if lowered.startswith(f"{category}:"):
+                return category
+        return None
+
+    @staticmethod
+    def _cautious_answer_from_context(
+        context: list[RetrievalResult],
+        *,
+        response_language: str,
+    ) -> str:
+        if not context:
+            return localized_insufficient_evidence(response_language)
+
+        lead = context[0].content.strip().replace("\n", " ")
+        if not lead:
+            return localized_insufficient_evidence(response_language)
+        snippet = lead[:220].strip()
+        if response_language == "vi":
+            return (
+                f"Theo ngữ cảnh hiện có, thông tin liên quan là: {snippet}\n\n"
+                "Lưu ý: Bằng chứng còn hạn chế, cần đối chiếu thêm trong tài liệu."
+            )
+        return (
+            f"Based on the available context, relevant information is: {snippet}\n\n"
+            "Note: evidence is limited and may need additional verification."
         )
 
     def _direct_answer_without_retrieval(
@@ -260,36 +299,81 @@ class AdvancedWorkflow:
                 trace=trace,
             )
 
-        final_answer = pipeline.generated.answer
-        final_citations = pipeline.generated.citations
+        final_answer = pipeline.generated.answer.strip()
+        final_citations = list(pipeline.generated.citations)
         final_status = pipeline.generated.status
         stop_reason = "critique_pass"
 
+        context_texts = [item.content for item in pipeline.selected_context if item.content.strip()]
+        has_context = bool(context_texts)
+        critique_category = self._critique_category(critique_result.note)
+        has_relevant_context = has_context and critique_category != "no_evidence"
+        context_citations = self.citation_builder.build(pipeline.selected_context)
+        if has_context and not final_citations:
+            final_citations = context_citations
+
+        insufficient_answer = localized_insufficient_evidence(resolved_language)
         force_abstain = "force abstain" in normalized_query.lower()
-        if force_abstain or (
-            not critique_result.enough_evidence
-            and not critique_result.should_retry_retrieval
-            and not critique_result.should_refine_answer
-        ):
-            final_answer = localized_insufficient_evidence(resolved_language)
+        if force_abstain:
+            final_answer = insufficient_answer
             final_citations = []
             final_status = "insufficient_evidence"
             stop_reason = "critic_abstain"
+        elif not has_relevant_context:
+            final_answer = insufficient_answer
+            final_citations = []
+            final_status = "insufficient_evidence"
+            stop_reason = "no_relevant_context"
         elif critique_result.should_retry_retrieval and state.loop_count >= self.max_loops:
             stop_reason = "max_loop_reached"
-        elif critique_result.should_refine_answer:
+
+        needs_refine_with_context = (
+            critique_result.should_refine_answer
+            or final_status == "insufficient_evidence"
+            or critique_category in {"weak_evidence", "incomplete_answer", "hallucination"}
+        )
+        if needs_refine_with_context and has_relevant_context and final_status != "insufficient_evidence":
             final_answer = self.refiner.refine(
                 query=normalized_query,
-                draft_answer=pipeline.generated.answer,
+                draft_answer=final_answer,
                 critique=critique_result,
                 context=pipeline.selected_context,
                 chat_history=normalized_history,
                 model=model,
                 response_language=resolved_language,
             )
-            stop_reason = "refined_after_critique"
+            if stop_reason != "max_loop_reached":
+                stop_reason = "refined_with_context"
 
-        if critique_result.has_conflict and stop_reason == "critique_pass":
+        if (
+            final_status == "insufficient_evidence"
+            and has_relevant_context
+            and final_citations
+        ):
+            refined_from_insufficient = self.refiner.refine_strict_grounded(
+                query=normalized_query,
+                draft_answer=final_answer or insufficient_answer,
+                context=pipeline.selected_context,
+                chat_history=normalized_history,
+                model=model,
+                response_language=resolved_language,
+            ).strip()
+            refined_is_insufficient = refined_from_insufficient == insufficient_answer
+            if refined_from_insufficient and not refined_is_insufficient:
+                final_answer = refined_from_insufficient
+                final_status = "answered"
+                if stop_reason != "max_loop_reached":
+                    stop_reason = "recovered_from_context"
+            else:
+                final_answer = self._cautious_answer_from_context(
+                    pipeline.selected_context,
+                    response_language=resolved_language,
+                )
+                final_status = "partial"
+                if stop_reason != "max_loop_reached":
+                    stop_reason = "weak_evidence_cautious"
+
+        if critique_result.has_conflict and final_status != "insufficient_evidence":
             if resolved_language == "vi":
                 final_answer = final_answer + "\n\nPhát hiện khả năng xung đột giữa các nguồn."
             else:
@@ -310,8 +394,18 @@ class AdvancedWorkflow:
                 if not language_mismatch and stop_reason == "critique_pass":
                     stop_reason = "language_refined"
 
-        context_texts = [item.content for item in pipeline.selected_context if item.content.strip()]
         grounded_score = grounded_overlap_score(final_answer, context_texts)
+        if has_relevant_context and final_status != "insufficient_evidence":
+            if grounded_score >= self.STRONG_GROUNDED_THRESHOLD:
+                final_status = "answered"
+            elif grounded_score >= self.VERY_LOW_GROUNDED_THRESHOLD:
+                final_status = "partial"
+            else:
+                final_status = "insufficient_evidence"
+                final_answer = insufficient_answer
+                final_citations = []
+                stop_reason = "very_low_grounding"
+
         hallucination_detected = detect_hallucination(
             final_answer,
             context_texts,
@@ -321,7 +415,6 @@ class AdvancedWorkflow:
         llm_fallback_used = bool(pipeline.generated.llm_fallback_used)
 
         prior_stop_reason = stop_reason
-        insufficient_answer = localized_insufficient_evidence(resolved_language)
 
         if hallucination_detected and final_status != "insufficient_evidence":
             refined_grounded_answer = self.refiner.refine_strict_grounded(
@@ -346,25 +439,61 @@ class AdvancedWorkflow:
                     "triggered": True,
                     "refined_grounded_score": refined_score,
                     "refined_hallucination_detected": refined_hallucination,
+                    "critique_category": critique_category,
                 }
             )
 
             if refined_answer_text and not refined_is_insufficient and not refined_hallucination:
                 final_answer = refined_answer_text
                 grounded_score = refined_score
+                if refined_score >= self.STRONG_GROUNDED_THRESHOLD:
+                    final_status = "answered"
+                elif refined_score >= self.VERY_LOW_GROUNDED_THRESHOLD:
+                    final_status = "partial"
+                else:
+                    final_status = "insufficient_evidence"
+                    final_answer = insufficient_answer
+                    final_citations = []
+                    grounded_score = 0.0
                 hallucination_detected = False
                 if prior_stop_reason != "max_loop_reached":
                     stop_reason = "hallucination_refined"
             else:
-                final_answer = insufficient_answer
-                final_citations = []
-                final_status = "insufficient_evidence"
-                grounded_score = 0.0
-                hallucination_detected = False
-                citation_count = 0
-                if prior_stop_reason != "max_loop_reached":
-                    stop_reason = "hallucination_fallback_insufficient"
+                if has_relevant_context and final_citations and grounded_score >= self.VERY_LOW_GROUNDED_THRESHOLD:
+                    final_answer = self._cautious_answer_from_context(
+                        pipeline.selected_context,
+                        response_language=resolved_language,
+                    )
+                    final_status = "partial"
+                    grounded_score = grounded_overlap_score(final_answer, context_texts)
+                    hallucination_detected = False
+                    if prior_stop_reason != "max_loop_reached":
+                        stop_reason = "weak_evidence_cautious"
+                else:
+                    final_answer = insufficient_answer
+                    final_citations = []
+                    final_status = "insufficient_evidence"
+                    grounded_score = 0.0
+                    hallucination_detected = False
+                    citation_count = 0
+                    if prior_stop_reason != "max_loop_reached":
+                        stop_reason = "hallucination_fallback_insufficient"
             language_mismatch = is_language_mismatch(final_answer, resolved_language)
+
+        if has_relevant_context and final_status != "insufficient_evidence" and not final_citations:
+            final_citations = context_citations
+            citation_count = len(final_citations)
+
+        trace.append(
+            {
+                "step": "evidence_decision",
+                "has_context": has_context,
+                "has_relevant_context": has_relevant_context,
+                "critique_category": critique_category,
+                "grounded_score": grounded_score,
+                "status": final_status,
+            }
+        )
 
         state.final_answer = final_answer
         state.citations = final_citations
