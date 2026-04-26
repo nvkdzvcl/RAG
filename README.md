@@ -254,8 +254,8 @@ Xem hướng dẫn chi tiết tại [docs/OCR.md](docs/OCR.md).
 - `GET /api/v1/documents`
 - `GET /api/v1/documents/{document_id}/status`
 - `GET /api/v1/documents/{document_id}` (compat route, tương đương status)
-- `DELETE /api/v1/documents`
-- `DELETE /api/v1/documents/{document_id}`
+- `DELETE /api/v1/documents` (xóa toàn bộ tài liệu upload, raw files, và reset runtime uploaded indexes)
+- `DELETE /api/v1/documents/{document_id}` (xóa 1 tài liệu upload và rebuild runtime indexes từ phần còn lại)
 - `POST /api/v1/documents/reindex` (legacy chunk reindex payload trực tiếp)
 - `POST /api/v1/settings/chunking` (mode preset/custom, có re-index runtime index upload)
 - `POST /api/v1/settings/retrieval` (mode preset/custom cho `top_k`, không re-index)

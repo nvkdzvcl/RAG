@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 from io import BytesIO
 from pathlib import Path
 from types import SimpleNamespace
@@ -346,6 +347,18 @@ def test_delete_all_documents_clears_registry_raw_files_and_runtime_indexes(
     )
     assert first_upload.status_code == 201
     assert second_upload.status_code == 201
+    deleted_ids = {
+        first_upload.json()["document_id"],
+        second_upload.json()["document_id"],
+    }
+
+    index_dir = data_dir / "indexes"
+    uploaded_artifacts = [
+        index_dir / "uploaded_vector_index.json",
+        index_dir / "uploaded_bm25_index.json",
+        index_dir / "uploaded_index_manifest.json",
+    ]
+    assert all(path.exists() for path in uploaded_artifacts)
 
     listed_before = client.get("/api/v1/documents")
     assert listed_before.status_code == 200
@@ -362,8 +375,25 @@ def test_delete_all_documents_clears_registry_raw_files_and_runtime_indexes(
     assert listed_after.status_code == 200
     assert listed_after.json()["documents"] == []
 
+    registry_payload = json.loads((data_dir / "document_registry.json").read_text(encoding="utf-8"))
+    assert registry_payload["documents"] == []
+
     raw_files = [path for path in (data_dir / "raw").rglob("*") if path.is_file()]
     assert raw_files == []
+    assert all(not path.exists() for path in uploaded_artifacts)
+
+    query_after_delete = client.post(
+        "/api/v1/query",
+        json={
+            "query": "xoa-all-001 là gì?",
+            "mode": "standard",
+            "chat_history": [],
+        },
+    )
+    assert query_after_delete.status_code == 200
+    query_body = query_after_delete.json()
+    assert query_body["trace"][0]["index_source"] == "seeded"
+    assert all(citation["doc_id"] not in deleted_ids for citation in query_body["citations"])
 
 
 def test_delete_all_documents_when_empty_is_idempotent(
@@ -454,6 +484,13 @@ def test_upload_then_delete_same_document_never_returns_deleted_doc(
 
     deleted = client.delete(f"/api/v1/documents/{doc_id}")
     assert deleted.status_code == 200
+
+    deleted_status = client.get(f"/api/v1/documents/{doc_id}/status")
+    assert deleted_status.status_code == 404
+
+    listed = client.get("/api/v1/documents")
+    assert listed.status_code == 200
+    assert all(item["document_id"] != doc_id for item in listed.json()["documents"])
 
     after_delete = client.post(
         "/api/v1/query",
