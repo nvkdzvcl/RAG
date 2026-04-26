@@ -8,7 +8,11 @@ import { ChatComposer } from "@/components/dashboard/chat-composer";
 import { ChatPanel } from "@/components/dashboard/chat-panel";
 import { DocumentUploadCard } from "@/components/dashboard/document-upload-card";
 import { ModeSelector } from "@/components/dashboard/mode-selector";
-import { QueryFilters } from "@/components/dashboard/query-filters";
+import {
+  QueryFilters,
+  type QueryFileTypeFilter,
+  type QueryOcrFilter,
+} from "@/components/dashboard/query-filters";
 import { Sidebar, type RecentChat } from "@/components/dashboard/sidebar";
 import { SourcesPanel } from "@/components/dashboard/sources-panel";
 import { WorkflowTrace } from "@/components/dashboard/workflow-trace";
@@ -36,6 +40,23 @@ const DEFAULT_MODEL =
 
 const MAX_MESSAGES_PER_SESSION = 24;
 const MAX_STORED_SESSIONS = 80;
+
+function dateInputToIso(value: string, boundary: "start" | "end"): string | undefined {
+  if (!value) {
+    return undefined;
+  }
+  return boundary === "start" ? `${value}T00:00:00.000Z` : `${value}T23:59:59.999Z`;
+}
+
+function ocrFilterToPayload(value: QueryOcrFilter): boolean | undefined {
+  if (value === "only") {
+    return true;
+  }
+  if (value === "exclude") {
+    return false;
+  }
+  return undefined;
+}
 
 function initialSessions(): ChatSession[] {
   const loaded = loadChatSessions();
@@ -96,7 +117,10 @@ export function ChatPage() {
   const [isDeletingSingleDocument, setIsDeletingSingleDocument] = useState(false);
   const [showSettingsModal, setShowSettingsModal] = useState(false);
   const [selectedFilterDocIds, setSelectedFilterDocIds] = useState<string[]>([]);
-  const [includeOcrOnly, setIncludeOcrOnly] = useState(false);
+  const [selectedFileTypes, setSelectedFileTypes] = useState<QueryFileTypeFilter[]>([]);
+  const [uploadedAfter, setUploadedAfter] = useState("");
+  const [uploadedBefore, setUploadedBefore] = useState("");
+  const [ocrFilter, setOcrFilter] = useState<QueryOcrFilter>("all");
   const documentsSectionRef = useRef<HTMLDivElement | null>(null);
 
   const {
@@ -314,7 +338,10 @@ export function ChatPage() {
         model: requestModel,
         doc_ids: selectedFilterDocIds.length > 0 ? selectedFilterDocIds : undefined,
         filenames: selectedDocuments.length > 0 ? selectedDocuments.map((item) => item.filename) : undefined,
-        include_ocr: includeOcrOnly ? true : undefined,
+        file_types: selectedFileTypes.length > 0 ? selectedFileTypes : undefined,
+        uploaded_after: dateInputToIso(uploadedAfter, "start"),
+        uploaded_before: dateInputToIso(uploadedBefore, "end"),
+        include_ocr: ocrFilterToPayload(ocrFilter),
       });
 
       const mapped = apiToUi(payload);
@@ -526,8 +553,14 @@ export function ChatPage() {
         documents={documents}
         selectedDocIds={selectedFilterDocIds}
         onSelectedDocIdsChange={setSelectedFilterDocIds}
-        includeOcrOnly={includeOcrOnly}
-        onIncludeOcrOnlyChange={setIncludeOcrOnly}
+        selectedFileTypes={selectedFileTypes}
+        onSelectedFileTypesChange={setSelectedFileTypes}
+        uploadedAfter={uploadedAfter}
+        onUploadedAfterChange={setUploadedAfter}
+        uploadedBefore={uploadedBefore}
+        onUploadedBeforeChange={setUploadedBefore}
+        ocrFilter={ocrFilter}
+        onOcrFilterChange={setOcrFilter}
         disabled={isLoading}
       />
       <ChatComposer

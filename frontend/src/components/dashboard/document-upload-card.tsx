@@ -17,8 +17,8 @@ import type { DocumentRecord, ProcessingStage } from "@/types/document";
 import { translations } from "@/lib/translations";
 import {
   SUPPORTED_UPLOAD_ACCEPT,
-  splitSupportedUploadFiles,
-  unsupportedUploadFilesMessage,
+  formatUploadValidationMessages,
+  splitValidUploadFiles,
 } from "@/lib/upload-files";
 
 type DocumentUploadCardProps = {
@@ -120,7 +120,7 @@ export function DocumentUploadCard({
   onRequestDeleteAllDocuments,
 }: DocumentUploadCardProps) {
   const [isDragging, setIsDragging] = useState(false);
-  const [fileSelectionError, setFileSelectionError] = useState<string | null>(null);
+  const [fileSelectionErrors, setFileSelectionErrors] = useState<string[]>([]);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const dragDepthRef = useRef(0);
 
@@ -152,12 +152,12 @@ export function DocumentUploadCard({
       return;
     }
     if (isUploading) {
-      setFileSelectionError("Đang tải tài liệu. Vui lòng đợi trước khi thêm tệp mới.");
+      setFileSelectionErrors(["Đang tải tài liệu. Vui lòng đợi trước khi thêm tệp mới."]);
       return;
     }
 
-    const { accepted, rejected } = splitSupportedUploadFiles(Array.from(files));
-    setFileSelectionError(rejected.length > 0 ? unsupportedUploadFilesMessage(rejected) : null);
+    const { accepted, rejected } = splitValidUploadFiles(Array.from(files));
+    setFileSelectionErrors(formatUploadValidationMessages(rejected));
 
     for (const file of accepted) {
       await onUpload(file);
@@ -237,6 +237,7 @@ export function DocumentUploadCard({
             <UploadCloud className="h-6 w-6 text-blue-600" />
             <p className="text-sm font-medium text-slate-700">Kéo thả tài liệu PDF hoặc DOCX vào đây</p>
             <p className="text-xs text-slate-500">hoặc nhấn để chọn tệp</p>
+            <p className="text-xs font-medium text-slate-500">Hỗ trợ PDF, DOCX • Tối đa 50MB mỗi tệp</p>
             <Button
               type="button"
               variant="outline"
@@ -278,10 +279,14 @@ export function DocumentUploadCard({
           </div>
         ) : null}
 
-        {fileSelectionError ? (
-          <div className="flex items-center gap-2 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-800">
-            <AlertCircle className="h-4 w-4" />
-            <span>{fileSelectionError}</span>
+        {fileSelectionErrors.length > 0 ? (
+          <div className="flex gap-2 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-800">
+            <AlertCircle className="mt-0.5 h-4 w-4 shrink-0" />
+            <div className="space-y-1">
+              {fileSelectionErrors.map((message) => (
+                <p key={message}>{message}</p>
+              ))}
+            </div>
           </div>
         ) : null}
 

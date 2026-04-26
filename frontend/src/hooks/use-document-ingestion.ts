@@ -19,7 +19,7 @@ import type {
   ApiRetrievalConfigMode,
   ApiRetrievalMode,
 } from "@/api/types";
-import { isSupportedUploadFile } from "@/lib/upload-files";
+import { getUploadFileValidationError } from "@/lib/upload-files";
 import type { DocumentRecord, DocumentStatus, ProcessingStage } from "@/types/document";
 
 const BACKEND_POLL_INTERVAL_MS = 1400;
@@ -332,8 +332,9 @@ export function useDocumentIngestion(): UseDocumentIngestionResult {
 
   const uploadFile = useCallback(
     async (file: File) => {
-      if (!isSupportedUploadFile(file)) {
-        setUploadError("Only PDF and DOCX files are supported.");
+      const validationError = getUploadFileValidationError(file);
+      if (validationError) {
+        setUploadError(validationError);
         return;
       }
 
