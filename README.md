@@ -54,6 +54,61 @@ Hành vi truy hồi ở runtime:
 
 Vector index và BM25 index được lưu bền vững tại `INDEX_DIR` (mặc định `data/indexes/`).
 
+## Runtime Settings (Chunking + Retrieval)
+
+Project hiện có 2 endpoint runtime settings:
+
+- `POST /api/v1/settings/chunking`
+- `POST /api/v1/settings/retrieval`
+
+### Chunking settings
+
+Preset:
+
+- `small` = `500/50`
+- `medium` = `1000/100`
+- `large` = `1500/200`
+
+Custom:
+
+- `mode=custom` + `chunk_size`, `chunk_overlap`
+- validate: `chunk_size` trong `[100, 4000]`, `chunk_overlap` trong `[0, 1000]`, và `overlap < size`
+
+Ví dụ:
+
+```bash
+curl -X POST http://127.0.0.1:8000/api/v1/settings/chunking \
+  -H "Content-Type: application/json" \
+  -d '{"mode":"custom","chunk_size":1200,"chunk_overlap":120}'
+```
+
+### Retrieval settings
+
+Preset:
+
+- `low` = `top_k=3`
+- `balanced` = `top_k=5`
+- `high` = `top_k=8`
+
+Custom:
+
+- `mode=custom` + `top_k`
+- validate: `top_k` trong `[1, 20]`
+
+Logic áp dụng:
+
+- retriever dùng `top_k` hiện tại
+- reranker dùng `min(RERANKER_TOP_N, top_k)`
+- context selection vẫn giữ theo cấu hình workflow (mặc định 4)
+
+Ví dụ:
+
+```bash
+curl -X POST http://127.0.0.1:8000/api/v1/settings/retrieval \
+  -H "Content-Type: application/json" \
+  -d '{"mode":"custom","top_k":6}'
+```
+
 ## Embedding Backend (Tiếng Việt + Đa Ngôn Ngữ)
 
 Embedding backend mặc định dùng sentence-transformers:
@@ -180,7 +235,7 @@ Block bảng được giữ nguyên (không tách đôi qua nhiều chunk).
 
 ### OCR Tùy Chọn Cho PDF Scan
 
-- OCR mặc định **tắt** (`OCR_ENABLED=false`).
+- Trong code, OCR mặc định là `false`; trong `.env.example` hiện bật `OCR_ENABLED=true` để demo. Có thể đổi theo nhu cầu.
 - Khi bật OCR, parser PDF vẫn ưu tiên text/table từ `pdfplumber`.
 - Nếu trang PDF có quá ít text (`OCR_MIN_TEXT_CHARS`) thì hệ thống thử OCR bằng Tesseract + PyMuPDF.
 - OCR thất bại sẽ chỉ ghi cảnh báo và bỏ qua block OCR, không làm crash upload/query.
@@ -195,8 +250,15 @@ Xem hướng dẫn chi tiết tại [docs/OCR.md](docs/OCR.md).
 - `GET /api/v1/health`
 - `POST /api/v1/query`
 - `POST /api/v1/documents/upload`
+- `POST /api/v1/documents` (compat route, tương đương upload)
 - `GET /api/v1/documents`
 - `GET /api/v1/documents/{document_id}/status`
+- `GET /api/v1/documents/{document_id}` (compat route, tương đương status)
+- `DELETE /api/v1/documents`
+- `DELETE /api/v1/documents/{document_id}`
+- `POST /api/v1/documents/reindex` (legacy chunk reindex payload trực tiếp)
+- `POST /api/v1/settings/chunking` (mode preset/custom, có re-index runtime index upload)
+- `POST /api/v1/settings/retrieval` (mode preset/custom cho `top_k`, không re-index)
 
 Ví dụ gọi query:
 
@@ -234,6 +296,13 @@ URL frontend mặc định: `http://127.0.0.1:5173`
 
 Mặc định frontend gọi `VITE_API_BASE_URL=/api/v1` và Vite proxy `/api/*` về `http://localhost:8000`.
 
+Frontend hiện có Settings Modal cho:
+
+- Chunking presets + custom
+- Retrieval presets + custom (`top_k`)
+- cảnh báo hiệu năng khi cấu hình lớn
+- xác nhận trước khi áp dụng cấu hình mới nếu đã có tài liệu upload (vì có thể re-index tốn thời gian)
+
 ## Evaluation
 
 Dataset evaluation:
@@ -244,25 +313,25 @@ Dataset evaluation:
 Chạy evaluation (`standard` + `advanced`):
 
 ```bash
-python scripts/run_eval.py --dataset data/eval/golden_dataset.jsonl --modes standard advanced
+.venv/bin/python scripts/run_eval.py --dataset data/eval/golden_dataset.jsonl --modes standard advanced
 ```
 
 Chạy evaluation (bao gồm `compare`):
 
 ```bash
-python scripts/run_eval.py --dataset data/eval/golden_dataset.jsonl --modes standard advanced compare
+.venv/bin/python scripts/run_eval.py --dataset data/eval/golden_dataset.jsonl --modes standard advanced compare
 ```
 
 Smoke test offline nhanh (stub predictor, deterministic):
 
 ```bash
-python -m app.evaluation.runner --dataset data/eval/golden.jsonl --predictor stub
+.venv/bin/python -m app.evaluation.runner --dataset data/eval/golden.jsonl --predictor stub
 ```
 
 Chạy bằng workflow thật với dataset tương thích:
 
 ```bash
-python -m app.evaluation.runner --dataset data/eval/golden.jsonl --predictor workflow
+.venv/bin/python -m app.evaluation.runner --dataset data/eval/golden.jsonl --predictor workflow
 ```
 
 Artifact sinh ra:
@@ -289,7 +358,7 @@ Cách đọc kết quả:
 Vòng lặp dev thông thường (nhanh, bỏ test nặng/e2e):
 
 ```bash
-pytest -m "not slow and not e2e"
+.venv/bin/python -m pytest -m "not slow and not e2e"
 # hoặc
 make test-fast
 ```
@@ -297,7 +366,7 @@ make test-fast
 Chỉ kiểm tra backend logic cốt lõi (schema/retrieval/generation):
 
 ```bash
-pytest tests/schemas tests/retrieval tests/generation -m "not slow"
+.venv/bin/python -m pytest tests/schemas tests/retrieval tests/generation -m "not slow"
 ```
 
 Kiểm tra integration backend (không gồm slow/e2e):
@@ -309,7 +378,7 @@ make test-integration
 Trước khi push/release (full suite):
 
 ```bash
-pytest
+.venv/bin/python -m pytest
 # hoặc
 make test-full
 ```
