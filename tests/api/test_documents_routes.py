@@ -141,6 +141,13 @@ def test_upload_response_reports_ocr_debug_metadata(
     assert response.status_code == 201
     body = response.json()
     assert body["status"] == "ready"
+    assert "total_blocks" in body
+    assert "text_blocks" in body
+    assert "table_blocks" in body
+    assert "image_blocks" in body
+    assert "ocr_blocks" in body
+    assert "total_chunks" in body
+    assert "ocr_chunks" in body
     assert body["total_blocks"] >= 1
     assert body["text_blocks"] >= 1
     assert body["ocr_blocks"] >= 1
@@ -169,6 +176,7 @@ def test_ocr_chunk_is_indexed_retrievable_and_marked_in_sources(
     )
     assert query_response.status_code == 200
     body = query_response.json()
+    assert body["status"] != "insufficient_evidence"
     assert body["trace"][0]["index_source"] == "uploaded"
     assert any(citation.get("block_type") == "ocr_text" for citation in body["citations"])
     context_steps = [step for step in body["trace"] if step.get("step") == "context_select"]
