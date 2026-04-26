@@ -1,4 +1,5 @@
-import { useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
+import type { DragEvent as ReactDragEvent } from "react";
 import {
   AlertCircle,
   CheckCircle2,
@@ -14,6 +15,11 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import type { DocumentRecord, ProcessingStage } from "@/types/document";
 import { translations } from "@/lib/translations";
+import {
+  SUPPORTED_UPLOAD_ACCEPT,
+  splitSupportedUploadFiles,
+  unsupportedUploadFilesMessage,
+} from "@/lib/upload-files";
 
 type DocumentUploadCardProps = {
   documents: DocumentRecord[];
@@ -97,6 +103,10 @@ function StageIndicator({ state }: { state: StageState }) {
   return <Circle className="h-4 w-4 text-slate-400" />;
 }
 
+function isFileDrag(event: DragEvent | ReactDragEvent<HTMLElement>): boolean {
+  return Array.from(event.dataTransfer?.types ?? []).includes("Files");
+}
+
 export function DocumentUploadCard({
   documents,
   activeDocument,
@@ -110,15 +120,90 @@ export function DocumentUploadCard({
   onRequestDeleteAllDocuments,
 }: DocumentUploadCardProps) {
   const [isDragging, setIsDragging] = useState(false);
+  const [fileSelectionError, setFileSelectionError] = useState<string | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const dragDepthRef = useRef(0);
 
   const activeProgress = activeDocument?.uploadProgress;
+
+  useEffect(() => {
+    const preventPageFileDrop = (event: DragEvent) => {
+      if (!isFileDrag(event)) {
+        return;
+      }
+      event.preventDefault();
+    };
+
+    window.addEventListener("dragover", preventPageFileDrop);
+    window.addEventListener("drop", preventPageFileDrop);
+    return () => {
+      window.removeEventListener("dragover", preventPageFileDrop);
+      window.removeEventListener("drop", preventPageFileDrop);
+    };
+  }, []);
+
+  const resetDragState = () => {
+    dragDepthRef.current = 0;
+    setIsDragging(false);
+  };
 
   const handleFiles = async (files: FileList | null) => {
     if (!files || files.length === 0) {
       return;
     }
-    await onUpload(files[0]);
+    if (isUploading) {
+      setFileSelectionError("Đang tải tài liệu. Vui lòng đợi trước khi thêm tệp mới.");
+      return;
+    }
+
+    const { accepted, rejected } = splitSupportedUploadFiles(Array.from(files));
+    setFileSelectionError(rejected.length > 0 ? unsupportedUploadFilesMessage(rejected) : null);
+
+    for (const file of accepted) {
+      await onUpload(file);
+    }
+  };
+
+  const handleDragEnter = (event: ReactDragEvent<HTMLDivElement>) => {
+    if (!isFileDrag(event)) {
+      return;
+    }
+    event.preventDefault();
+    event.stopPropagation();
+    dragDepthRef.current += 1;
+    setIsDragging(true);
+  };
+
+  const handleDragOver = (event: ReactDragEvent<HTMLDivElement>) => {
+    if (!isFileDrag(event)) {
+      return;
+    }
+    event.preventDefault();
+    event.stopPropagation();
+    event.dataTransfer.dropEffect = "copy";
+    setIsDragging(true);
+  };
+
+  const handleDragLeave = (event: ReactDragEvent<HTMLDivElement>) => {
+    if (!isFileDrag(event)) {
+      return;
+    }
+    event.preventDefault();
+    event.stopPropagation();
+    dragDepthRef.current = Math.max(0, dragDepthRef.current - 1);
+    if (dragDepthRef.current === 0) {
+      setIsDragging(false);
+    }
+  };
+
+  const handleDrop = (event: ReactDragEvent<HTMLDivElement>) => {
+    if (!isFileDrag(event)) {
+      return;
+    }
+    event.preventDefault();
+    event.stopPropagation();
+    resetDragState();
+    void handleFiles(event.dataTransfer.files);
   };
 
   return (
@@ -130,7 +215,8 @@ export function DocumentUploadCard({
         <input
           ref={fileInputRef}
           type="file"
-          accept=".pdf,.docx,.doc,application/pdf,application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+          accept={SUPPORTED_UPLOAD_ACCEPT}
+          multiple
           className="hidden"
           onChange={(event) => {
             void handleFiles(event.target.files);
@@ -140,18 +226,12 @@ export function DocumentUploadCard({
 
         <div
           className={`rounded-xl border border-dashed px-4 py-5 transition ${
-            isDragging ? "border-blue-400 bg-blue-50" : "border-slate-300 bg-slate-50"
+            isDragging ? "border-blue-500 bg-blue-50 ring-2 ring-blue-100" : "border-slate-300 bg-slate-50"
           }`}
-          onDragOver={(event) => {
-            event.preventDefault();
-            setIsDragging(true);
-          }}
-          onDragLeave={() => setIsDragging(false)}
-          onDrop={(event) => {
-            event.preventDefault();
-            setIsDragging(false);
-            void handleFiles(event.dataTransfer.files);
-          }}
+          onDragEnter={handleDragEnter}
+          onDragOver={handleDragOver}
+          onDragLeave={handleDragLeave}
+          onDrop={handleDrop}
         >
           <div className="flex flex-col items-center gap-2 text-center">
             <UploadCloud className="h-6 w-6 text-blue-600" />
@@ -195,6 +275,13 @@ export function DocumentUploadCard({
           <div className="flex items-center gap-2 rounded-lg border border-rose-200 bg-rose-50 px-3 py-2 text-sm text-rose-700">
             <AlertCircle className="h-4 w-4" />
             <span>{uploadError}</span>
+          </div>
+        ) : null}
+
+        {fileSelectionError ? (
+          <div className="flex items-center gap-2 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-800">
+            <AlertCircle className="h-4 w-4" />
+            <span>{fileSelectionError}</span>
           </div>
         ) : null}
 

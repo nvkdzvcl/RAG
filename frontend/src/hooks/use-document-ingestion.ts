@@ -19,12 +19,14 @@ import type {
   ApiRetrievalConfigMode,
   ApiRetrievalMode,
 } from "@/api/types";
+import { isSupportedUploadFile } from "@/lib/upload-files";
 import type { DocumentRecord, DocumentStatus, ProcessingStage } from "@/types/document";
 
 const BACKEND_POLL_INTERVAL_MS = 1400;
 const FALLBACK_UPLOAD_STEP_MS = 110;
 const FALLBACK_STAGE_STEP_MS = 900;
 const FALLBACK_STAGES: ProcessingStage[] = ["splitting", "embedding", "indexing", "ready"];
+const UPLOAD_SUCCESS_MESSAGE = "Document uploaded successfully!";
 
 function delay(ms: number): Promise<void> {
   return new Promise((resolve) => {
@@ -216,7 +218,7 @@ export function useDocumentIngestion(): UseDocumentIngestionResult {
             clearPolling(documentId);
             setIsUploading(false);
             if (mapped.status === "ready") {
-              setUploadMessage("PDF uploaded successfully!");
+              setUploadMessage(UPLOAD_SUCCESS_MESSAGE);
             }
           }
         } catch (error) {
@@ -230,10 +232,10 @@ export function useDocumentIngestion(): UseDocumentIngestionResult {
               status: "ready",
               stage: "ready",
               uploadProgress: 100,
-              message: "PDF uploaded successfully!",
+              message: UPLOAD_SUCCESS_MESSAGE,
               chunkCount: previous.chunkCount ?? 0,
             }));
-            setUploadMessage("PDF uploaded successfully!");
+            setUploadMessage(UPLOAD_SUCCESS_MESSAGE);
             return;
           }
 
@@ -315,14 +317,14 @@ export function useDocumentIngestion(): UseDocumentIngestionResult {
             stage === "ready"
               ? Math.max(1, Math.ceil(file.size / 4800))
               : previous.chunkCount,
-          message: stage === "ready" ? "PDF uploaded successfully!" : previous.message,
+          message: stage === "ready" ? UPLOAD_SUCCESS_MESSAGE : previous.message,
         }));
         if (stage !== "ready") {
           await delay(FALLBACK_STAGE_STEP_MS);
         }
       }
 
-      setUploadMessage("PDF uploaded successfully!");
+      setUploadMessage(UPLOAD_SUCCESS_MESSAGE);
       setIsUploading(false);
     },
     [updateDocument],
@@ -330,10 +332,8 @@ export function useDocumentIngestion(): UseDocumentIngestionResult {
 
   const uploadFile = useCallback(
     async (file: File) => {
-      const lowerName = file.name.toLowerCase();
-      const isPdf = file.type === "application/pdf" || lowerName.endsWith(".pdf");
-      if (!isPdf) {
-        setUploadError("Only PDF files are supported.");
+      if (!isSupportedUploadFile(file)) {
+        setUploadError("Only PDF and DOCX files are supported.");
         return;
       }
 
@@ -382,7 +382,7 @@ export function useDocumentIngestion(): UseDocumentIngestionResult {
           setActiveDocumentId(mapped.id);
 
           if (mapped.status === "ready") {
-            setUploadMessage("PDF uploaded successfully!");
+            setUploadMessage(UPLOAD_SUCCESS_MESSAGE);
             setIsUploading(false);
           } else {
             startBackendPolling(mapped.id);
