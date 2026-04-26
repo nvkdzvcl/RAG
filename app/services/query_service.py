@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from app.schemas.common import Mode
+from app.schemas.documents import RetrievalSettingsRequest, RetrievalSettingsResponse
 from app.schemas.api import QueryRequest, QueryResponse
 from app.workflows.runner import WorkflowRunner
 
@@ -38,3 +39,7 @@ class QueryService:
             chat_history=payload.chat_history,
             model=payload.model,
         )
+
+    def update_retrieval_settings(self, payload: RetrievalSettingsRequest) -> RetrievalSettingsResponse:
+        """Apply retrieval settings to standard/advanced/compare workflows."""
+        return self.runner.update_retrieval_settings(payload)

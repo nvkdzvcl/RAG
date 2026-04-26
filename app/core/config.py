@@ -26,6 +26,11 @@ class Settings(BaseSettings):
     corpus_dir: str = Field(default="docs", alias="CORPUS_DIR")
     index_dir: str = Field(default="data/indexes", alias="INDEX_DIR")
     prompt_dir: str = Field(default="prompts", alias="PROMPT_DIR")
+    chunk_mode: str = Field(default="preset", alias="CHUNK_MODE")
+    chunk_size: int = Field(default=1000, alias="CHUNK_SIZE")
+    chunk_overlap: int = Field(default=100, alias="CHUNK_OVERLAP")
+    retrieval_mode: str = Field(default="preset", alias="RETRIEVAL_MODE")
+    retrieval_top_k: int = Field(default=8, alias="RETRIEVAL_TOP_K")
     embedding_provider: str = Field(default="sentence_transformers", alias="EMBEDDING_PROVIDER")
     embedding_model: str = Field(default="intfloat/multilingual-e5-base", alias="EMBEDDING_MODEL")
     embedding_device: str = Field(default="cpu", alias="EMBEDDING_DEVICE")
@@ -52,8 +57,12 @@ class Settings(BaseSettings):
     llm_temperature: float = Field(default=0.2, alias="LLM_TEMPERATURE")
     llm_max_tokens: int = Field(default=2048, alias="LLM_MAX_TOKENS")
     llm_timeout_seconds: int = Field(default=120, alias="LLM_TIMEOUT_SECONDS")
+    llm_gate_max_tokens: int = Field(default=128, alias="LLM_GATE_MAX_TOKENS")
+    llm_rewrite_max_tokens: int = Field(default=256, alias="LLM_REWRITE_MAX_TOKENS")
+    llm_critique_max_tokens: int = Field(default=384, alias="LLM_CRITIQUE_MAX_TOKENS")
 
-    max_advanced_loops: int = Field(default=2, alias="MAX_ADVANCED_LOOPS")
+    max_advanced_loops: int = Field(default=1, alias="MAX_ADVANCED_LOOPS")
+    memory_window: int = Field(default=3, alias="MEMORY_WINDOW")
 
 
 @lru_cache(maxsize=1)

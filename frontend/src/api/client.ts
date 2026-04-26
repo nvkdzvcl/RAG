@@ -1,9 +1,19 @@
 import type {
+  ApiChunkingMode,
+  ApiChunkConfigMode,
+  ApiRetrievalMode,
+  ApiRetrievalConfigMode,
   ApiDeleteAllDocumentsResponse,
   ApiDeleteDocumentResponse,
   ApiDocument,
   ApiDocumentStatusResponse,
   ApiHealthResponse,
+  ApiUpdateChunkingSettingsRequest,
+  ApiUpdateChunkingSettingsResponse,
+  ApiUpdateRetrievalSettingsRequest,
+  ApiUpdateRetrievalSettingsResponse,
+  ApiReindexDocumentsRequest,
+  ApiReindexDocumentsResponse,
   ApiQueryRequest,
   ApiQueryResponse,
   ApiUploadDocumentResponse,
@@ -11,6 +21,7 @@ import type {
 
 const API_BASE_URL = (import.meta.env.VITE_API_BASE_URL || "/api/v1").replace(/\/$/, "");
 const DOCUMENTS_BASE_URL = `${API_BASE_URL}/documents`;
+const SETTINGS_BASE_URL = `${API_BASE_URL}/settings`;
 
 export class ApiRequestError extends Error {
   readonly status: number;
@@ -159,6 +170,93 @@ function normalizeDeleteDocumentResponse(payload: unknown): ApiDeleteDocumentRes
   };
 }
 
+function normalizeReindexDocumentsResponse(payload: unknown): ApiReindexDocumentsResponse {
+  if (!isObject(payload)) {
+    throw new Error("Invalid reindex payload");
+  }
+
+  const chunkSize = optionalNumber(payload.chunk_size);
+  const chunkOverlap = optionalNumber(payload.chunk_overlap);
+  const reindexedDocuments = optionalNumber(payload.reindexed_documents);
+  const activeChunks = optionalNumber(payload.active_chunks);
+
+  return {
+    status: payload.status === "reindexed" ? "reindexed" : "reindexed",
+    chunk_size: typeof chunkSize === "number" ? chunkSize : 0,
+    chunk_overlap: typeof chunkOverlap === "number" ? chunkOverlap : 0,
+    reindexed_documents: typeof reindexedDocuments === "number" ? reindexedDocuments : 0,
+    active_chunks: typeof activeChunks === "number" ? activeChunks : 0,
+  };
+}
+
+function normalizeChunkingMode(value: unknown): ApiChunkingMode {
+  if (value === "small" || value === "medium" || value === "large" || value === "custom") {
+    return value;
+  }
+  return "custom";
+}
+
+function normalizeChunkConfigMode(value: unknown): ApiChunkConfigMode {
+  if (value === "preset" || value === "custom") {
+    return value;
+  }
+  return "custom";
+}
+
+function normalizeRetrievalMode(value: unknown): ApiRetrievalMode {
+  if (value === "low" || value === "balanced" || value === "high" || value === "custom") {
+    return value;
+  }
+  return "custom";
+}
+
+function normalizeRetrievalConfigMode(value: unknown): ApiRetrievalConfigMode {
+  if (value === "preset" || value === "custom") {
+    return value;
+  }
+  return "custom";
+}
+
+function normalizeUpdateChunkingSettingsResponse(payload: unknown): ApiUpdateChunkingSettingsResponse {
+  if (!isObject(payload)) {
+    throw new Error("Invalid settings/chunking payload");
+  }
+
+  const chunkSize = optionalNumber(payload.chunk_size);
+  const chunkOverlap = optionalNumber(payload.chunk_overlap);
+  const reindexedDocuments = optionalNumber(payload.reindexed_documents);
+  const activeChunks = optionalNumber(payload.active_chunks);
+
+  return {
+    status: payload.status === "reindexed" ? "reindexed" : "reindexed",
+    mode: normalizeChunkingMode(payload.mode),
+    chunk_mode: normalizeChunkConfigMode(payload.chunk_mode),
+    chunk_size: typeof chunkSize === "number" ? chunkSize : 0,
+    chunk_overlap: typeof chunkOverlap === "number" ? chunkOverlap : 0,
+    reindexed_documents: typeof reindexedDocuments === "number" ? reindexedDocuments : 0,
+    active_chunks: typeof activeChunks === "number" ? activeChunks : 0,
+  };
+}
+
+function normalizeUpdateRetrievalSettingsResponse(payload: unknown): ApiUpdateRetrievalSettingsResponse {
+  if (!isObject(payload)) {
+    throw new Error("Invalid settings/retrieval payload");
+  }
+
+  const topK = optionalNumber(payload.top_k);
+  const rerankTopN = optionalNumber(payload.rerank_top_n);
+  const contextTopK = optionalNumber(payload.context_top_k);
+
+  return {
+    status: payload.status === "updated" ? "updated" : "updated",
+    mode: normalizeRetrievalMode(payload.mode),
+    retrieval_mode: normalizeRetrievalConfigMode(payload.retrieval_mode),
+    top_k: typeof topK === "number" ? topK : 0,
+    rerank_top_n: typeof rerankTopN === "number" ? rerankTopN : 0,
+    context_top_k: typeof contextTopK === "number" ? contextTopK : 0,
+  };
+}
+
 export async function postQuery(request: ApiQueryRequest): Promise<ApiQueryResponse> {
   const response = await fetch(`${API_BASE_URL}/query`, {
     method: "POST",
@@ -294,4 +392,61 @@ export async function deleteDocument(documentId: string): Promise<ApiDeleteDocum
 
   const payload = await parseJsonResponse(response);
   return normalizeDeleteDocumentResponse(payload);
+}
+
+export async function reindexDocuments(
+  request: ApiReindexDocumentsRequest,
+): Promise<ApiReindexDocumentsResponse> {
+  const response = await fetch(`${DOCUMENTS_BASE_URL}/reindex`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify(request),
+  });
+
+  if (!response.ok) {
+    await handleApiFailure(response);
+  }
+
+  const payload = await parseJsonResponse(response);
+  return normalizeReindexDocumentsResponse(payload);
+}
+
+export async function updateChunkingSettings(
+  request: ApiUpdateChunkingSettingsRequest,
+): Promise<ApiUpdateChunkingSettingsResponse> {
+  const response = await fetch(`${SETTINGS_BASE_URL}/chunking`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify(request),
+  });
+
+  if (!response.ok) {
+    await handleApiFailure(response);
+  }
+
+  const payload = await parseJsonResponse(response);
+  return normalizeUpdateChunkingSettingsResponse(payload);
+}
+
+export async function updateRetrievalSettings(
+  request: ApiUpdateRetrievalSettingsRequest,
+): Promise<ApiUpdateRetrievalSettingsResponse> {
+  const response = await fetch(`${SETTINGS_BASE_URL}/retrieval`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify(request),
+  });
+
+  if (!response.ok) {
+    await handleApiFailure(response);
+  }
+
+  const payload = await parseJsonResponse(response);
+  return normalizeUpdateRetrievalSettingsResponse(payload);
 }

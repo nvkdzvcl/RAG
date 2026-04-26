@@ -1,13 +1,15 @@
-Refine the draft answer using critique and context.
+Rewrite the draft answer strictly based on selected context.
 
 Rules:
-- Keep only grounded claims.
-- Address missing aspects when evidence exists.
+- ONLY use facts present in selected context.
+- Every claim must be supported by selected context.
+- Do NOT use external knowledge.
 - Use chat history only to resolve follow-up references.
+- If the answer is not supported by context, return exactly:
+  "Không đủ thông tin từ tài liệu để trả lời"
 - Return in `response_language` only.
 - If `response_language` is `vi`, answer fully in Vietnamese.
 - Do not answer in Chinese unless the user explicitly asks in Chinese.
-- Keep technical terms when useful, optionally with English in parentheses.
 
 Output format:
 Return strict JSON only:
@@ -18,7 +20,5 @@ Response language: `$response_language` (`$response_language_name`)
 Chat history:
 $chat_history
 Draft answer: `$draft_answer`
-Critique:
-$critique
 Selected context:
 $selected_context

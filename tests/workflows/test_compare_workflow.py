@@ -41,7 +41,10 @@ def test_compare_workflow_uses_injected_qwen_backed_branches() -> None:
         def complete(self, prompt: str, system_prompt: str | None = None) -> str:
             _ = prompt
             _ = system_prompt
-            return '{"answer":"Qwen DI answer.","confidence":0.81,"status":"answered"}'
+            return (
+                '{"answer":"Compare mode uses standard and advanced branches.",'
+                '"confidence":0.81,"status":"answered"}'
+            )
 
     class _FakeRetriever:
         def retrieve(self, query: str, top_k: int = 5) -> list[RetrievalResult]:
@@ -79,8 +82,8 @@ def test_compare_workflow_uses_injected_qwen_backed_branches() -> None:
 
     response = compare.run(query="compare via di", chat_history=None)
 
-    assert response.standard.answer == "Qwen DI answer."
-    assert response.advanced.answer == "Qwen DI answer."
+    assert response.standard.answer == "Compare mode uses standard and advanced branches."
+    assert response.advanced.answer == "Compare mode uses standard and advanced branches."
 
 
 def test_compare_workflow_preserves_model_override_for_both_branches() -> None:

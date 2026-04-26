@@ -48,6 +48,7 @@ class HeuristicRetrievalGate:
         settings = get_settings()
         self.llm_client = llm_client
         self.use_llm = use_llm
+        self.max_tokens = max(1, int(getattr(settings, "llm_gate_max_tokens", 128)))
         resolved_prompt_dir = prompt_dir or settings.prompt_dir
         self.prompt_repository = prompt_repository or PromptRepository(resolved_prompt_dir)
 
@@ -97,6 +98,7 @@ class HeuristicRetrievalGate:
                 prompt,
                 system_prompt=build_language_system_prompt(response_language),
                 model=model,
+                max_tokens=self.max_tokens,
             )
         except Exception:
             return None

@@ -40,6 +40,26 @@ function sourceSecondaryMeta(source: SourceReference): string {
   return parts.join(" • ");
 }
 
+function sourceDetailRows(source: SourceReference): string[] {
+  const rows: string[] = [];
+  if (source.title && source.title.trim().length > 0) {
+    rows.push(`Tiêu đề: ${source.title}`);
+  }
+  if (source.page) {
+    rows.push(`${translations.citations.page}: ${source.page}`);
+  }
+  if (source.section) {
+    rows.push(`${translations.citations.section}: ${source.section}`);
+  }
+  if (source.rerankScore !== null && source.rerankScore !== undefined) {
+    rows.push(`${translations.sources.rerank}: ${source.rerankScore.toFixed(4)}`);
+  }
+  if (source.blockType) {
+    rows.push(`Loại nội dung: ${source.blockType}`);
+  }
+  return rows;
+}
+
 function SourceList({ sources }: { sources: SourceReference[] }) {
   if (sources.length === 0) {
     return <p className="text-sm text-slate-500">{translations.sources.noSources}</p>;
@@ -52,10 +72,7 @@ function SourceList({ sources }: { sources: SourceReference[] }) {
           key={source.id}
           className="min-w-0 max-w-full overflow-hidden rounded-lg border border-slate-200 bg-white px-3 py-2"
         >
-          <p
-            className="truncate text-sm font-medium text-slate-700"
-            title={source.source}
-          >
+          <p className="truncate text-sm font-medium text-slate-700">
             {sourcePrimaryTitle(source)}
           </p>
           {sourceSecondaryMeta(source) ? (
@@ -66,22 +83,11 @@ function SourceList({ sources }: { sources: SourceReference[] }) {
           <details className="mt-1 rounded border border-slate-100 bg-slate-50 px-2 py-1">
             <summary className="cursor-pointer text-[11px] text-slate-500">Chi tiết nguồn</summary>
             <div className="mt-1 space-y-1 text-[11px] text-slate-500">
-              <p title={source.source} style={{ overflowWrap: "anywhere", wordBreak: "break-word" }}>
-                {translations.citations.source}: {source.source}
-              </p>
-              <p title={source.chunkId} style={{ overflowWrap: "anywhere", wordBreak: "break-word" }}>
-                {translations.citations.chunk}: {source.chunkId}
-              </p>
-              {source.docId ? (
-                <p title={source.docId} style={{ overflowWrap: "anywhere", wordBreak: "break-word" }}>
-                  doc: {source.docId}
+              {sourceDetailRows(source).map((row) => (
+                <p key={row} style={{ overflowWrap: "anywhere", wordBreak: "break-word" }}>
+                  {row}
                 </p>
-              ) : null}
-              {source.blockType ? (
-                <p style={{ overflowWrap: "anywhere", wordBreak: "break-word" }}>
-                  block_type: {source.blockType}
-                </p>
-              ) : null}
+              ))}
             </div>
           </details>
         </li>

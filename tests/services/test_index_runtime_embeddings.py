@@ -283,3 +283,31 @@ def test_clear_uploaded_indexes_preserves_seeded_runtime_state(tmp_path: Path) -
     assert deleted_files >= 0
     assert manager.get_active_source() == "seeded"
     assert seeded_results_after
+
+
+def test_runtime_chunk_strategy_update_changes_chunk_count(tmp_path: Path) -> None:
+    provider = _CountingEmbeddingProvider(dimension=8)
+    manager = RuntimeIndexManager(
+        corpus_dir=tmp_path / "corpus",
+        index_dir=tmp_path / "indexes",
+        embedding_provider=provider,
+        chunk_size=120,
+        chunk_overlap=20,
+    )
+
+    uploaded = tmp_path / "long.txt"
+    uploaded.write_text(
+        ("Self-RAG grounding check token. " * 120).strip(),
+        encoding="utf-8",
+    )
+
+    small_chunk_count = manager.activate_from_uploaded_files([uploaded])
+    assert small_chunk_count > 1
+
+    manager.set_chunking(chunk_size=800, chunk_overlap=80)
+    large_chunk_count = manager.activate_from_uploaded_files([uploaded])
+
+    assert manager.chunk_size == 800
+    assert manager.chunk_overlap == 80
+    assert large_chunk_count > 0
+    assert large_chunk_count < small_chunk_count

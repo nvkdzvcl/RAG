@@ -250,6 +250,67 @@ def test_advanced_marks_hallucination_when_answer_outside_context() -> None:
 
     response = workflow.run("Self-RAG hoạt động thế nào?")
 
-    assert response.status in {"answered", "partial"}
-    assert response.hallucination_detected is True
-    assert response.grounded_score < 0.08
+    assert response.status == "insufficient_evidence"
+    assert response.hallucination_detected is False
+    assert response.grounded_score == 0.0
+    assert response.stop_reason == "hallucination_fallback_insufficient"
+
+
+def test_advanced_hallucination_guard_refines_once_when_grounded_answer_available() -> None:
+    class _FakeRetriever:
+        def retrieve(self, query: str, top_k: int = 5) -> list[RetrievalResult]:
+            _ = query
+            _ = top_k
+            return [
+                RetrievalResult(
+                    chunk_id="adv_ctx_guard_001",
+                    doc_id="adv_doc_guard_001",
+                    source="seeded://adv",
+                    content="Self-RAG sử dụng truy xuất, rerank và critique để tăng độ bám tài liệu.",
+                    score=0.93,
+                    score_type="hybrid",
+                    rank=1,
+                )
+            ]
+
+    class _FakeIndexManager:
+        def get_retriever(self) -> _FakeRetriever:
+            return _FakeRetriever()
+
+        def get_active_source(self) -> str:
+            return "seeded"
+
+    class _CustomRefiner:
+        def refine(self, *args, **kwargs) -> str:
+            _ = args
+            _ = kwargs
+            return "Self-RAG có bước critique để tăng độ tin cậy."
+
+        def refine_strict_grounded(self, *args, **kwargs) -> str:
+            _ = args
+            _ = kwargs
+            return "Self-RAG sử dụng truy xuất, rerank và critique để tăng độ bám tài liệu."
+
+    llm = StubLLMClient(
+        responder=lambda prompt, system, model=None: (
+            '{"answer":"Chu de tra loi la blockchain va thi truong tien so.",'
+            '"confidence":0.96,"status":"answered"}'
+        )
+    )
+    standard = StandardWorkflow(
+        index_manager=_FakeIndexManager(),
+        llm_client=llm,
+        reranker=ScoreOnlyReranker(),
+    )
+    workflow = AdvancedWorkflow(
+        standard_workflow=standard,
+        max_loops=1,
+        refiner=_CustomRefiner(),
+    )
+
+    response = workflow.run("Self-RAG hoạt động thế nào?")
+
+    assert response.status == "answered"
+    assert response.stop_reason == "hallucination_refined"
+    assert response.hallucination_detected is False
+    assert response.grounded_score > 0

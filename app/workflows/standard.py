@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 import time
 from dataclasses import dataclass
 from pathlib import Path
@@ -22,6 +23,7 @@ from app.schemas.ingestion import DocumentChunk
 from app.schemas.retrieval import RetrievalResult
 from app.services.index_runtime import EmptyRetriever, RuntimeIndexManager
 from app.workflows.shared import (
+    build_chat_history_context,
     build_language_system_prompt,
     detect_response_language,
     detect_hallucination,
@@ -30,7 +32,11 @@ from app.workflows.shared import (
     localized_insufficient_evidence,
     normalize_query,
     response_language_name,
+    trim_chat_history,
 )
+
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass
@@ -60,14 +66,14 @@ class StandardWorkflow:
     def __init__(
         self,
         *,
-        hybrid_top_k: int = 8,
+        hybrid_top_k: int | None = None,
         rerank_top_k: int | None = None,
         context_top_k: int = 4,
         context_max_chars: int = 4000,
         corpus_dir: str | Path | None = None,
         index_dir: str | Path | None = None,
-        chunk_size: int = 320,
-        chunk_overlap: int = 40,
+        chunk_size: int | None = None,
+        chunk_overlap: int | None = None,
         persist_indexes: bool = False,
         index_manager: RuntimeIndexManager | None = None,
         embedding_provider: BaseEmbeddingProvider | None = None,
@@ -75,11 +81,17 @@ class StandardWorkflow:
         llm_client: LLMClient | None = None,
     ) -> None:
         settings = get_settings()
-        self.hybrid_top_k = hybrid_top_k
-        self.rerank_top_k = rerank_top_k if rerank_top_k is not None else settings.reranker_top_n
+        configured_top_k = hybrid_top_k if hybrid_top_k is not None else int(getattr(settings, "retrieval_top_k", 8))
+        self.hybrid_top_k = max(1, int(configured_top_k))
+        configured_rerank = rerank_top_k if rerank_top_k is not None else int(settings.reranker_top_n)
+        self.configured_rerank_top_n = max(1, int(configured_rerank))
+        self.rerank_top_k = min(self.configured_rerank_top_n, self.hybrid_top_k)
         self.context_top_k = context_top_k
-        self.chunk_size = chunk_size
-        self.chunk_overlap = chunk_overlap
+        self.chunk_size = chunk_size if chunk_size is not None else int(getattr(settings, "chunk_size", 320))
+        self.chunk_overlap = (
+            chunk_overlap if chunk_overlap is not None else int(getattr(settings, "chunk_overlap", 40))
+        )
+        self.memory_window = max(0, int(getattr(settings, "memory_window", 3)))
         self.corpus_dir = Path(corpus_dir or settings.corpus_dir)
         self.index_dir = Path(index_dir or settings.index_dir)
         self.persist_indexes = persist_indexes
@@ -152,16 +164,44 @@ class StandardWorkflow:
             return "seeded"
         return self.index_manager.get_active_source()
 
+    def _sync_chunk_settings_from_runtime(self) -> None:
+        """Keep workflow trace chunk settings aligned with runtime reindex settings."""
+        if self.index_manager is None:
+            return
+
+        runtime_chunk_size = getattr(self.index_manager, "chunk_size", None)
+        runtime_chunk_overlap = getattr(self.index_manager, "chunk_overlap", None)
+
+        if isinstance(runtime_chunk_size, int) and runtime_chunk_size > 0:
+            self.chunk_size = runtime_chunk_size
+        if isinstance(runtime_chunk_overlap, int) and runtime_chunk_overlap >= 0:
+            self.chunk_overlap = runtime_chunk_overlap
+
+    def set_retrieval_top_k(self, top_k: int) -> None:
+        """Update retrieval top_k and keep rerank top_n bounded."""
+        self.hybrid_top_k = max(1, int(top_k))
+        self.rerank_top_k = min(self.configured_rerank_top_n, self.hybrid_top_k)
+
+    def get_retrieval_top_k(self) -> int:
+        """Return effective retrieval top_k."""
+        return self.hybrid_top_k
+
+    def get_rerank_top_n(self) -> int:
+        """Return effective rerank top_n (always <= retrieval top_k)."""
+        return self.rerank_top_k
+
     def run_pipeline(
         self,
         query: str,
         mode: Mode = Mode.STANDARD,
         model: str | None = None,
         response_language: str = "en",
+        chat_history: list[dict[str, str]] | None = None,
     ) -> StandardPipelineResult:
         """Run one retrieval-generation pass and return intermediate artifacts."""
+        self._sync_chunk_settings_from_runtime()
         normalized_query = normalize_query(query)
-        retrieval_top_k = max(self.hybrid_top_k, self.rerank_top_k)
+        retrieval_top_k = max(1, self.hybrid_top_k)
         retrieved = self._get_retriever().retrieve(normalized_query, top_k=retrieval_top_k)
         reranked = self.reranker.rerank(normalized_query, retrieved, top_k=self.rerank_top_k)
         selected_context = self.context_selector.select(reranked, top_k=self.context_top_k)
@@ -175,13 +215,27 @@ class StandardWorkflow:
                 llm_fallback_used=False,
             )
         else:
+            history_context = build_chat_history_context(
+                chat_history,
+                memory_window=self.memory_window,
+            )
             generated = self.generator.generate_answer(
                 query=normalized_query,
                 context=selected_context,
                 mode=mode,
                 model=model,
                 response_language=response_language,
+                chat_history_context=history_context,
             )
+
+        logger.info(
+            (
+                "Standard retrieval config | top_k=%s | rerank_top_n=%s | final_context_size=%s"
+            ),
+            retrieval_top_k,
+            self.rerank_top_k,
+            len(selected_context),
+        )
 
         return StandardPipelineResult(
             normalized_query=normalized_query,
@@ -199,7 +253,10 @@ class StandardWorkflow:
         response_language: str | None = None,
     ) -> StandardQueryResponse:
         start_time = time.perf_counter()
-        _ = chat_history
+        normalized_history = trim_chat_history(
+            chat_history,
+            memory_window=self.memory_window,
+        )
 
         resolved_language = response_language or detect_response_language(query)
         pipeline = self.run_pipeline(
@@ -207,6 +264,7 @@ class StandardWorkflow:
             mode=Mode.STANDARD,
             model=model,
             response_language=resolved_language,
+            chat_history=normalized_history,
         )
         final_answer = pipeline.generated.answer
         language_mismatch = is_language_mismatch(final_answer, resolved_language)
@@ -241,6 +299,12 @@ class StandardWorkflow:
                 "step": "retrieve",
                 "query": pipeline.normalized_query,
                 "response_language": resolved_language,
+                "memory_window": self.memory_window,
+                "memory_messages": len(normalized_history),
+                "chunk_size": self.chunk_size,
+                "chunk_overlap": self.chunk_overlap,
+                "top_k": self.hybrid_top_k,
+                "rerank_top_n": self.rerank_top_k,
                 "index_source": self._get_index_source(),
                 "count": len(pipeline.retrieved),
                 "chunk_ids": [item.chunk_id for item in pipeline.retrieved],
@@ -248,6 +312,8 @@ class StandardWorkflow:
             {
                 "step": "rerank",
                 "provider": getattr(self.reranker, "name", self.reranker.__class__.__name__),
+                "top_k": self.hybrid_top_k,
+                "rerank_top_n": self.rerank_top_k,
                 "count": len(pipeline.reranked),
                 "chunk_ids": [item.chunk_id for item in pipeline.reranked],
                 "docs": [
@@ -268,6 +334,7 @@ class StandardWorkflow:
             {
                 "step": "context_select",
                 "count": len(pipeline.selected_context),
+                "final_context_size": len(pipeline.selected_context),
                 "chunk_ids": [item.chunk_id for item in pipeline.selected_context],
                 "docs": [
                     {

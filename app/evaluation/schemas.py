@@ -40,6 +40,8 @@ class TraceExtraction(BaseModel):
     retrieved_count: int = 0
     selected_context_count: int = 0
     selected_context_texts: list[str] = Field(default_factory=list)
+    chunk_size: int | None = None
+    chunk_overlap: int | None = None
 
 
 class EvalMetrics(BaseModel):
@@ -51,8 +53,11 @@ class EvalMetrics(BaseModel):
     retry_used: bool
     latency_ms: int | None
     confidence: float | None
+    grounded_score: float | None = None
     retrieved_count: int
     selected_context_count: int
+    chunk_size: int | None = None
+    chunk_overlap: int | None = None
 
     answer_non_empty: bool
     answer_contains_reference_keywords: bool | None = None

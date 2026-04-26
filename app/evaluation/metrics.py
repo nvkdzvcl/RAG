@@ -24,6 +24,8 @@ def extract_trace_fields(trace: list[dict]) -> TraceExtraction:
     retrieved_count = 0
     selected_count = 0
     selected_context_texts: list[str] = []
+    chunk_size: int | None = None
+    chunk_overlap: int | None = None
 
     def _push_chunk_id(chunk_id: str) -> None:
         if chunk_id and chunk_id not in retrieved_chunk_ids:
@@ -43,6 +45,12 @@ def extract_trace_fields(trace: list[dict]) -> TraceExtraction:
             count = step.get("count")
             if isinstance(count, int):
                 retrieved_count = count
+            step_chunk_size = step.get("chunk_size")
+            if isinstance(step_chunk_size, int):
+                chunk_size = step_chunk_size
+            step_chunk_overlap = step.get("chunk_overlap")
+            if isinstance(step_chunk_overlap, int):
+                chunk_overlap = step_chunk_overlap
 
         if step_name == "rerank":
             docs = step.get("docs", [])
@@ -68,6 +76,12 @@ def extract_trace_fields(trace: list[dict]) -> TraceExtraction:
                         selected_context_texts.append(doc["content"])
 
         if step_name == "loop":
+            loop_chunk_size = step.get("chunk_size")
+            if isinstance(loop_chunk_size, int):
+                chunk_size = loop_chunk_size
+            loop_chunk_overlap = step.get("chunk_overlap")
+            if isinstance(loop_chunk_overlap, int):
+                chunk_overlap = loop_chunk_overlap
             loop_retrieved_count = step.get("retrieved_count")
             if isinstance(loop_retrieved_count, int):
                 retrieved_count = loop_retrieved_count
@@ -102,6 +116,8 @@ def extract_trace_fields(trace: list[dict]) -> TraceExtraction:
         retrieved_count=retrieved_count,
         selected_context_count=selected_count,
         selected_context_texts=selected_context_texts,
+        chunk_size=chunk_size,
+        chunk_overlap=chunk_overlap,
     )
 
 
@@ -143,6 +159,7 @@ def compute_metrics(
     answer: str,
     citations: list[Citation],
     confidence: float | None,
+    grounded_score: float | None = None,
     status: str | None,
     loop_count: int | None,
     stop_reason: str | None,
@@ -201,8 +218,11 @@ def compute_metrics(
         retry_used=retry_used,
         latency_ms=latency_ms,
         confidence=confidence,
+        grounded_score=grounded_score,
         retrieved_count=trace_fields.retrieved_count,
         selected_context_count=trace_fields.selected_context_count,
+        chunk_size=trace_fields.chunk_size,
+        chunk_overlap=trace_fields.chunk_overlap,
         answer_non_empty=answer_non_empty,
         answer_contains_reference_keywords=answer_contains_reference_keywords,
         cited_gold_source_overlap=gold_overlap,

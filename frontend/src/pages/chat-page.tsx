@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 
 import { getHealthStatus, postQuery } from "@/api/client";
+import type { ApiRetrievalMode } from "@/api/types";
 import { apiToUi } from "@/api/transform";
 import { AppShell } from "@/components/dashboard/app-shell";
 import { ChatComposer } from "@/components/dashboard/chat-composer";
@@ -10,7 +11,7 @@ import { ModeSelector } from "@/components/dashboard/mode-selector";
 import { Sidebar, type RecentChat } from "@/components/dashboard/sidebar";
 import { SourcesPanel } from "@/components/dashboard/sources-panel";
 import { WorkflowTrace } from "@/components/dashboard/workflow-trace";
-import { SettingsModal } from "@/components/dashboard/settings-modal";
+import { SettingsModal, type SettingsChangePayload } from "@/components/dashboard/settings-modal";
 import { AlertDialog } from "@/components/ui/alert-dialog";
 import { useDocumentIngestion } from "@/hooks/use-document-ingestion";
 import {
@@ -83,7 +84,10 @@ export function ChatPage() {
   const [notice, setNotice] = useState<string | null>(null);
   const [chunkSize, setChunkSize] = useState(1000);
   const [chunkOverlap, setChunkOverlap] = useState(100);
-  const [topK, setTopK] = useState(10);
+  const [retrievalMode, setRetrievalMode] = useState<ApiRetrievalMode>("high");
+  const [topK, setTopK] = useState(8);
+  const [rerankTopN, setRerankTopN] = useState(6);
+  const [contextTopK, setContextTopK] = useState(4);
   const [showClearHistoryDialog, setShowClearHistoryDialog] = useState(false);
   const [showClearVectorDialog, setShowClearVectorDialog] = useState(false);
   const [selectedDocumentForDelete, setSelectedDocumentForDelete] = useState<DocumentRecord | null>(null);
@@ -105,6 +109,8 @@ export function ChatPage() {
     uploadFile,
     clearAllUploadedDocuments,
     deleteUploadedDocument,
+    reindexDocuments,
+    updateRetrievalSettings,
   } = useDocumentIngestion();
 
   useEffect(() => {
@@ -178,7 +184,6 @@ export function ChatPage() {
   const result: QueryResult | null = activeSession?.lastResult ?? null;
   const submittedQuery: string | null = activeSession?.lastSubmittedQuery ?? null;
   const messages: ChatSessionMessage[] = activeSession?.messages ?? [];
-  const chatHistoryPayload = messages.map((item) => ({ role: item.role, content: item.content }));
 
   const recentChats = useMemo<RecentChat[]>(() => {
     return sessions
@@ -242,61 +247,87 @@ export function ChatPage() {
     }
 
     const currentSession = ensureActiveSession();
+    const requestSessionId = currentSession.id;
+    const requestMode = currentSession.mode;
+    const requestModel = currentSession.model;
+    const previousMessages = [...currentSession.messages];
+    const requestChatHistoryPayload = previousMessages.map((item) => ({
+      role: item.role,
+      content: item.content,
+    }));
+    const userTimestamp = new Date().toISOString();
+    const userMessage: ChatSessionMessage = {
+      role: "user",
+      content: normalized,
+      mode: requestMode,
+      model: requestModel,
+      timestamp: userTimestamp,
+      metadata: null,
+    };
+
+    updateSessionById(requestSessionId, (previous) => {
+      const nextMessages = [...previous.messages, userMessage].slice(-MAX_MESSAGES_PER_SESSION);
+      const nextTitle =
+        previous.title === defaultSessionTitle() ? firstUserMessageTitle(nextMessages) : previous.title;
+      return {
+        ...previous,
+        title: nextTitle,
+        updatedAt: userTimestamp,
+        mode: requestMode,
+        model: requestModel,
+        messages: nextMessages,
+        lastSubmittedQuery: normalized,
+      };
+    });
 
     setIsLoading(true);
     setError(null);
     setNotice(null);
+    setQuery("");
 
     try {
       const payload = await postQuery({
         query: normalized,
-        mode: currentSession.mode,
-        chat_history: chatHistoryPayload,
-        model: currentSession.model,
+        mode: requestMode,
+        chat_history: requestChatHistoryPayload,
+        model: requestModel,
       });
 
       const mapped = apiToUi(payload);
       const now = new Date().toISOString();
       const assistantMessageContent =
-        mapped.mode === "compare" ? mapped.comparison.note || "Hoàn tất so sánh." : mapped.answer;
+        mapped.mode === "compare"
+          ? mapped.comparison.preferredMode === "advanced"
+            ? mapped.advanced.answer
+            : mapped.comparison.preferredMode === "standard"
+              ? mapped.standard.answer
+              : mapped.comparison.note || mapped.advanced.answer || "Hoàn tất so sánh."
+          : mapped.answer;
 
-      const userMessage: ChatSessionMessage = {
-        role: "user",
-        content: normalized,
-        mode: currentSession.mode,
-        model: currentSession.model,
-        timestamp: now,
-        metadata: null,
-      };
       const assistantMessage: ChatSessionMessage = {
         role: "assistant",
         content: assistantMessageContent,
         mode: mapped.mode === "compare" ? "advanced" : normalizedModeForMessage(mapped.mode),
-        model: currentSession.model,
+        model: requestModel,
         timestamp: now,
         metadata: {
           result_mode: mapped.mode,
         },
       };
 
-      updateSessionById(currentSession.id, (previous) => {
-        const nextMessages = [...previous.messages, userMessage, assistantMessage].slice(-MAX_MESSAGES_PER_SESSION);
-        const nextTitle =
-          previous.title === defaultSessionTitle() ? firstUserMessageTitle(nextMessages) : previous.title;
+      updateSessionById(requestSessionId, (previous) => {
+        const nextMessages = [...previous.messages, assistantMessage].slice(-MAX_MESSAGES_PER_SESSION);
         return {
           ...previous,
-          title: nextTitle,
           updatedAt: now,
-          mode: currentSession.mode,
-          model: currentSession.model,
+          mode: requestMode,
+          model: requestModel,
           messages: nextMessages,
           lastResult: mapped,
           lastResultSummary: assistantMessageContent,
           lastSubmittedQuery: normalized,
         };
       });
-
-      setQuery("");
     } catch (requestError) {
       const message = requestError instanceof Error ? requestError.message : "Lỗi yêu cầu không xác định";
       setError(message);
@@ -368,10 +399,52 @@ export function ChatPage() {
     }
   };
 
-  const handleChunkSettingsChange = (newChunkSize: number, newChunkOverlap: number, newTopK: number) => {
-    setChunkSize(newChunkSize);
-    setChunkOverlap(newChunkOverlap);
-    setTopK(newTopK);
+  const handleSettingsChange = async (payload: SettingsChangePayload) => {
+    const notices: string[] = [];
+    const shouldReindex =
+      payload.chunking.chunkSize !== chunkSize || payload.chunking.chunkOverlap !== chunkOverlap;
+    const shouldUpdateRetrieval =
+      payload.retrieval.mode !== retrievalMode || payload.retrieval.topK !== topK;
+
+    try {
+      if (shouldReindex) {
+        const reindexed = await reindexDocuments({
+          mode: payload.chunking.mode,
+          chunkSize: payload.chunking.chunkSize,
+          chunkOverlap: payload.chunking.chunkOverlap,
+        });
+        setChunkSize(reindexed.chunkSize);
+        setChunkOverlap(reindexed.chunkOverlap);
+        notices.push(
+          `Đã cập nhật ${reindexed.mode} (${reindexed.chunkSize}/${reindexed.chunkOverlap}). Re-index ${reindexed.reindexedDocuments} tài liệu, tổng chunk hoạt động: ${reindexed.activeChunks}.`,
+        );
+      }
+
+      if (shouldUpdateRetrieval) {
+        const updated = await updateRetrievalSettings({
+          mode: payload.retrieval.mode,
+          topK: payload.retrieval.topK,
+        });
+        setRetrievalMode(updated.mode);
+        setTopK(updated.topK);
+        setRerankTopN(updated.rerankTopN);
+        setContextTopK(updated.contextTopK);
+        notices.push(`Đã cập nhật truy xuất: top-k ${updated.topK}, rerank còn ${updated.rerankTopN}.`);
+      }
+
+      if (notices.length === 0) {
+        setNotice("Không có thay đổi cấu hình.");
+      } else {
+        setNotice(notices.join(" "));
+      }
+      setError(null);
+    } catch (requestError) {
+      const message =
+        requestError instanceof Error
+          ? requestError.message
+          : "Không thể cập nhật cấu hình chunk/retrieval.";
+      setError(message);
+    }
   };
 
   const handleSelectRecent = (chat: RecentChat) => {
@@ -470,8 +543,12 @@ export function ChatPage() {
         onOpenChange={setShowSettingsModal}
         chunkSize={chunkSize}
         chunkOverlap={chunkOverlap}
+        retrievalMode={retrievalMode}
         topK={topK}
-        onSettingsChange={handleChunkSettingsChange}
+        rerankTopN={rerankTopN}
+        contextTopK={contextTopK}
+        uploadedDocumentsCount={documents.length}
+        onSettingsChange={handleSettingsChange}
       />
 
       <AlertDialog

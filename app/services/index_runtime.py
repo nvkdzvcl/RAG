@@ -311,6 +311,21 @@ class RuntimeIndexManager:
         with self._lock:
             return dict(self._last_activation_stats)
 
+    def set_chunking(self, *, chunk_size: int, chunk_overlap: int) -> None:
+        """Update runtime chunking strategy for subsequent ingest/reindex calls."""
+        normalized_chunk_size = max(100, int(chunk_size))
+        normalized_chunk_overlap = max(0, int(chunk_overlap))
+        if normalized_chunk_overlap >= normalized_chunk_size:
+            normalized_chunk_overlap = max(0, normalized_chunk_size // 5)
+
+        with self._lock:
+            self.chunk_size = normalized_chunk_size
+            self.chunk_overlap = normalized_chunk_overlap
+            self.chunker = Chunker(
+                chunk_size=normalized_chunk_size,
+                chunk_overlap=normalized_chunk_overlap,
+            )
+
     def clear_uploaded_indexes(self) -> int:
         """Clear active uploaded indexes and remove persisted local index artifacts.
 

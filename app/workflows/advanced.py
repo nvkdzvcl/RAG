@@ -19,6 +19,7 @@ from app.workflows.shared import (
     is_language_mismatch,
     localized_insufficient_evidence,
     normalize_query,
+    trim_chat_history,
 )
 from app.workflows.standard import StandardWorkflow
 
@@ -37,7 +38,8 @@ class AdvancedWorkflow:
         refiner: AnswerRefiner | None = None,
     ) -> None:
         settings = get_settings()
-        self.max_loops = max_loops if max_loops is not None else settings.max_advanced_loops
+        self.max_loops = max_loops if max_loops is not None else int(getattr(settings, "max_advanced_loops", 1))
+        self.memory_window = max(0, int(getattr(settings, "memory_window", 3)))
 
         self.standard_workflow = standard_workflow or StandardWorkflow()
         llm_client = self.standard_workflow.generator.llm_client
@@ -86,19 +88,23 @@ class AdvancedWorkflow:
         start = time.perf_counter()
         normalized_query = normalize_query(query)
         resolved_language = response_language or detect_response_language(query)
+        normalized_history = trim_chat_history(
+            chat_history,
+            memory_window=self.memory_window,
+        )
 
         state = WorkflowState(
             mode=Mode.ADVANCED,
             user_query=query,
             normalized_query=normalized_query,
             response_language=resolved_language,
-            chat_history=chat_history or [],
+            chat_history=normalized_history,
         )
         trace: list[dict] = []
 
         need_retrieval, gate_reason = self.retrieval_gate.decide(
             normalized_query,
-            chat_history=chat_history,
+            chat_history=normalized_history,
             model=model,
             response_language=resolved_language,
         )
@@ -109,6 +115,8 @@ class AdvancedWorkflow:
                 "need_retrieval": need_retrieval,
                 "reason": gate_reason,
                 "response_language": resolved_language,
+                "memory_window": self.memory_window,
+                "memory_messages": len(normalized_history),
             }
         )
 
@@ -151,6 +159,7 @@ class AdvancedWorkflow:
                     current_query,
                     critique=critique_result,
                     loop_count=loop,
+                    chat_history=normalized_history,
                     model=model,
                     response_language=resolved_language,
                 )
@@ -165,6 +174,7 @@ class AdvancedWorkflow:
                 mode=Mode.ADVANCED,
                 model=model,
                 response_language=resolved_language,
+                chat_history=normalized_history,
             )
 
             state.retrieved_docs = [item.model_dump() for item in pipeline.retrieved]
@@ -178,6 +188,7 @@ class AdvancedWorkflow:
                 context=pipeline.selected_context,
                 loop_count=loop,
                 max_loops=self.max_loops,
+                chat_history=normalized_history,
                 model=model,
                 response_language=resolved_language,
             )
@@ -189,6 +200,8 @@ class AdvancedWorkflow:
                     "step": "loop",
                     "loop": loop,
                     "query": current_query,
+                    "chunk_size": self.standard_workflow.chunk_size,
+                    "chunk_overlap": self.standard_workflow.chunk_overlap,
                     "retrieved_count": len(pipeline.retrieved),
                     "reranked_count": len(pipeline.reranked),
                     "reranked_docs": [
@@ -216,6 +229,9 @@ class AdvancedWorkflow:
                         }
                         for item in pipeline.selected_context
                     ],
+                    "generated_status": pipeline.generated.status,
+                    "generated_stop_reason": pipeline.generated.stop_reason,
+                    "generated_confidence": pipeline.generated.confidence,
                     "critique": critique_result.model_dump(),
                 }
             )
@@ -267,6 +283,7 @@ class AdvancedWorkflow:
                 draft_answer=pipeline.generated.answer,
                 critique=critique_result,
                 context=pipeline.selected_context,
+                chat_history=normalized_history,
                 model=model,
                 response_language=resolved_language,
             )
@@ -302,6 +319,52 @@ class AdvancedWorkflow:
         )
         citation_count = len(final_citations)
         llm_fallback_used = bool(pipeline.generated.llm_fallback_used)
+
+        prior_stop_reason = stop_reason
+        insufficient_answer = localized_insufficient_evidence(resolved_language)
+
+        if hallucination_detected and final_status != "insufficient_evidence":
+            refined_grounded_answer = self.refiner.refine_strict_grounded(
+                query=normalized_query,
+                draft_answer=final_answer,
+                context=pipeline.selected_context,
+                chat_history=normalized_history,
+                model=model,
+                response_language=resolved_language,
+            )
+            refined_answer_text = refined_grounded_answer.strip()
+            refined_is_insufficient = refined_answer_text == insufficient_answer
+            refined_score = grounded_overlap_score(refined_answer_text, context_texts)
+            refined_hallucination = detect_hallucination(
+                refined_answer_text,
+                context_texts,
+                status="insufficient_evidence" if refined_is_insufficient else final_status,
+            )
+            trace.append(
+                {
+                    "step": "hallucination_guard",
+                    "triggered": True,
+                    "refined_grounded_score": refined_score,
+                    "refined_hallucination_detected": refined_hallucination,
+                }
+            )
+
+            if refined_answer_text and not refined_is_insufficient and not refined_hallucination:
+                final_answer = refined_answer_text
+                grounded_score = refined_score
+                hallucination_detected = False
+                if prior_stop_reason != "max_loop_reached":
+                    stop_reason = "hallucination_refined"
+            else:
+                final_answer = insufficient_answer
+                final_citations = []
+                final_status = "insufficient_evidence"
+                grounded_score = 0.0
+                hallucination_detected = False
+                citation_count = 0
+                if prior_stop_reason != "max_loop_reached":
+                    stop_reason = "hallucination_fallback_insufficient"
+            language_mismatch = is_language_mismatch(final_answer, resolved_language)
 
         state.final_answer = final_answer
         state.citations = final_citations

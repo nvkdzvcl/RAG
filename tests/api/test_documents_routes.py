@@ -439,6 +439,300 @@ def test_delete_missing_document_returns_404(
     assert "Document not found" in response.json()["detail"]
 
 
+def test_reindex_endpoint_updates_chunk_strategy_and_keeps_service_healthy(
+    isolated_client: tuple[TestClient, Path],
+) -> None:
+    client, _ = isolated_client
+
+    upload_response = client.post(
+        "/api/v1/documents/upload",
+        files={
+            "file": (
+                "chunking.txt",
+                ("Chunk strategy token. " * 120).encode("utf-8"),
+                "text/plain",
+            )
+        },
+    )
+    assert upload_response.status_code == 201
+
+    reindex = client.post(
+        "/api/v1/documents/reindex",
+        json={"chunk_size": 500, "chunk_overlap": 50},
+    )
+    assert reindex.status_code == 200
+    body = reindex.json()
+    assert body["status"] == "reindexed"
+    assert body["chunk_size"] == 500
+    assert body["chunk_overlap"] == 50
+    assert body["reindexed_documents"] >= 1
+
+    query_response = client.post(
+        "/api/v1/query",
+        json={
+            "query": "Chunk strategy token là gì?",
+            "mode": "standard",
+            "chat_history": [],
+        },
+    )
+    assert query_response.status_code == 200
+    query_body = query_response.json()
+    retrieve_step = query_body["trace"][0]
+    assert retrieve_step["step"] == "retrieve"
+    assert retrieve_step["chunk_size"] == 500
+    assert retrieve_step["chunk_overlap"] == 50
+
+
+def test_settings_chunking_preset_mode_ignores_manual_values_and_applies(
+    isolated_client: tuple[TestClient, Path],
+) -> None:
+    client, _ = isolated_client
+
+    upload_response = client.post(
+        "/api/v1/documents/upload",
+        files={
+            "file": (
+                "preset-mode.txt",
+                ("Preset mode token. " * 90).encode("utf-8"),
+                "text/plain",
+            )
+        },
+    )
+    assert upload_response.status_code == 201
+
+    applied = client.post(
+        "/api/v1/settings/chunking",
+        json={
+            "mode": "small",
+            "chunk_size": 99999,  # must be ignored in preset mode
+            "chunk_overlap": -5,  # must be ignored in preset mode
+        },
+    )
+    assert applied.status_code == 200
+    body = applied.json()
+    assert body["status"] == "reindexed"
+    assert body["mode"] == "small"
+    assert body["chunk_mode"] == "preset"
+    assert body["chunk_size"] == 500
+    assert body["chunk_overlap"] == 50
+    assert body["reindexed_documents"] >= 1
+
+    query_response = client.post(
+        "/api/v1/query",
+        json={
+            "query": "Preset mode token là gì?",
+            "mode": "standard",
+            "chat_history": [],
+        },
+    )
+    assert query_response.status_code == 200
+    retrieve_step = query_response.json()["trace"][0]
+    assert retrieve_step["step"] == "retrieve"
+    assert retrieve_step["chunk_size"] == 500
+    assert retrieve_step["chunk_overlap"] == 50
+
+
+def test_settings_chunking_custom_mode_accepts_and_applies_values(
+    isolated_client: tuple[TestClient, Path],
+) -> None:
+    client, _ = isolated_client
+
+    upload_response = client.post(
+        "/api/v1/documents/upload",
+        files={
+            "file": (
+                "custom-mode.txt",
+                ("Custom mode token. " * 80).encode("utf-8"),
+                "text/plain",
+            )
+        },
+    )
+    assert upload_response.status_code == 201
+
+    applied = client.post(
+        "/api/v1/settings/chunking",
+        json={
+            "mode": "custom",
+            "chunk_size": 700,
+            "chunk_overlap": 120,
+        },
+    )
+    assert applied.status_code == 200
+    body = applied.json()
+    assert body["status"] == "reindexed"
+    assert body["mode"] == "custom"
+    assert body["chunk_mode"] == "custom"
+    assert body["chunk_size"] == 700
+    assert body["chunk_overlap"] == 120
+    assert body["reindexed_documents"] >= 1
+
+    query_response = client.post(
+        "/api/v1/query",
+        json={
+            "query": "Custom mode token là gì?",
+            "mode": "standard",
+            "chat_history": [],
+        },
+    )
+    assert query_response.status_code == 200
+    retrieve_step = query_response.json()["trace"][0]
+    assert retrieve_step["chunk_size"] == 700
+    assert retrieve_step["chunk_overlap"] == 120
+
+
+def test_settings_chunking_custom_mode_rejects_invalid_payload(
+    isolated_client: tuple[TestClient, Path],
+) -> None:
+    client, _ = isolated_client
+
+    missing_values = client.post(
+        "/api/v1/settings/chunking",
+        json={"mode": "custom"},
+    )
+    assert missing_values.status_code == 422
+
+    invalid_overlap = client.post(
+        "/api/v1/settings/chunking",
+        json={
+            "mode": "custom",
+            "chunk_size": 500,
+            "chunk_overlap": 500,
+        },
+    )
+    assert invalid_overlap.status_code == 422
+
+
+def test_settings_chunking_change_triggers_reindex_and_updates_chunk_count(
+    isolated_client: tuple[TestClient, Path],
+) -> None:
+    client, _ = isolated_client
+
+    upload_response = client.post(
+        "/api/v1/documents/upload",
+        files={
+            "file": (
+                "reindex-check.txt",
+                ("Reindex chunk-count token. " * 220).encode("utf-8"),
+                "text/plain",
+            )
+        },
+    )
+    assert upload_response.status_code == 201
+
+    small = client.post("/api/v1/settings/chunking", json={"mode": "small"})
+    assert small.status_code == 200
+    small_body = small.json()
+    assert small_body["chunk_size"] == 500
+    assert small_body["chunk_overlap"] == 50
+    assert small_body["active_chunks"] > 0
+
+    large = client.post("/api/v1/settings/chunking", json={"mode": "large"})
+    assert large.status_code == 200
+    large_body = large.json()
+    assert large_body["chunk_size"] == 1500
+    assert large_body["chunk_overlap"] == 200
+    assert large_body["active_chunks"] > 0
+    assert large_body["active_chunks"] < small_body["active_chunks"]
+
+
+def test_settings_retrieval_preset_modes_map_correctly(
+    isolated_client: tuple[TestClient, Path],
+) -> None:
+    client, _ = isolated_client
+
+    low = client.post(
+        "/api/v1/settings/retrieval",
+        json={"mode": "low", "top_k": 20},
+    )
+    assert low.status_code == 200
+    low_body = low.json()
+    assert low_body["status"] == "updated"
+    assert low_body["mode"] == "low"
+    assert low_body["retrieval_mode"] == "preset"
+    assert low_body["top_k"] == 3
+    assert low_body["rerank_top_n"] <= low_body["top_k"]
+
+    balanced = client.post("/api/v1/settings/retrieval", json={"mode": "balanced"})
+    assert balanced.status_code == 200
+    assert balanced.json()["top_k"] == 5
+
+    high = client.post("/api/v1/settings/retrieval", json={"mode": "high"})
+    assert high.status_code == 200
+    assert high.json()["top_k"] == 8
+
+
+def test_settings_retrieval_custom_top_k_updates_query_retrieval(
+    isolated_client: tuple[TestClient, Path],
+) -> None:
+    client, _ = isolated_client
+
+    upload_response = client.post(
+        "/api/v1/documents/upload",
+        files={
+            "file": (
+                "retrieval-custom.txt",
+                ("Retrieval custom token alpha beta gamma. " * 220).encode("utf-8"),
+                "text/plain",
+            )
+        },
+    )
+    assert upload_response.status_code == 201
+
+    applied = client.post(
+        "/api/v1/settings/retrieval",
+        json={"mode": "custom", "top_k": 4},
+    )
+    assert applied.status_code == 200
+    body = applied.json()
+    assert body["mode"] == "custom"
+    assert body["retrieval_mode"] == "custom"
+    assert body["top_k"] == 4
+    assert body["rerank_top_n"] <= body["top_k"]
+
+    query_response = client.post(
+        "/api/v1/query",
+        json={
+            "query": "Retrieval custom token là gì?",
+            "mode": "standard",
+            "chat_history": [],
+        },
+    )
+    assert query_response.status_code == 200
+    query_body = query_response.json()
+    retrieve_step = query_body["trace"][0]
+    rerank_step = query_body["trace"][1]
+    context_step = query_body["trace"][2]
+    assert retrieve_step["step"] == "retrieve"
+    assert retrieve_step["top_k"] == 4
+    assert retrieve_step["count"] <= 4
+    assert rerank_step["rerank_top_n"] <= retrieve_step["top_k"]
+    assert context_step["final_context_size"] == context_step["count"]
+
+
+def test_settings_retrieval_invalid_custom_top_k_rejected(
+    isolated_client: tuple[TestClient, Path],
+) -> None:
+    client, _ = isolated_client
+
+    missing_top_k = client.post(
+        "/api/v1/settings/retrieval",
+        json={"mode": "custom"},
+    )
+    assert missing_top_k.status_code == 422
+
+    too_small = client.post(
+        "/api/v1/settings/retrieval",
+        json={"mode": "custom", "top_k": 0},
+    )
+    assert too_small.status_code == 422
+
+    too_large = client.post(
+        "/api/v1/settings/retrieval",
+        json={"mode": "custom", "top_k": 21},
+    )
+    assert too_large.status_code == 422
+
+
 def test_query_falls_back_to_seeded_after_delete_all_uploaded_documents(
     isolated_client: tuple[TestClient, Path],
 ) -> None:

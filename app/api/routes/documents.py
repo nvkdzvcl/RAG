@@ -5,10 +5,12 @@ from __future__ import annotations
 from fastapi import APIRouter, Depends, File, HTTPException, UploadFile, status
 
 from app.schemas.documents import (
+    ChunkSettingsRequest,
     DeleteAllDocumentsResponse,
     DeleteDocumentResponse,
     DocumentListResponse,
     DocumentResponse,
+    ReindexDocumentsResponse,
 )
 from app.services.document_service import DocumentService
 from app.services.runtime import get_document_service
@@ -41,6 +43,18 @@ def upload_document_compat(
 def list_documents(document_service: DocumentService = Depends(get_document_service)) -> DocumentListResponse:
     """List uploaded documents and their processing status."""
     return document_service.list_documents()
+
+
+@router.post("/reindex", response_model=ReindexDocumentsResponse)
+def reindex_documents(
+    payload: ChunkSettingsRequest,
+    document_service: DocumentService = Depends(get_document_service),
+) -> ReindexDocumentsResponse:
+    """Reindex ready uploaded documents using new chunk strategy."""
+    try:
+        return document_service.update_chunk_settings(payload)
+    except ValueError as exc:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
 
 
 @router.get("/{document_id}/status", response_model=DocumentResponse)
@@ -82,3 +96,4 @@ def delete_document(
         return document_service.delete_document(document_id)
     except KeyError as exc:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)) from exc
+

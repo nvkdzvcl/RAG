@@ -7,9 +7,18 @@ import {
   deleteDocument,
   getDocumentStatus,
   listDocuments,
+  reindexDocuments as requestReindexDocuments,
+  updateChunkingSettings as requestUpdateChunkingSettings,
+  updateRetrievalSettings as requestUpdateRetrievalSettings,
   uploadDocument,
 } from "@/api/client";
-import type { ApiDocument } from "@/api/types";
+import type {
+  ApiChunkConfigMode,
+  ApiChunkingMode,
+  ApiDocument,
+  ApiRetrievalConfigMode,
+  ApiRetrievalMode,
+} from "@/api/types";
 import type { DocumentRecord, DocumentStatus, ProcessingStage } from "@/types/document";
 
 const BACKEND_POLL_INTERVAL_MS = 1400;
@@ -118,6 +127,28 @@ export type UseDocumentIngestionResult = {
   uploadFile: (file: File) => Promise<void>;
   clearAllUploadedDocuments: () => Promise<{ deletedDocuments: number; deletedFiles: number }>;
   deleteUploadedDocument: (documentId: string) => Promise<{ documentId: string; remainingDocuments: number }>;
+  reindexDocuments: (payload: {
+    mode: ApiChunkingMode;
+    chunkSize: number;
+    chunkOverlap: number;
+  }) => Promise<{
+    mode: ApiChunkingMode;
+    chunkMode: ApiChunkConfigMode;
+    chunkSize: number;
+    chunkOverlap: number;
+    reindexedDocuments: number;
+    activeChunks: number;
+  }>;
+  updateRetrievalSettings: (payload: {
+    mode: ApiRetrievalMode;
+    topK: number;
+  }) => Promise<{
+    mode: ApiRetrievalMode;
+    retrievalMode: ApiRetrievalConfigMode;
+    topK: number;
+    rerankTopN: number;
+    contextTopK: number;
+  }>;
 };
 
 export function useDocumentIngestion(): UseDocumentIngestionResult {
@@ -441,6 +472,87 @@ export function useDocumentIngestion(): UseDocumentIngestionResult {
     }
   }, [clearPolling]);
 
+  const reindexDocuments = useCallback(async (payload: { mode: ApiChunkingMode; chunkSize: number; chunkOverlap: number }) => {
+    setUploadError(null);
+    setUploadMessage(null);
+    let appliedMode: ApiChunkingMode = payload.mode;
+    let appliedChunkMode: ApiChunkConfigMode = payload.mode === "custom" ? "custom" : "preset";
+    let appliedChunkSize = payload.chunkSize;
+    let appliedChunkOverlap = payload.chunkOverlap;
+    let reindexedDocuments = 0;
+    let activeChunks = 0;
+
+    try {
+      const updated = await requestUpdateChunkingSettings({
+        mode: payload.mode,
+        chunk_size: payload.mode === "custom" ? payload.chunkSize : undefined,
+        chunk_overlap: payload.mode === "custom" ? payload.chunkOverlap : undefined,
+      });
+      appliedMode = updated.mode;
+      appliedChunkMode = updated.chunk_mode;
+      appliedChunkSize = updated.chunk_size;
+      appliedChunkOverlap = updated.chunk_overlap;
+      reindexedDocuments = updated.reindexed_documents;
+      activeChunks = updated.active_chunks;
+    } catch (error) {
+      // Backward compatibility: fallback to legacy /documents/reindex endpoint.
+      if (!(error instanceof ApiFeatureUnavailableError)) {
+        throw error;
+      }
+      const legacy = await requestReindexDocuments({
+        chunk_size: payload.chunkSize,
+        chunk_overlap: payload.chunkOverlap,
+      });
+      reindexedDocuments = legacy.reindexed_documents;
+      activeChunks = legacy.active_chunks;
+      appliedChunkSize = legacy.chunk_size;
+      appliedChunkOverlap = legacy.chunk_overlap;
+      appliedMode = payload.mode;
+      appliedChunkMode = payload.mode === "custom" ? "custom" : "preset";
+    }
+
+    try {
+      const listed = await listDocuments();
+      setDocuments(listed.map(mapApiDocument));
+      setBackendAvailability("available");
+    } catch (error) {
+      if (shouldFallback(error)) {
+        setBackendAvailability("unavailable");
+      }
+    }
+
+    setUploadMessage(
+      `Đã re-index với chunk=${appliedChunkSize}/${appliedChunkOverlap} trên ${reindexedDocuments} tài liệu.`,
+    );
+    return {
+      mode: appliedMode,
+      chunkMode: appliedChunkMode,
+      chunkSize: appliedChunkSize,
+      chunkOverlap: appliedChunkOverlap,
+      reindexedDocuments,
+      activeChunks,
+    };
+  }, []);
+
+  const updateRetrievalSettings = useCallback(
+    async (payload: { mode: ApiRetrievalMode; topK: number }) => {
+      setUploadError(null);
+      setUploadMessage(null);
+      const updated = await requestUpdateRetrievalSettings({
+        mode: payload.mode,
+        top_k: payload.mode === "custom" ? payload.topK : undefined,
+      });
+      return {
+        mode: updated.mode,
+        retrievalMode: updated.retrieval_mode,
+        topK: updated.top_k,
+        rerankTopN: updated.rerank_top_n,
+        contextTopK: updated.context_top_k,
+      };
+    },
+    [],
+  );
+
   const activeDocument = useMemo(() => {
     if (activeDocumentId) {
       const explicit = documents.find((item) => item.id === activeDocumentId);
@@ -493,5 +605,7 @@ export function useDocumentIngestion(): UseDocumentIngestionResult {
     uploadFile,
     clearAllUploadedDocuments,
     deleteUploadedDocument,
+    reindexDocuments,
+    updateRetrievalSettings,
   };
 }

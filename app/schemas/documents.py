@@ -1,4 +1,4 @@
-"""Schemas for document upload, delete, and processing APIs."""
+"""Schemas for document upload, delete, settings, and processing APIs."""
 
 from __future__ import annotations
 
@@ -6,7 +6,7 @@ from datetime import datetime, timezone
 from enum import Enum
 from typing import Literal
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, model_validator
 
 
 class DocumentProcessingStatus(str, Enum):
@@ -137,3 +137,96 @@ class DeleteDocumentResponse(BaseModel):
     document_id: str
     remaining_documents: int = 0
     deleted_files: int = 0
+
+
+class ChunkSettingsRequest(BaseModel):
+    """Request payload for chunk strategy updates and reindexing."""
+
+    chunk_size: int = Field(ge=100)
+    chunk_overlap: int = Field(ge=0)
+
+    @model_validator(mode="after")
+    def validate_overlap(self) -> "ChunkSettingsRequest":
+        if self.chunk_overlap >= self.chunk_size:
+            raise ValueError("chunk_overlap must be smaller than chunk_size.")
+        return self
+
+
+ChunkingMode = Literal["small", "medium", "large", "custom"]
+ChunkConfigMode = Literal["preset", "custom"]
+RetrievalMode = Literal["low", "balanced", "high", "custom"]
+RetrievalConfigMode = Literal["preset", "custom"]
+
+
+class ChunkingSettingsRequest(BaseModel):
+    """Request payload for chunk mode + optional custom settings."""
+
+    mode: ChunkingMode
+    chunk_size: int | None = None
+    chunk_overlap: int | None = None
+
+    @model_validator(mode="after")
+    def validate_mode_payload(self) -> "ChunkingSettingsRequest":
+        if self.mode != "custom":
+            return self
+
+        if self.chunk_size is None or self.chunk_overlap is None:
+            raise ValueError("chunk_size and chunk_overlap are required when mode=custom.")
+        if self.chunk_size < 100 or self.chunk_size > 4000:
+            raise ValueError("chunk_size must be between 100 and 4000 when mode=custom.")
+        if self.chunk_overlap < 0 or self.chunk_overlap > 1000:
+            raise ValueError("chunk_overlap must be between 0 and 1000 when mode=custom.")
+        if self.chunk_overlap >= self.chunk_size:
+            raise ValueError("chunk_overlap must be smaller than chunk_size.")
+        return self
+
+
+class ReindexDocumentsResponse(BaseModel):
+    """API payload returned after chunk-setting reindex."""
+
+    status: Literal["reindexed"] = "reindexed"
+    chunk_size: int
+    chunk_overlap: int
+    reindexed_documents: int = 0
+    active_chunks: int = 0
+
+
+class ChunkingSettingsResponse(BaseModel):
+    """API payload returned after applying chunking mode/settings."""
+
+    status: Literal["reindexed"] = "reindexed"
+    mode: ChunkingMode
+    chunk_mode: ChunkConfigMode
+    chunk_size: int
+    chunk_overlap: int
+    reindexed_documents: int = 0
+    active_chunks: int = 0
+
+
+class RetrievalSettingsRequest(BaseModel):
+    """Request payload for retrieval mode + optional custom top_k."""
+
+    mode: RetrievalMode
+    top_k: int | None = None
+
+    @model_validator(mode="after")
+    def validate_mode_payload(self) -> "RetrievalSettingsRequest":
+        if self.mode != "custom":
+            return self
+
+        if self.top_k is None:
+            raise ValueError("top_k is required when mode=custom.")
+        if self.top_k < 1 or self.top_k > 20:
+            raise ValueError("top_k must be between 1 and 20 when mode=custom.")
+        return self
+
+
+class RetrievalSettingsResponse(BaseModel):
+    """API payload returned after applying retrieval mode/settings."""
+
+    status: Literal["updated"] = "updated"
+    mode: RetrievalMode
+    retrieval_mode: RetrievalConfigMode
+    top_k: int
+    rerank_top_n: int
+    context_top_k: int

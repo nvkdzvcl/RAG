@@ -11,7 +11,12 @@ from app.core.prompting import PromptRepository
 from app.generation.llm_client import LLMClient, complete_with_model
 from app.schemas.retrieval import RetrievalResult
 from app.schemas.workflow import CritiqueResult
-from app.workflows.shared import build_language_system_prompt, response_language_name
+from app.workflows.shared import (
+    build_chat_history_context,
+    build_language_system_prompt,
+    localized_insufficient_evidence,
+    response_language_name,
+)
 
 _REFINE_PROMPT_FALLBACK = (
     "Refine the draft answer to improve groundedness and coverage.\\n"
@@ -19,8 +24,23 @@ _REFINE_PROMPT_FALLBACK = (
     "response_language: $response_language\\n"
     "Return strict JSON only with key: refined_answer.\\n"
     "question: $question\\n"
+    "chat_history: $chat_history\\n"
     "draft_answer: $draft_answer\\n"
     "critique: $critique\\n"
+    "selected_context: $selected_context"
+)
+
+_STRICT_GROUNDED_REWRITE_PROMPT_FALLBACK = (
+    "Rewrite the draft answer strictly based on selected context.\\n"
+    "ONLY use facts present in selected_context.\\n"
+    "Do NOT use external knowledge.\\n"
+    "If the context does not support the answer, return exactly: "
+    "\"Không đủ thông tin từ tài liệu để trả lời\"\\n"
+    "Return in $response_language_name only.\\n"
+    "Return strict JSON only with key: refined_answer.\\n"
+    "question: $question\\n"
+    "chat_history: $chat_history\\n"
+    "draft_answer: $draft_answer\\n"
     "selected_context: $selected_context"
 )
 
@@ -39,6 +59,8 @@ class AnswerRefiner:
         settings = get_settings()
         self.llm_client = llm_client
         self.use_llm = use_llm
+        self.memory_window = max(0, int(getattr(settings, "memory_window", 3)))
+        self.max_tokens = max(1, int(getattr(settings, "llm_max_tokens", 2048)))
         resolved_prompt_dir = prompt_dir or settings.prompt_dir
         self.prompt_repository = prompt_repository or PromptRepository(resolved_prompt_dir)
 
@@ -76,6 +98,7 @@ class AnswerRefiner:
         critique: CritiqueResult,
         context: list[RetrievalResult],
         *,
+        chat_history: list[dict[str, str]] | None = None,
         model: str | None = None,
         response_language: str = "en",
     ) -> str:
@@ -94,6 +117,10 @@ class AnswerRefiner:
             "refine.md",
             fallback=_REFINE_PROMPT_FALLBACK,
             question=query,
+            chat_history=build_chat_history_context(
+                chat_history,
+                memory_window=self.memory_window,
+            ),
             draft_answer=draft_answer,
             critique=json.dumps(critique.model_dump(mode="json"), ensure_ascii=False),
             selected_context=json.dumps(
@@ -117,6 +144,7 @@ class AnswerRefiner:
                 prompt,
                 system_prompt=build_language_system_prompt(response_language),
                 model=model,
+                max_tokens=self.max_tokens,
             )
         except Exception:
             return heuristic
@@ -128,3 +156,63 @@ class AnswerRefiner:
                 return refined_answer
 
         return heuristic
+
+    def refine_strict_grounded(
+        self,
+        *,
+        query: str,
+        draft_answer: str,
+        context: list[RetrievalResult],
+        chat_history: list[dict[str, str]] | None = None,
+        model: str | None = None,
+        response_language: str = "en",
+    ) -> str:
+        """One-shot strict grounding rewrite used by hallucination guard."""
+        if not context:
+            return localized_insufficient_evidence(response_language)
+
+        default_answer = localized_insufficient_evidence(response_language)
+        if not self.use_llm or self.llm_client is None:
+            return default_answer
+
+        prompt = self.prompt_repository.render(
+            "refine_grounded.md",
+            fallback=_STRICT_GROUNDED_REWRITE_PROMPT_FALLBACK,
+            question=query,
+            chat_history=build_chat_history_context(
+                chat_history,
+                memory_window=self.memory_window,
+            ),
+            draft_answer=draft_answer,
+            critique="{}",
+            selected_context=json.dumps(
+                [
+                    {
+                        "chunk_id": item.chunk_id,
+                        "doc_id": item.doc_id,
+                        "content": item.content,
+                    }
+                    for item in context
+                ],
+                ensure_ascii=False,
+            ),
+            response_language=response_language,
+            response_language_name=response_language_name(response_language),
+        )
+        try:
+            raw = complete_with_model(
+                self.llm_client,
+                prompt,
+                system_prompt=build_language_system_prompt(response_language),
+                model=model,
+                max_tokens=min(self.max_tokens, 512),
+            )
+        except Exception:
+            return default_answer
+
+        payload = parse_json_object(raw)
+        if payload and isinstance(payload.get("refined_answer"), str):
+            refined_answer = payload["refined_answer"].strip()
+            if refined_answer:
+                return refined_answer
+        return default_answer
