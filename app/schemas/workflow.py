@@ -41,6 +41,7 @@ class WorkflowState(BaseModel):
     critique: CritiqueResult | None = None
     confidence: float | None = None
     grounded_score: float = 0.0
+    grounding_reason: str = "not_evaluated"
     hallucination_detected: bool = False
     language_mismatch: bool = False
     llm_fallback_used: bool = False

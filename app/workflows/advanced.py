@@ -15,9 +15,8 @@ from app.workflows.query_rewrite import QueryRewriter
 from app.workflows.refine import AnswerRefiner
 from app.workflows.retrieval_gate import HeuristicRetrievalGate
 from app.workflows.shared import (
+    assess_grounding,
     detect_response_language,
-    detect_hallucination,
-    grounded_overlap_score,
     is_language_mismatch,
     localized_insufficient_evidence,
     normalize_query,
@@ -178,6 +177,7 @@ class AdvancedWorkflow:
                 response_language=resolved_language,
                 language_mismatch=False,
                 grounded_score=0.0,
+                grounding_reason="gate_no_retrieval_no_context",
                 citation_count=0,
                 hallucination_detected=False,
                 llm_fallback_used=False,
@@ -293,6 +293,7 @@ class AdvancedWorkflow:
                 response_language=resolved_language,
                 language_mismatch=False,
                 grounded_score=0.0,
+                grounding_reason="no_pipeline_result",
                 citation_count=0,
                 hallucination_detected=False,
                 llm_fallback_used=False,
@@ -394,24 +395,36 @@ class AdvancedWorkflow:
                 if not language_mismatch and stop_reason == "critique_pass":
                     stop_reason = "language_refined"
 
-        grounded_score = grounded_overlap_score(final_answer, context_texts)
+        citation_count = len(final_citations)
+        grounding = assess_grounding(
+            final_answer,
+            context_texts,
+            citation_count=citation_count,
+            has_selected_context=bool(pipeline.selected_context),
+            status=final_status,
+        )
+        grounded_score = grounding.grounded_score
+        grounding_reason = grounding.grounding_reason
+        hallucination_detected = grounding.hallucination_detected
+
         if has_relevant_context and final_status != "insufficient_evidence":
             if grounded_score >= self.STRONG_GROUNDED_THRESHOLD:
                 final_status = "answered"
-            elif grounded_score >= self.VERY_LOW_GROUNDED_THRESHOLD:
+            elif (
+                grounded_score >= self.VERY_LOW_GROUNDED_THRESHOLD
+                or (citation_count > 0 and has_context and not hallucination_detected)
+            ):
                 final_status = "partial"
             else:
                 final_status = "insufficient_evidence"
                 final_answer = insufficient_answer
                 final_citations = []
+                citation_count = 0
+                grounded_score = 0.0
+                grounding_reason = "very_low_grounding_no_support"
+                hallucination_detected = False
                 stop_reason = "very_low_grounding"
 
-        hallucination_detected = detect_hallucination(
-            final_answer,
-            context_texts,
-            status=final_status,
-        )
-        citation_count = len(final_citations)
         llm_fallback_used = bool(pipeline.generated.llm_fallback_used)
 
         prior_stop_reason = stop_reason
@@ -427,17 +440,22 @@ class AdvancedWorkflow:
             )
             refined_answer_text = refined_grounded_answer.strip()
             refined_is_insufficient = refined_answer_text == insufficient_answer
-            refined_score = grounded_overlap_score(refined_answer_text, context_texts)
-            refined_hallucination = detect_hallucination(
+            refined_grounding = assess_grounding(
                 refined_answer_text,
                 context_texts,
+                citation_count=citation_count,
+                has_selected_context=bool(pipeline.selected_context),
                 status="insufficient_evidence" if refined_is_insufficient else final_status,
             )
+            refined_score = refined_grounding.grounded_score
+            refined_reason = refined_grounding.grounding_reason
+            refined_hallucination = refined_grounding.hallucination_detected
             trace.append(
                 {
                     "step": "hallucination_guard",
                     "triggered": True,
                     "refined_grounded_score": refined_score,
+                    "refined_grounding_reason": refined_reason,
                     "refined_hallucination_detected": refined_hallucination,
                     "critique_category": critique_category,
                 }
@@ -446,6 +464,7 @@ class AdvancedWorkflow:
             if refined_answer_text and not refined_is_insufficient and not refined_hallucination:
                 final_answer = refined_answer_text
                 grounded_score = refined_score
+                grounding_reason = refined_reason
                 if refined_score >= self.STRONG_GROUNDED_THRESHOLD:
                     final_status = "answered"
                 elif refined_score >= self.VERY_LOW_GROUNDED_THRESHOLD:
@@ -454,7 +473,9 @@ class AdvancedWorkflow:
                     final_status = "insufficient_evidence"
                     final_answer = insufficient_answer
                     final_citations = []
+                    citation_count = 0
                     grounded_score = 0.0
+                    grounding_reason = "very_low_grounding_after_refine"
                 hallucination_detected = False
                 if prior_stop_reason != "max_loop_reached":
                     stop_reason = "hallucination_refined"
@@ -465,8 +486,16 @@ class AdvancedWorkflow:
                         response_language=resolved_language,
                     )
                     final_status = "partial"
-                    grounded_score = grounded_overlap_score(final_answer, context_texts)
-                    hallucination_detected = False
+                    cautious_grounding = assess_grounding(
+                        final_answer,
+                        context_texts,
+                        citation_count=len(final_citations),
+                        has_selected_context=bool(pipeline.selected_context),
+                        status=final_status,
+                    )
+                    grounded_score = cautious_grounding.grounded_score
+                    grounding_reason = cautious_grounding.grounding_reason
+                    hallucination_detected = cautious_grounding.hallucination_detected
                     if prior_stop_reason != "max_loop_reached":
                         stop_reason = "weak_evidence_cautious"
                 else:
@@ -474,6 +503,7 @@ class AdvancedWorkflow:
                     final_citations = []
                     final_status = "insufficient_evidence"
                     grounded_score = 0.0
+                    grounding_reason = "hallucination_fallback_insufficient"
                     hallucination_detected = False
                     citation_count = 0
                     if prior_stop_reason != "max_loop_reached":
@@ -482,7 +512,18 @@ class AdvancedWorkflow:
 
         if has_relevant_context and final_status != "insufficient_evidence" and not final_citations:
             final_citations = context_citations
-            citation_count = len(final_citations)
+        citation_count = len(final_citations)
+
+        final_grounding = assess_grounding(
+            final_answer,
+            context_texts,
+            citation_count=citation_count,
+            has_selected_context=bool(pipeline.selected_context),
+            status=final_status,
+        )
+        grounded_score = final_grounding.grounded_score
+        grounding_reason = final_grounding.grounding_reason
+        hallucination_detected = final_grounding.hallucination_detected
 
         trace.append(
             {
@@ -491,6 +532,8 @@ class AdvancedWorkflow:
                 "has_relevant_context": has_relevant_context,
                 "critique_category": critique_category,
                 "grounded_score": grounded_score,
+                "grounding_reason": grounding_reason,
+                "hallucination_detected": hallucination_detected,
                 "status": final_status,
             }
         )
@@ -500,6 +543,7 @@ class AdvancedWorkflow:
         state.stop_reason = stop_reason
         state.language_mismatch = language_mismatch
         state.grounded_score = grounded_score
+        state.grounding_reason = grounding_reason
         state.hallucination_detected = hallucination_detected
         state.llm_fallback_used = llm_fallback_used
         trace.append(
@@ -513,6 +557,7 @@ class AdvancedWorkflow:
             {
                 "step": "grounding_check",
                 "grounded_score": grounded_score,
+                "grounding_reason": grounding_reason,
                 "hallucination_detected": hallucination_detected,
                 "citation_count": citation_count,
                 "llm_fallback_used": llm_fallback_used,
@@ -532,6 +577,7 @@ class AdvancedWorkflow:
             response_language=resolved_language,
             language_mismatch=state.language_mismatch,
             grounded_score=state.grounded_score,
+            grounding_reason=state.grounding_reason,
             citation_count=citation_count,
             hallucination_detected=state.hallucination_detected,
             llm_fallback_used=state.llm_fallback_used,

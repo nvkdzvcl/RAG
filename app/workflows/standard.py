@@ -23,11 +23,10 @@ from app.schemas.ingestion import DocumentChunk
 from app.schemas.retrieval import RetrievalResult
 from app.services.index_runtime import EmptyRetriever, RuntimeIndexManager
 from app.workflows.shared import (
+    assess_grounding,
     build_chat_history_context,
     build_language_system_prompt,
     detect_response_language,
-    detect_hallucination,
-    grounded_overlap_score,
     is_language_mismatch,
     localized_insufficient_evidence,
     normalize_query,
@@ -284,13 +283,18 @@ class StandardWorkflow:
                 if not language_mismatch:
                     stop_reason = "language_refined"
 
-        grounded_score = grounded_overlap_score(final_answer, context_texts)
-        hallucination_detected = detect_hallucination(
+        final_citations = list(pipeline.generated.citations)
+        citation_count = len(final_citations)
+        grounding = assess_grounding(
             final_answer,
             context_texts,
+            citation_count=citation_count,
+            has_selected_context=bool(pipeline.selected_context),
             status=pipeline.generated.status,
         )
-        citation_count = len(pipeline.generated.citations)
+        grounded_score = grounding.grounded_score
+        grounding_reason = grounding.grounding_reason
+        hallucination_detected = grounding.hallucination_detected
         llm_fallback_used = bool(pipeline.generated.llm_fallback_used)
 
         elapsed_ms = int((time.perf_counter() - start_time) * 1000)
@@ -354,6 +358,7 @@ class StandardWorkflow:
                 "response_language": resolved_language,
                 "language_mismatch": language_mismatch,
                 "grounded_score": grounded_score,
+                "grounding_reason": grounding_reason,
                 "hallucination_detected": hallucination_detected,
                 "llm_fallback_used": llm_fallback_used,
             },
@@ -371,6 +376,7 @@ class StandardWorkflow:
                 {
                     "step": "grounding_check",
                     "grounded_score": grounded_score,
+                    "grounding_reason": grounding_reason,
                     "hallucination_detected": hallucination_detected,
                     "citation_count": citation_count,
                     "llm_fallback_used": llm_fallback_used,
@@ -380,7 +386,7 @@ class StandardWorkflow:
         return StandardQueryResponse(
             mode="standard",
             answer=final_answer,
-            citations=pipeline.generated.citations,
+            citations=final_citations,
             confidence=pipeline.generated.confidence,
             stop_reason=stop_reason,
             status=pipeline.generated.status,
@@ -388,6 +394,7 @@ class StandardWorkflow:
             response_language=resolved_language,
             language_mismatch=language_mismatch,
             grounded_score=grounded_score,
+            grounding_reason=grounding_reason,
             citation_count=citation_count,
             hallucination_detected=hallucination_detected,
             llm_fallback_used=llm_fallback_used,

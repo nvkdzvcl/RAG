@@ -31,6 +31,7 @@ class ModeResult(BaseModel):
     response_language: str = "en"
     language_mismatch: bool = False
     grounded_score: float = 0.0
+    grounding_reason: str = "not_evaluated"
     citation_count: int = 0
     hallucination_detected: bool = False
     llm_fallback_used: bool = False

@@ -3,12 +3,18 @@
 from __future__ import annotations
 
 import re
+from dataclasses import dataclass
 
 ResponseLanguage = str
 
-_VI_DIACRITIC_PATTERN = re.compile(r"[àáạảãăắằặẳẵâấầậẩẫèéẹẻẽêếềệểễìíịỉĩòóọỏõôốồộổỗơớờợởỡùúụủũưứừựửữỳýỵỷỹđ]", re.IGNORECASE)
+_VI_DIACRITIC_PATTERN = re.compile(
+    r"[àáạảãăắằặẳẵâấầậẩẫèéẹẻẽêếềệểễìíịỉĩòóọỏõôốồộổỗơớờợởỡùúụủũưứừựửữỳýỵỷỹđ]",
+    re.IGNORECASE,
+)
 _CJK_PATTERN = re.compile(r"[\u3400-\u4dbf\u4e00-\u9fff\uf900-\ufaff]")
-_WORD_PATTERN = re.compile(r"[A-Za-zÀ-ỹĐđ']+")
+_WORD_PATTERN = re.compile(r"[A-Za-zÀ-ỹĐđ0-9']+")
+_WHITESPACE_PATTERN = re.compile(r"\s+")
+_SANITIZE_PATTERN = re.compile(r"[^A-Za-zÀ-ỹĐđ0-9\s']")
 
 _VI_COMMON_WORDS = {
     "la",
@@ -49,6 +55,53 @@ _VI_COMMON_WORDS = {
     "tôi",
     "ban",
     "bạn",
+    "nay",
+    "này",
+    "do",
+    "neu",
+    "nếu",
+    "theo",
+    "tren",
+    "trên",
+    "duoi",
+    "dưới",
+    "dang",
+    "đang",
+    "se",
+    "sẽ",
+    "da",
+    "đã",
+    "can",
+    "cần",
+    "them",
+    "thêm",
+    "tu",
+    "từ",
+    "den",
+    "đến",
+    "day",
+    "đây",
+    "kia",
+    "đó",
+    "ve",
+    "về",
+    "cung",
+    "cũng",
+    "len",
+    "lên",
+    "xuong",
+    "xuống",
+    "roi",
+    "rồi",
+    "chi",
+    "chỉ",
+    "rat",
+    "rất",
+    "co",
+    "có",
+    "thong",
+    "thông",
+    "tin",
 }
 
 _EN_COMMON_WORDS = {
@@ -69,7 +122,108 @@ _EN_COMMON_WORDS = {
     "be",
     "from",
     "or",
+    "an",
+    "by",
+    "at",
+    "was",
+    "were",
+    "can",
+    "could",
+    "should",
+    "would",
+    "about",
+    "into",
+    "over",
+    "under",
+    "than",
+    "then",
+    "also",
+    "more",
+    "most",
+    "very",
+    "some",
+    "any",
+    "all",
+    "each",
+    "every",
+    "such",
+    "other",
+    "their",
+    "there",
+    "here",
+    "our",
+    "your",
+    "my",
 }
+
+_GENERIC_PHRASES = (
+    "không đủ thông tin",
+    "khó xác định",
+    "cần thêm thông tin",
+    "dựa trên ngữ cảnh hiện có",
+    "theo ngữ cảnh hiện có",
+    "thông tin liên quan là",
+    "cannot determine",
+    "can not determine",
+    "based on the available context",
+    "evidence is limited",
+    "insufficient evidence",
+)
+
+
+@dataclass(frozen=True)
+class GroundingAssessment:
+    grounded_score: float
+    grounding_reason: str
+    hallucination_detected: bool
+
+
+def _normalize_match_text(text: str) -> str:
+    lowered = _WHITESPACE_PATTERN.sub(" ", text).strip().lower()
+    return _SANITIZE_PATTERN.sub(" ", lowered)
+
+
+def _meaningful_keywords(text: str) -> set[str]:
+    normalized = _normalize_match_text(text)
+    keywords: set[str] = set()
+    for token in _WORD_PATTERN.findall(normalized):
+        term = token.lower().strip()
+        if not term:
+            continue
+        if term in _VI_COMMON_WORDS or term in _EN_COMMON_WORDS:
+            continue
+        if term.isdigit():
+            if len(term) >= 2:
+                keywords.add(term)
+            continue
+        if len(term) < 2:
+            continue
+        keywords.add(term)
+    return keywords
+
+
+def _char_ngram_precision(answer: str, context_chunks: list[str], n: int = 3) -> float:
+    answer_text = _normalize_match_text(answer).replace(" ", "")
+    context_text = _normalize_match_text(" ".join(context_chunks)).replace(" ", "")
+    if len(answer_text) < n or len(context_text) < n:
+        return 0.0
+
+    answer_ngrams = {answer_text[idx : idx + n] for idx in range(len(answer_text) - n + 1)}
+    context_ngrams = {context_text[idx : idx + n] for idx in range(len(context_text) - n + 1)}
+    if not answer_ngrams or not context_ngrams:
+        return 0.0
+
+    overlap = len(answer_ngrams.intersection(context_ngrams))
+    return round(overlap / max(len(answer_ngrams), 1), 4)
+
+
+def _is_generic_answer(answer: str) -> bool:
+    normalized = _normalize_match_text(answer)
+    if not normalized:
+        return True
+    if any(phrase in normalized for phrase in _GENERIC_PHRASES):
+        return True
+    return len(_meaningful_keywords(answer)) <= 2
 
 
 def normalize_query(query: str) -> str:
@@ -198,30 +352,99 @@ def localized_insufficient_evidence(response_language: ResponseLanguage) -> str:
 
 
 def _normalized_terms(text: str) -> set[str]:
-    terms = {token.lower() for token in _WORD_PATTERN.findall(text)}
-    return {term for term in terms if len(term) >= 3}
+    return _meaningful_keywords(text)
 
 
 def grounded_overlap_score(answer: str, context_chunks: list[str]) -> float:
-    """Compute a lightweight groundedness proxy via token overlap ratio."""
+    """Compute a tolerant groundedness score using keyword and char overlap."""
     answer_terms = _normalized_terms(answer)
-    if not answer_terms:
-        return 0.0
-
     context_terms = _normalized_terms(" ".join(context_chunks))
-    if not context_terms:
-        return 0.0
 
-    overlap_count = len(answer_terms.intersection(context_terms))
-    return round(overlap_count / max(len(answer_terms), 1), 4)
+    keyword_precision = 0.0
+    if answer_terms and context_terms:
+        overlap_count = len(answer_terms.intersection(context_terms))
+        keyword_precision = overlap_count / max(len(answer_terms), 1)
+    char_precision = _char_ngram_precision(answer, context_chunks)
+
+    if answer_terms:
+        blended = (0.8 * keyword_precision) + (0.2 * char_precision)
+    else:
+        blended = char_precision
+    return round(max(0.0, min(1.0, blended)), 4)
 
 
-def detect_hallucination(answer: str, context_chunks: list[str], *, status: str | None = None) -> bool:
-    """Heuristic hallucination marker based on low overlap with selected context."""
+def assess_grounding(
+    answer: str,
+    context_chunks: list[str],
+    *,
+    citation_count: int = 0,
+    has_selected_context: bool | None = None,
+    status: str | None = None,
+) -> GroundingAssessment:
+    """Assess grounding and hallucination risk from answer/context signals."""
     normalized_status = (status or "").strip().lower()
-    if normalized_status == "insufficient_evidence":
-        return False
+    has_context = bool(context_chunks) if has_selected_context is None else bool(has_selected_context)
 
     score = grounded_overlap_score(answer, context_chunks)
-    # Answered/partial outputs with almost no lexical grounding are risky.
-    return score < 0.08
+    if normalized_status == "insufficient_evidence":
+        return GroundingAssessment(
+            grounded_score=score,
+            grounding_reason="insufficient_evidence_status",
+            hallucination_detected=False,
+        )
+
+    if not answer.strip():
+        return GroundingAssessment(
+            grounded_score=0.0,
+            grounding_reason="empty_answer",
+            hallucination_detected=has_context or citation_count > 0,
+        )
+
+    if not has_context:
+        return GroundingAssessment(
+            grounded_score=score,
+            grounding_reason="no_selected_context",
+            hallucination_detected=True,
+        )
+
+    generic_answer = _is_generic_answer(answer)
+    if citation_count > 0:
+        if score >= 0.12:
+            return GroundingAssessment(score, "strong_grounding_with_citations", False)
+        if score >= 0.02:
+            return GroundingAssessment(score, "weak_grounding_with_citations", False)
+        if score >= 0.005:
+            return GroundingAssessment(score, "very_low_overlap_but_cited", False)
+        return GroundingAssessment(score, "almost_no_overlap_even_with_citations", True)
+
+    if generic_answer:
+        return GroundingAssessment(
+            grounded_score=score,
+            grounding_reason="generic_answer_without_citations",
+            hallucination_detected=True,
+        )
+
+    if score >= 0.12:
+        return GroundingAssessment(score, "strong_grounding_no_citations", False)
+    if score >= 0.04:
+        return GroundingAssessment(score, "weak_grounding_no_citations", False)
+    return GroundingAssessment(score, "low_overlap_without_citations", True)
+
+
+def detect_hallucination(
+    answer: str,
+    context_chunks: list[str],
+    *,
+    status: str | None = None,
+    citation_count: int = 0,
+    has_selected_context: bool | None = None,
+) -> bool:
+    """Backward-compatible hallucination flag wrapper."""
+    assessment = assess_grounding(
+        answer,
+        context_chunks,
+        citation_count=citation_count,
+        has_selected_context=has_selected_context,
+        status=status,
+    )
+    return assessment.hallucination_detected
