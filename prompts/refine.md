@@ -1,8 +1,11 @@
-Refine the draft answer using critique and context.
+Refine the draft answer using critique feedback and context.
 
 Rules:
-- Keep only grounded claims.
-- Address missing aspects when evidence exists.
+- Read the critique JSON to understand what needs improvement.
+- If `should_refine_answer` is true, rewrite the answer to address issues noted in `note` and `missing_aspects`.
+- Keep only grounded claims — remove any claim not supported by selected context.
+- Address missing aspects only when evidence exists in selected context.
+- Do not add facts from outside the provided context.
 - Use chat history only to resolve follow-up references.
 - Return in `response_language` only.
 - If `response_language` is `vi`, answer fully in Vietnamese.
