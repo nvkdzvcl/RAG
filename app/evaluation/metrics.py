@@ -173,6 +173,7 @@ def compute_retrieval_metrics(
     hit = False
     mrr = 0.0
     dcg = 0.0
+    matched_golds = set()
 
     for i, chunk_id in enumerate(retrieved_chunk_ids):
         # Extract base doc_id if chunk_id is standard deterministic format
@@ -181,12 +182,15 @@ def compute_retrieval_metrics(
         citation_tokens = {chunk_id.lower(), doc_id.lower()}
         citation_compound = [f"{doc_id}#{chunk_id}".lower()]
 
-        is_relevant = any(
-            _match_gold_source(gold, citation_tokens, citation_compound)
-            for gold in expected
-        )
+        newly_matched = False
+        for gold in expected:
+            if gold not in matched_golds:
+                if _match_gold_source(gold, citation_tokens, citation_compound):
+                    matched_golds.add(gold)
+                    newly_matched = True
+                    break
 
-        if is_relevant:
+        if newly_matched:
             hit = True
             if mrr == 0.0:
                 mrr = 1.0 / (i + 1)

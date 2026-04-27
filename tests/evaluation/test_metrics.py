@@ -58,3 +58,13 @@ def test_compute_retrieval_metrics_ndcg_reward_order() -> None:
     assert math.isclose(mrr2, 0.5)
     assert ndcg1 > ndcg2
     assert math.isclose(ndcg1, 1.0)
+
+
+def test_compute_retrieval_metrics_ndcg_no_duplicate_reward() -> None:
+    hit, mrr, ndcg = compute_retrieval_metrics(
+        ["doc_chunk_001", "doc_chunk_002", "doc_chunk_003"], ["doc"]
+    )
+    # nDCG should cap at 1.0 instead of accumulating 1/log2(i+2) infinitely
+    assert hit is True
+    assert math.isclose(mrr, 1.0)
+    assert math.isclose(ndcg, 1.0)
