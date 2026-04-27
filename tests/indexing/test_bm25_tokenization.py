@@ -28,8 +28,8 @@ def test_tokenize_bm25_uses_underthesea_when_available(monkeypatch) -> None:
 
     monkeypatch.setattr(bm25_module, "_UNDERTHESEA_WORD_TOKENIZE", fake_word_tokenize)
 
-    assert tokenize_bm25("sinh viên đại học") == ["sinh_viên", "đại_học"]
-    assert BM25Index()._tokenize("sinh viên đại học") == ["sinh_viên", "đại_học"]
+    assert tokenize_bm25("Sinh viên đại học") == ["sinh_viên", "đại_học"]
+    assert BM25Index()._tokenize("Sinh viên đại học") == ["sinh_viên", "đại_học"]
 
 
 def test_tokenize_bm25_falls_back_when_underthesea_missing(monkeypatch) -> None:

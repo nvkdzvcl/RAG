@@ -21,6 +21,16 @@ def _legacy_tokenize(text: str) -> list[str]:
     return _LEGACY_TOKEN_PATTERN.findall(text.lower())
 
 
+def _split_segmented_text(segmented_text: str) -> list[str]:
+    tokens: list[str] = []
+    for raw_token in segmented_text.strip().split():
+        pieces = _LEGACY_TOKEN_PATTERN.findall(raw_token.lower())
+        if not pieces:
+            continue
+        tokens.extend(pieces)
+    return tokens
+
+
 def _tokenize_with_underthesea(text: str) -> list[str]:
     if _UNDERTHESEA_WORD_TOKENIZE is None:
         return []
@@ -33,7 +43,7 @@ def _tokenize_with_underthesea(text: str) -> list[str]:
         return []
 
     if isinstance(segmented, str):
-        return _LEGACY_TOKEN_PATTERN.findall(segmented.lower())
+        return _split_segmented_text(segmented)
 
     tokens: list[str] = []
     for raw in segmented:
