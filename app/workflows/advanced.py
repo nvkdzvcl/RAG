@@ -8,21 +8,24 @@ from typing import Any
 from app.core.config import get_settings
 from app.generation.citations import CitationBuilder
 from app.schemas.api import AdvancedQueryResponse
-from app.schemas.common import Mode
+from app.schemas.common import Citation, Mode
 from app.schemas.retrieval import RetrievalResult
 from app.schemas.workflow import WorkflowState
+from app.workflows.advanced_pipeline import (
+    AdvancedPipelineContext,
+    CritiqueLoopStage,
+    FinalGroundingStage,
+    HallucinationGuardStage,
+    LanguageGuardStage,
+    Pipeline,
+    RefineStage,
+    RetrievalGateStage,
+)
 from app.workflows.critique import HeuristicCritic
 from app.workflows.query_rewrite import QueryRewriter
 from app.workflows.refine import AnswerRefiner
 from app.workflows.retrieval_gate import HeuristicRetrievalGate
-from app.workflows.shared import (
-    assess_grounding,
-    detect_response_language,
-    is_language_mismatch,
-    localized_insufficient_evidence,
-    normalize_query,
-    trim_chat_history,
-)
+from app.workflows.shared import detect_response_language, localized_insufficient_evidence, normalize_query, trim_chat_history
 from app.workflows.standard import StandardWorkflow
 
 
@@ -117,6 +120,58 @@ class AdvancedWorkflow:
             "gate_no_retrieval_no_context",
         )
 
+    def _build_response(
+        self,
+        *,
+        answer: str,
+        citations: list[Citation],
+        confidence: float | None,
+        status: str,
+        stop_reason: str,
+        start_time: float,
+        loop_count: int,
+        response_language: str,
+        language_mismatch: bool,
+        grounded_score: float,
+        grounding_reason: str,
+        citation_count: int,
+        hallucination_detected: bool,
+        llm_fallback_used: bool,
+        trace: list[dict[str, Any]],
+    ) -> AdvancedQueryResponse:
+        elapsed_ms = int((time.perf_counter() - start_time) * 1000)
+        return AdvancedQueryResponse(
+            mode="advanced",
+            answer=answer,
+            citations=citations,
+            confidence=confidence,
+            status=status,
+            stop_reason=stop_reason,
+            latency_ms=elapsed_ms,
+            loop_count=loop_count,
+            response_language=response_language,
+            language_mismatch=language_mismatch,
+            grounded_score=grounded_score,
+            grounding_reason=grounding_reason,
+            citation_count=citation_count,
+            hallucination_detected=hallucination_detected,
+            llm_fallback_used=llm_fallback_used,
+            trace=trace,
+        )
+
+    def _build_pipeline_executor(self, context: AdvancedPipelineContext) -> Pipeline:
+        # Keep stage order aligned with existing behavior to avoid regressions.
+        return Pipeline(
+            stages=[
+                RetrievalGateStage(context),
+                CritiqueLoopStage(context),
+                RefineStage(context),
+                LanguageGuardStage(context),
+                HallucinationGuardStage(context),
+                FinalGroundingStage(context),
+            ]
+        )
+
     def run(
         self,
         query: str,
@@ -128,11 +183,7 @@ class AdvancedWorkflow:
         start = time.perf_counter()
         normalized_query = normalize_query(query)
         resolved_language = response_language or detect_response_language(query)
-        normalized_history = trim_chat_history(
-            chat_history,
-            memory_window=self.memory_window,
-        )
-
+        normalized_history = trim_chat_history(chat_history, memory_window=self.memory_window)
         state = WorkflowState(
             mode=Mode.ADVANCED,
             user_query=query,
@@ -140,468 +191,33 @@ class AdvancedWorkflow:
             response_language=resolved_language,
             chat_history=normalized_history,
         )
-        trace: list[dict] = []
-
-        need_retrieval, gate_reason = self.retrieval_gate.decide(
-            normalized_query,
-            chat_history=normalized_history,
+        context = AdvancedPipelineContext(
+            workflow=self,
+            start_time=start,
             model=model,
-            response_language=resolved_language,
+            query_filters=query_filters,
+            normalized_history=normalized_history,
+            resolved_language=resolved_language,
         )
-        state.need_retrieval = need_retrieval
-        trace.append(
-            {
-                "step": "retrieval_gate",
-                "need_retrieval": need_retrieval,
-                "reason": gate_reason,
-                "response_language": resolved_language,
-                "memory_window": self.memory_window,
-                "memory_messages": len(normalized_history),
-            }
-        )
-
-        if not need_retrieval:
-            answer, confidence, status, stop_reason = self._direct_answer_without_retrieval(
-                normalized_query,
-                model=model,
-                response_language=resolved_language,
-            )
-            elapsed_ms = int((time.perf_counter() - start) * 1000)
-            return AdvancedQueryResponse(
-                mode="advanced",
-                answer=answer,
-                citations=[],
-                confidence=confidence,
-                status=status,
-                stop_reason=stop_reason,
-                latency_ms=elapsed_ms,
-                loop_count=0,
-                response_language=resolved_language,
-                language_mismatch=False,
-                grounded_score=0.0,
-                grounding_reason="gate_no_retrieval_no_context",
-                citation_count=0,
-                hallucination_detected=False,
-                llm_fallback_used=False,
-                trace=trace,
-            )
-
-        current_query = normalized_query
-        state.rewritten_queries = [current_query]
-
-        pipeline = None
-        critique_result = None
-
-        for loop in range(1, self.max_loops + 1):
-            state.loop_count = loop
-
-            if loop > 1:
-                rewrites = self.query_rewriter.rewrite(
-                    current_query,
-                    critique=critique_result,
-                    loop_count=loop,
-                    chat_history=normalized_history,
-                    model=model,
-                    response_language=resolved_language,
-                )
-                if rewrites:
-                    current_query = rewrites[0]
-                    for candidate in rewrites:
-                        if candidate not in state.rewritten_queries:
-                            state.rewritten_queries.append(candidate)
-
-            pipeline = self.standard_workflow.run_pipeline(
-                query=current_query,
-                mode=Mode.ADVANCED,
-                model=model,
-                response_language=resolved_language,
-                chat_history=normalized_history,
-                query_filters=query_filters,
-            )
-
-            state.retrieved_docs = [item.model_dump() for item in pipeline.retrieved]
-            state.reranked_docs = [item.model_dump() for item in pipeline.reranked]
-            state.selected_context = [item.model_dump() for item in pipeline.selected_context]
-            state.draft_answer = pipeline.generated.answer
-
-            critique_result = self.critic.critique(
-                query=normalized_query,
-                draft_answer=pipeline.generated.answer,
-                context=pipeline.selected_context,
-                loop_count=loop,
-                max_loops=self.max_loops,
-                chat_history=normalized_history,
-                model=model,
-                response_language=resolved_language,
-            )
-            state.critique = critique_result
-            state.confidence = critique_result.confidence
-
-            trace.append(
-                {
-                    "step": "loop",
-                    "loop": loop,
-                    "query": current_query,
-                    "chunk_size": self.standard_workflow.chunk_size,
-                    "chunk_overlap": self.standard_workflow.chunk_overlap,
-                    "retrieved_count": len(pipeline.retrieved),
-                    "applied_filters": pipeline.retrieval_debug.get("applied_filters", {}),
-                    "candidate_count_before_filter": pipeline.retrieval_debug.get(
-                        "candidate_count_before_filter",
-                        len(pipeline.retrieved),
-                    ),
-                    "candidate_count_after_filter": pipeline.retrieval_debug.get(
-                        "candidate_count_after_filter",
-                        len(pipeline.retrieved),
-                    ),
-                    "reranked_count": len(pipeline.reranked),
-                    "reranked_docs": [
-                        {
-                            "chunk_id": item.chunk_id,
-                            "doc_id": item.doc_id,
-                            "file_name": item.metadata.get("file_name") or item.metadata.get("filename"),
-                            "file_type": item.metadata.get("file_type"),
-                            "uploaded_at": item.metadata.get("uploaded_at"),
-                            "created_at": item.metadata.get("created_at"),
-                            "page": item.page,
-                            "rank": item.rank,
-                            "block_type": item.metadata.get("block_type"),
-                            "ocr": bool(item.metadata.get("ocr")),
-                            "rerank_score": item.rerank_score,
-                            "score": item.score,
-                            "dense_score": item.dense_score,
-                            "sparse_score": item.sparse_score,
-                        }
-                        for item in pipeline.reranked
-                    ],
-                    "selected_count": len(pipeline.selected_context),
-                    "selected_context_docs": [
-                        {
-                            "chunk_id": item.chunk_id,
-                            "doc_id": item.doc_id,
-                            "file_name": item.metadata.get("file_name") or item.metadata.get("filename"),
-                            "file_type": item.metadata.get("file_type"),
-                            "uploaded_at": item.metadata.get("uploaded_at"),
-                            "created_at": item.metadata.get("created_at"),
-                            "page": item.page,
-                            "block_type": item.metadata.get("block_type"),
-                            "ocr": bool(item.metadata.get("ocr")),
-                            "content": item.content,
-                        }
-                        for item in pipeline.selected_context
-                    ],
-                    "generated_status": pipeline.generated.status,
-                    "generated_stop_reason": pipeline.generated.stop_reason,
-                    "generated_confidence": pipeline.generated.confidence,
-                    "critique": critique_result.model_dump(),
-                }
-            )
-
-            if critique_result.should_retry_retrieval and loop < self.max_loops:
-                continue
-            break
-
-        if pipeline is None or critique_result is None:
-            elapsed_ms = int((time.perf_counter() - start) * 1000)
-            return AdvancedQueryResponse(
-                mode="advanced",
-                answer=localized_insufficient_evidence(resolved_language),
-                citations=[],
-                confidence=0.0,
-                status="insufficient_evidence",
-                stop_reason="no_pipeline_result",
-                latency_ms=elapsed_ms,
-                loop_count=state.loop_count,
-                response_language=resolved_language,
-                language_mismatch=False,
-                grounded_score=0.0,
-                grounding_reason="no_pipeline_result",
-                citation_count=0,
-                hallucination_detected=False,
-                llm_fallback_used=False,
-                trace=trace,
-            )
-
-        final_answer = pipeline.generated.answer.strip()
-        final_citations = list(pipeline.generated.citations)
-        final_status = pipeline.generated.status
-        stop_reason = "critique_pass"
-
-        context_texts = [item.content for item in pipeline.selected_context if item.content.strip()]
-        has_context = bool(context_texts)
-        critique_category = self._critique_category(critique_result.note)
-        has_relevant_context = has_context and critique_category != "no_evidence"
-        context_citations = self.citation_builder.build(pipeline.selected_context)
-        if has_context and not final_citations:
-            final_citations = context_citations
-
-        insufficient_answer = localized_insufficient_evidence(resolved_language)
-        force_abstain = "force abstain" in normalized_query.lower()
-        if force_abstain:
-            final_answer = insufficient_answer
-            final_citations = []
-            final_status = "insufficient_evidence"
-            stop_reason = "critic_abstain"
-        elif not has_relevant_context:
-            final_answer = insufficient_answer
-            final_citations = []
-            final_status = "insufficient_evidence"
-            stop_reason = "no_relevant_context"
-        elif critique_result.should_retry_retrieval and state.loop_count >= self.max_loops:
-            stop_reason = "max_loop_reached"
-
-        needs_refine_with_context = (
-            critique_result.should_refine_answer
-            or final_status == "insufficient_evidence"
-            or critique_category in {"weak_evidence", "incomplete_answer", "hallucination"}
-        )
-        if needs_refine_with_context and has_relevant_context and final_status != "insufficient_evidence":
-            final_answer = self.refiner.refine(
-                query=normalized_query,
-                draft_answer=final_answer,
-                critique=critique_result,
-                context=pipeline.selected_context,
-                chat_history=normalized_history,
-                model=model,
-                response_language=resolved_language,
-            )
-            if stop_reason != "max_loop_reached":
-                stop_reason = "refined_with_context"
-
-        if (
-            final_status == "insufficient_evidence"
-            and has_relevant_context
-            and final_citations
-        ):
-            refined_from_insufficient = self.refiner.refine_strict_grounded(
-                query=normalized_query,
-                draft_answer=final_answer or insufficient_answer,
-                context=pipeline.selected_context,
-                chat_history=normalized_history,
-                model=model,
-                response_language=resolved_language,
-            ).strip()
-            refined_is_insufficient = refined_from_insufficient == insufficient_answer
-            if refined_from_insufficient and not refined_is_insufficient:
-                final_answer = refined_from_insufficient
-                final_status = "answered"
-                if stop_reason != "max_loop_reached":
-                    stop_reason = "recovered_from_context"
-            else:
-                final_answer = self._cautious_answer_from_context(
-                    pipeline.selected_context,
-                    response_language=resolved_language,
-                )
-                final_status = "partial"
-                if stop_reason != "max_loop_reached":
-                    stop_reason = "weak_evidence_cautious"
-
-        if critique_result.has_conflict and final_status != "insufficient_evidence":
-            if resolved_language == "vi":
-                final_answer = final_answer + "\n\nPhát hiện khả năng xung đột giữa các nguồn."
-            else:
-                final_answer = final_answer + "\n\nPotential conflict detected in sources."
-            stop_reason = "conflict_detected"
-
-        language_mismatch = is_language_mismatch(final_answer, resolved_language)
-        if language_mismatch and final_status != "insufficient_evidence":
-            rewritten = self.standard_workflow._rewrite_answer_language(
-                query=normalized_query,
-                answer=final_answer,
-                response_language=resolved_language,
-                model=model,
-            )
-            if rewritten:
-                final_answer = rewritten
-                language_mismatch = is_language_mismatch(final_answer, resolved_language)
-                if not language_mismatch and stop_reason == "critique_pass":
-                    stop_reason = "language_refined"
-
-        citation_count = len(final_citations)
-        grounding = assess_grounding(
-            final_answer,
-            context_texts,
-            citation_count=citation_count,
-            has_selected_context=bool(pipeline.selected_context),
-            status=final_status,
-        )
-        grounded_score = grounding.grounded_score
-        grounding_reason = grounding.grounding_reason
-        hallucination_detected = grounding.hallucination_detected
-
-        if has_relevant_context and final_status != "insufficient_evidence":
-            if grounded_score >= self.STRONG_GROUNDED_THRESHOLD:
-                final_status = "answered"
-            elif (
-                grounded_score >= self.VERY_LOW_GROUNDED_THRESHOLD
-                or (citation_count > 0 and has_context and not hallucination_detected)
-            ):
-                final_status = "partial"
-            else:
-                final_status = "insufficient_evidence"
-                final_answer = insufficient_answer
-                final_citations = []
-                citation_count = 0
-                grounded_score = 0.0
-                grounding_reason = "very_low_grounding_no_support"
-                hallucination_detected = False
-                stop_reason = "very_low_grounding"
-
-        llm_fallback_used = bool(pipeline.generated.llm_fallback_used)
-
-        prior_stop_reason = stop_reason
-
-        if hallucination_detected and final_status != "insufficient_evidence":
-            refined_grounded_answer = self.refiner.refine_strict_grounded(
-                query=normalized_query,
-                draft_answer=final_answer,
-                context=pipeline.selected_context,
-                chat_history=normalized_history,
-                model=model,
-                response_language=resolved_language,
-            )
-            refined_answer_text = refined_grounded_answer.strip()
-            refined_is_insufficient = refined_answer_text == insufficient_answer
-            refined_grounding = assess_grounding(
-                refined_answer_text,
-                context_texts,
-                citation_count=citation_count,
-                has_selected_context=bool(pipeline.selected_context),
-                status="insufficient_evidence" if refined_is_insufficient else final_status,
-            )
-            refined_score = refined_grounding.grounded_score
-            refined_reason = refined_grounding.grounding_reason
-            refined_hallucination = refined_grounding.hallucination_detected
-            trace.append(
-                {
-                    "step": "hallucination_guard",
-                    "triggered": True,
-                    "refined_grounded_score": refined_score,
-                    "refined_grounding_reason": refined_reason,
-                    "refined_hallucination_detected": refined_hallucination,
-                    "critique_category": critique_category,
-                }
-            )
-
-            if refined_answer_text and not refined_is_insufficient and not refined_hallucination:
-                final_answer = refined_answer_text
-                grounded_score = refined_score
-                grounding_reason = refined_reason
-                if refined_score >= self.STRONG_GROUNDED_THRESHOLD:
-                    final_status = "answered"
-                elif refined_score >= self.VERY_LOW_GROUNDED_THRESHOLD:
-                    final_status = "partial"
-                else:
-                    final_status = "insufficient_evidence"
-                    final_answer = insufficient_answer
-                    final_citations = []
-                    citation_count = 0
-                    grounded_score = 0.0
-                    grounding_reason = "very_low_grounding_after_refine"
-                hallucination_detected = False
-                if prior_stop_reason != "max_loop_reached":
-                    stop_reason = "hallucination_refined"
-            else:
-                if has_relevant_context and final_citations and grounded_score >= self.VERY_LOW_GROUNDED_THRESHOLD:
-                    final_answer = self._cautious_answer_from_context(
-                        pipeline.selected_context,
-                        response_language=resolved_language,
-                    )
-                    final_status = "partial"
-                    cautious_grounding = assess_grounding(
-                        final_answer,
-                        context_texts,
-                        citation_count=len(final_citations),
-                        has_selected_context=bool(pipeline.selected_context),
-                        status=final_status,
-                    )
-                    grounded_score = cautious_grounding.grounded_score
-                    grounding_reason = cautious_grounding.grounding_reason
-                    hallucination_detected = cautious_grounding.hallucination_detected
-                    if prior_stop_reason != "max_loop_reached":
-                        stop_reason = "weak_evidence_cautious"
-                else:
-                    final_answer = insufficient_answer
-                    final_citations = []
-                    final_status = "insufficient_evidence"
-                    grounded_score = 0.0
-                    grounding_reason = "hallucination_fallback_insufficient"
-                    hallucination_detected = False
-                    citation_count = 0
-                    if prior_stop_reason != "max_loop_reached":
-                        stop_reason = "hallucination_fallback_insufficient"
-            language_mismatch = is_language_mismatch(final_answer, resolved_language)
-
-        if has_relevant_context and final_status != "insufficient_evidence" and not final_citations:
-            final_citations = context_citations
-        citation_count = len(final_citations)
-
-        final_grounding = assess_grounding(
-            final_answer,
-            context_texts,
-            citation_count=citation_count,
-            has_selected_context=bool(pipeline.selected_context),
-            status=final_status,
-        )
-        grounded_score = final_grounding.grounded_score
-        grounding_reason = final_grounding.grounding_reason
-        hallucination_detected = final_grounding.hallucination_detected
-
-        trace.append(
-            {
-                "step": "evidence_decision",
-                "has_context": has_context,
-                "has_relevant_context": has_relevant_context,
-                "critique_category": critique_category,
-                "grounded_score": grounded_score,
-                "grounding_reason": grounding_reason,
-                "hallucination_detected": hallucination_detected,
-                "status": final_status,
-            }
-        )
-
-        state.final_answer = final_answer
-        state.citations = final_citations
-        state.stop_reason = stop_reason
-        state.language_mismatch = language_mismatch
-        state.grounded_score = grounded_score
-        state.grounding_reason = grounding_reason
-        state.hallucination_detected = hallucination_detected
-        state.llm_fallback_used = llm_fallback_used
-        trace.append(
-            {
-                "step": "language_guard",
-                "response_language": resolved_language,
-                "language_mismatch": language_mismatch,
-            }
-        )
-        trace.append(
-            {
-                "step": "grounding_check",
-                "grounded_score": grounded_score,
-                "grounding_reason": grounding_reason,
-                "hallucination_detected": hallucination_detected,
-                "citation_count": citation_count,
-                "llm_fallback_used": llm_fallback_used,
-            }
-        )
-
-        elapsed_ms = int((time.perf_counter() - start) * 1000)
-        return AdvancedQueryResponse(
-            mode="advanced",
-            answer=state.final_answer,
+        self._build_pipeline_executor(context).run(state)
+        if context.terminal_response is not None:
+            return context.terminal_response
+        generated_confidence = context.pipeline.generated.confidence if context.pipeline is not None else None
+        final_confidence = state.confidence if state.confidence is not None else generated_confidence
+        return self._build_response(
+            answer=state.final_answer or localized_insufficient_evidence(resolved_language),
             citations=state.citations,
-            confidence=state.confidence if state.confidence is not None else pipeline.generated.confidence,
-            status=final_status,
-            stop_reason=state.stop_reason,
-            latency_ms=elapsed_ms,
+            confidence=final_confidence,
+            status=context.final_status,
+            stop_reason=state.stop_reason or "no_pipeline_result",
+            start_time=start,
             loop_count=state.loop_count,
             response_language=resolved_language,
             language_mismatch=state.language_mismatch,
             grounded_score=state.grounded_score,
             grounding_reason=state.grounding_reason,
-            citation_count=citation_count,
+            citation_count=context.citation_count,
             hallucination_detected=state.hallucination_detected,
             llm_fallback_used=state.llm_fallback_used,
-            trace=trace,
+            trace=context.trace,
         )
