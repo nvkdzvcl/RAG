@@ -8,9 +8,31 @@
 
 ## Công Nghệ Sử Dụng
 
-- Backend: Python, FastAPI, Pydantic
-- Frontend: React, Vite, Tailwind CSS, cấu trúc tương thích shadcn/ui
-- Evaluation: golden dataset + CLI runner + regression tests
+**Backend**
+
+![Python](https://img.shields.io/badge/Python-3.12-3776AB?logo=python&logoColor=white)
+![FastAPI](https://img.shields.io/badge/FastAPI-API-009688?logo=fastapi&logoColor=white)
+![Pydantic](https://img.shields.io/badge/Pydantic-Schemas-E92063?logo=pydantic&logoColor=white)
+![Pytest](https://img.shields.io/badge/Pytest-Tests-0A9EDC?logo=pytest&logoColor=white)
+
+**Frontend**
+
+![React](https://img.shields.io/badge/React-UI-61DAFB?logo=react&logoColor=111111)
+![Vite](https://img.shields.io/badge/Vite-Build-646CFF?logo=vite&logoColor=white)
+![TypeScript](https://img.shields.io/badge/TypeScript-Frontend-3178C6?logo=typescript&logoColor=white)
+![Tailwind CSS](https://img.shields.io/badge/Tailwind_CSS-Styling-06B6D4?logo=tailwindcss&logoColor=white)
+
+**RAG / LLM**
+
+![Sentence Transformers](https://img.shields.io/badge/Sentence_Transformers-Embeddings-FF6F00)
+![BM25](https://img.shields.io/badge/BM25-Sparse_Retrieval-4B5563)
+![Qwen](https://img.shields.io/badge/Qwen-LLM-7C3AED)
+![Ollama](https://img.shields.io/badge/Ollama-Local_Runtime-000000?logo=ollama&logoColor=white)
+
+**Evaluation**
+
+![Golden Dataset](https://img.shields.io/badge/Golden_Dataset-Eval-F59E0B)
+![Regression Tests](https://img.shields.io/badge/Regression_Tests-Stability-10B981)
 
 ## Cấu Trúc Repository
 
