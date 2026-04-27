@@ -394,33 +394,42 @@ Nhược điểm:
 
 ---
 
-## QUYẾT ĐỊNH 015 — Giữ Cài Đặt Đơn Giản Với requirements.txt
+## QUYẾT ĐỊNH 015 — Dùng requirements.in + lock file cho reproducibility
 
 ### Bối cảnh
-Người đóng góp mã nguồn mở cần cài phụ thuộc backend nhanh và rõ ràng.
+Người đóng góp mã nguồn mở cần setup nhanh, đồng thời môi trường cần tái lập nhất quán giữa máy dev/CI.
 
 ### Quyết định
 Cung cấp:
+- requirements.in
+- requirements-dev.in
 - requirements.txt
 - requirements-dev.txt
+- scripts/lock_requirements.py
 - .env.example
 
+`requirements*.in` là input ranges, còn `requirements*.txt` là lock file đã pin exact version và được dùng để cài đặt.
 Không giữ shim `requirement.txt` riêng để tránh gây mơ hồ.
 
 ### Các phương án đã cân nhắc
 - chỉ dùng pyproject
+- giữ requirements range rộng mà không lock
 - cài đặt thủ công không tài liệu hóa
 
 ### Lý do lựa chọn
-Giảm ma sát setup cho contributor và người đánh giá.
+Cân bằng giữa:
+- dễ đọc/dễ chỉnh intent dependency (qua `.in`)
+- reproducible install (qua lock `.txt`)
+- onboarding nhanh cho contributor
 
 ### Hệ quả
 Ưu điểm:
 - onboarding dễ hơn
-- setup local dễ hơn
+- setup local và CI nhất quán hơn
+- giảm drift dependency theo thời gian
 
 Nhược điểm:
-- cần bảo trì phụ thuộc cẩn thận
+- cần regenerate lock khi thay đổi dependency ranges
 
 ---
 

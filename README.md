@@ -407,6 +407,8 @@ make test-full
 
 ## Ghi Chú
 
-- `requirements.txt` và `requirements-dev.txt` là hai file phụ thuộc chính thức.
+- `requirements.in` và `requirements-dev.in` là file input để khai báo dải phiên bản.
+- `requirements.txt` và `requirements-dev.txt` là lock file đã pin version đầy đủ, dùng trực tiếp để cài đặt reproducible.
+- Cập nhật lock file bằng: `source .venv/bin/activate && python scripts/lock_requirements.py`
 - `requirement.txt` cố ý không dùng để tránh nhầm lẫn cài đặt.
 - OCR cho image hiện chưa bật; image block đang được lưu dưới dạng metadata placeholder.
