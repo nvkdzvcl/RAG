@@ -7,6 +7,7 @@ from dataclasses import dataclass
 import logging
 
 from app.core.async_utils import run_coro_sync
+from app.core.cache import QueryCache, make_cache_key
 from app.retrieval.dense import DenseRetriever
 from app.retrieval.sparse import SparseRetriever
 from app.schemas.retrieval import RetrievalResult
@@ -150,10 +151,12 @@ class HybridRetriever:
         sparse_retriever: SparseRetriever,
         *,
         fusion_config: FusionConfig | None = None,
+        retrieval_cache: QueryCache | None = None,
     ) -> None:
         self.dense_retriever = dense_retriever
         self.sparse_retriever = sparse_retriever
         self.fusion_config = fusion_config or FusionConfig()
+        self._retrieval_cache = retrieval_cache
 
     def _resolve_candidate_k(self, top_k: int) -> int:
         multiplier = max(1, int(self.fusion_config.candidate_multiplier))
@@ -163,6 +166,15 @@ class HybridRetriever:
     async def retrieve_async(self, query: str, top_k: int = 5) -> list[RetrievalResult]:
         if top_k <= 0:
             return []
+
+        # Check retrieval cache.
+        cache_key: str | None = None
+        if self._retrieval_cache is not None:
+            cache_key = make_cache_key(query, top_k)
+            hit, cached = self._retrieval_cache.get(cache_key)
+            if hit:
+                return cached
+
         candidate_k = self._resolve_candidate_k(top_k)
         dense_task = asyncio.to_thread(
             self.dense_retriever.retrieve,
@@ -199,6 +211,11 @@ class HybridRetriever:
             top_k,
             _debug_results(merged),
         )
+
+        # Store in retrieval cache.
+        if self._retrieval_cache is not None and cache_key is not None:
+            self._retrieval_cache.put(cache_key, merged)
+
         return merged
 
     def retrieve(self, query: str, top_k: int = 5) -> list[RetrievalResult]:

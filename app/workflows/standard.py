@@ -10,6 +10,7 @@ from pathlib import Path
 from typing import Any
 
 from app.core.async_utils import run_coro_sync
+from app.core.cache import CacheGroup, create_cache_group_from_settings
 from app.core.config import get_settings
 from app.core.json_utils import parse_json_object
 from app.generation import BaselineGenerator, LLMClient, close_llm_client, create_llm_client_from_settings
@@ -100,6 +101,7 @@ class StandardWorkflow:
         self.index_dir = Path(index_dir or settings.index_dir)
         self.persist_indexes = persist_indexes
         self.index_manager = index_manager
+        self.caches = create_cache_group_from_settings(settings)
 
         self._fallback_retriever: HybridRetriever | EmptyRetriever | None = None
 
@@ -118,9 +120,17 @@ class StandardWorkflow:
             if self.persist_indexes:
                 self._save_indexes(built.vector_index, built.bm25_index)
 
-            dense = DenseRetriever(built.vector_index, resolved_provider)
+            dense = DenseRetriever(
+                built.vector_index,
+                resolved_provider,
+                embedding_cache=self.caches.embedding,
+            )
             sparse = SparseRetriever(built.bm25_index)
-            self._fallback_retriever = HybridRetriever(dense, sparse)
+            self._fallback_retriever = HybridRetriever(
+                dense,
+                sparse,
+                retrieval_cache=self.caches.retrieval,
+            )
 
         self.reranker = reranker or create_reranker(
             provider_name=settings.reranker_provider,

@@ -6,6 +6,7 @@ import math
 
 import numpy as np
 
+from app.core.cache import QueryCache
 from app.indexing.embeddings import EmbeddingProvider
 from app.indexing.vector_index import InMemoryVectorIndex
 from app.schemas.retrieval import RetrievalResult
@@ -68,9 +69,16 @@ def _cosine_similarity_matrix(
 class DenseRetriever:
     """Dense retriever backed by in-memory vector index."""
 
-    def __init__(self, vector_index: InMemoryVectorIndex, embedding_provider: EmbeddingProvider) -> None:
+    def __init__(
+        self,
+        vector_index: InMemoryVectorIndex,
+        embedding_provider: EmbeddingProvider,
+        *,
+        embedding_cache: QueryCache | None = None,
+    ) -> None:
         self.vector_index = vector_index
         self.embedding_provider = embedding_provider
+        self._embedding_cache = embedding_cache
         self._cached_size = -1
         self._cached_dimension = -1
         self._cached_revision = -1
@@ -78,10 +86,11 @@ class DenseRetriever:
         self._vector_norms = np.empty(0, dtype=np.float64)
 
     def _refresh_index_cache_if_needed(self) -> None:
+        revision_changed = self._cached_revision != self.vector_index.revision
         if (
-            self._cached_size == self.vector_index.size
+            not revision_changed
+            and self._cached_size == self.vector_index.size
             and self._cached_dimension == self.vector_index.dimension
-            and self._cached_revision == self.vector_index.revision
         ):
             return
 
@@ -95,6 +104,24 @@ class DenseRetriever:
         self._cached_dimension = self.vector_index.dimension
         self._cached_revision = self.vector_index.revision
 
+        # Invalidate embedding cache when index changes (new corpus).
+        if revision_changed and self._embedding_cache is not None:
+            self._embedding_cache.invalidate()
+
+    def _embed_query(self, query: str) -> np.ndarray:
+        """Return query embedding, using cache when available."""
+        if self._embedding_cache is not None:
+            hit, cached = self._embedding_cache.get(query)
+            if hit:
+                return np.asarray(cached, dtype=np.float64)
+
+        raw = self.embedding_provider.embed_query(query)
+        vector = np.asarray(raw, dtype=np.float64)
+
+        if self._embedding_cache is not None:
+            self._embedding_cache.put(query, vector.tolist())
+        return vector
+
     def retrieve(self, query: str, top_k: int = 5) -> list[RetrievalResult]:
         if top_k <= 0:
             return []
@@ -102,7 +129,7 @@ class DenseRetriever:
             return []
 
         self._refresh_index_cache_if_needed()
-        query_vector = np.asarray(self.embedding_provider.embed_query(query), dtype=np.float64)
+        query_vector = self._embed_query(query)
         if query_vector.ndim != 1 or query_vector.shape[0] != self._vector_matrix.shape[1]:
             raise ValueError("Vector dimension mismatch for cosine similarity")
 

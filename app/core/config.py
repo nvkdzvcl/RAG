@@ -64,6 +64,11 @@ class Settings(BaseSettings):
     max_advanced_loops: int = Field(default=1, alias="MAX_ADVANCED_LOOPS")
     memory_window: int = Field(default=3, alias="MEMORY_WINDOW")
 
+    cache_enabled: bool = Field(default=True, alias="CACHE_ENABLED")
+    cache_embedding_maxsize: int = Field(default=256, alias="CACHE_EMBEDDING_MAXSIZE")
+    cache_retrieval_maxsize: int = Field(default=128, alias="CACHE_RETRIEVAL_MAXSIZE")
+    cache_llm_maxsize: int = Field(default=64, alias="CACHE_LLM_MAXSIZE")
+
 
 @lru_cache(maxsize=1)
 def get_settings() -> Settings:
