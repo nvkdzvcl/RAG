@@ -1,6 +1,7 @@
 """Retrieval baseline tests."""
 
 import time
+from typing import Literal
 
 import numpy as np
 import pytest
@@ -9,7 +10,14 @@ from app.indexing import HashEmbeddingProvider, IndexBuilder
 from app.indexing.vector_index import InMemoryVectorIndex
 from app.ingestion.chunker import Chunker
 from app.ingestion.cleaner import TextCleaner
-from app.retrieval import DenseRetriever, HybridRetriever, ScoreOnlyReranker, SparseRetriever
+from app.retrieval import (
+    DenseRetriever,
+    FusionConfig,
+    HybridRetriever,
+    ScoreOnlyReranker,
+    SparseRetriever,
+    reciprocal_rank_fusion,
+)
 from app.retrieval.dense import _cosine_similarity, _cosine_similarity_matrix, _rank_top_k_indices
 from app.schemas.ingestion import DocumentChunk, LoadedDocument
 from app.schemas.retrieval import RetrievalResult
@@ -85,6 +93,22 @@ def _build_synthetic_chunks(count: int) -> list[DocumentChunk]:
     ]
 
 
+def _retrieval_result(
+    chunk_id: str,
+    *,
+    score: float,
+    score_type: Literal["dense", "sparse", "hybrid", "rerank"],
+) -> RetrievalResult:
+    return RetrievalResult(
+        chunk_id=chunk_id,
+        doc_id=f"doc_{chunk_id}",
+        source=f"memory://{chunk_id}",
+        content=f"content-{chunk_id}",
+        score=score,
+        score_type=score_type,
+    )
+
+
 def _legacy_rank(
     query_vector: list[float],
     vectors: list[list[float]],
@@ -138,6 +162,76 @@ def test_hybrid_retrieval_merging() -> None:
     assert all(item.score_type == "hybrid" for item in results)
     chunk_ids = [item.chunk_id for item in results]
     assert len(set(chunk_ids)) == len(chunk_ids)
+
+
+def test_reciprocal_rank_fusion_combines_dense_and_sparse_rankings() -> None:
+    dense = [
+        _retrieval_result("a", score=0.99, score_type="dense"),
+        _retrieval_result("b", score=0.90, score_type="dense"),
+        _retrieval_result("c", score=0.80, score_type="dense"),
+    ]
+    sparse = [
+        _retrieval_result("b", score=8.0, score_type="sparse"),
+        _retrieval_result("c", score=7.0, score_type="sparse"),
+        _retrieval_result("d", score=6.0, score_type="sparse"),
+    ]
+
+    fused = reciprocal_rank_fusion(
+        dense,
+        sparse,
+        top_k=4,
+        config=FusionConfig(rrf_k=0, dense_weight=1.0, sparse_weight=1.0),
+    )
+
+    assert [item.chunk_id for item in fused] == ["b", "a", "c", "d"]
+    assert fused[0].dense_score == pytest.approx(0.90)
+    assert fused[0].sparse_score == pytest.approx(8.0)
+    assert fused[1].dense_score == pytest.approx(0.99)
+    assert fused[1].sparse_score is None
+    assert fused[3].dense_score is None
+    assert fused[3].sparse_score == pytest.approx(6.0)
+    assert [item.rank for item in fused] == [1, 2, 3, 4]
+
+
+def test_hybrid_retriever_runs_dense_and_sparse_then_returns_top_k_rrf() -> None:
+    class _FakeRetriever:
+        def __init__(self, results: list[RetrievalResult]) -> None:
+            self._results = list(results)
+            self.calls: list[tuple[str, int]] = []
+
+        def retrieve(self, query: str, top_k: int = 5) -> list[RetrievalResult]:
+            self.calls.append((query, top_k))
+            return list(self._results)[:top_k]
+
+    dense = _FakeRetriever(
+        [
+            _retrieval_result("dense_only", score=0.91, score_type="dense"),
+            _retrieval_result("shared", score=0.87, score_type="dense"),
+        ]
+    )
+    sparse = _FakeRetriever(
+        [
+            _retrieval_result("shared", score=6.1, score_type="sparse"),
+            _retrieval_result("sparse_only", score=5.8, score_type="sparse"),
+        ]
+    )
+    fusion = FusionConfig(
+        rrf_k=60,
+        dense_weight=1.0,
+        sparse_weight=1.0,
+        candidate_multiplier=2,
+        min_candidates_per_retriever=4,
+    )
+    hybrid = HybridRetriever(dense, sparse, fusion_config=fusion)  # type: ignore[arg-type]
+
+    results = hybrid.retrieve("mixed query", top_k=2)
+
+    assert dense.calls == [("mixed query", 4)]
+    assert sparse.calls == [("mixed query", 4)]
+    assert len(results) == 2
+    assert results[0].chunk_id == "shared"
+    assert {item.chunk_id for item in results}.issubset({"dense_only", "shared", "sparse_only"})
+    assert any(item.chunk_id in {"dense_only", "sparse_only"} for item in results[1:])
 
 
 def test_score_only_reranker_output_shape() -> None:

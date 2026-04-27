@@ -16,6 +16,8 @@ class FusionConfig:
     rrf_k: int = 60
     dense_weight: float = 0.5
     sparse_weight: float = 0.5
+    candidate_multiplier: int = 3
+    min_candidates_per_retriever: int = 20
 
 
 def reciprocal_rank_fusion(
@@ -69,8 +71,15 @@ class HybridRetriever:
         self.sparse_retriever = sparse_retriever
         self.fusion_config = fusion_config or FusionConfig()
 
+    def _resolve_candidate_k(self, top_k: int) -> int:
+        multiplier = max(1, int(self.fusion_config.candidate_multiplier))
+        minimum = max(1, int(self.fusion_config.min_candidates_per_retriever))
+        return max(top_k, top_k * multiplier, minimum)
+
     def retrieve(self, query: str, top_k: int = 5) -> list[RetrievalResult]:
-        candidate_k = max(top_k * 2, top_k)
+        if top_k <= 0:
+            return []
+        candidate_k = self._resolve_candidate_k(top_k)
         dense = self.dense_retriever.retrieve(query, top_k=candidate_k)
         sparse = self.sparse_retriever.retrieve(query, top_k=candidate_k)
         return reciprocal_rank_fusion(
