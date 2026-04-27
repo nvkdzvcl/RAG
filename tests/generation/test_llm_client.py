@@ -10,6 +10,7 @@ from app.generation.llm_client import (
     FallbackLLMClient,
     OpenAICompatibleLLMClient,
     StubLLMClient,
+    complete_with_model,
     create_llm_client,
 )
 
@@ -168,3 +169,33 @@ def test_create_llm_client_unknown_provider_falls_back_to_stub() -> None:
     )
 
     assert client.complete("test") == '{"answer":"stub","confidence":0.2,"status":"answered"}'
+
+
+def test_complete_with_model_filters_unsupported_kwargs_for_legacy_client() -> None:
+    class _LegacyClient:
+        def __init__(self) -> None:
+            self.calls: list[tuple[str, str | None]] = []
+
+        def complete(self, prompt: str, system_prompt: str | None = None) -> str:
+            self.calls.append((prompt, system_prompt))
+            return "legacy-ok"
+
+    llm = _LegacyClient()
+    result = complete_with_model(
+        llm,
+        "legacy prompt",
+        system_prompt="legacy system",
+        model="qwen2.5:3b",
+        max_tokens=128,
+    )
+
+    assert result == "legacy-ok"
+    assert llm.calls == [("legacy prompt", "legacy system")]
+
+
+def test_stub_responder_supports_legacy_system_param_name() -> None:
+    client = StubLLMClient(responder=lambda prompt, system: f"{prompt}|{system}")
+
+    result = client.complete("hello", system_prompt="world", model="ignored", max_tokens=99)
+
+    assert result == "hello|world"

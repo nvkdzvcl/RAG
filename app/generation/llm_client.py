@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import inspect
 import logging
 from collections.abc import Callable
 from typing import Any, Protocol
@@ -20,6 +21,7 @@ class LLMClient(Protocol):
         system_prompt: str | None = None,
         model: str | None = None,
         max_tokens: int | None = None,
+        **kwargs: Any,
     ) -> str:
         """Return completion text for prompt/system_prompt."""
 
@@ -40,12 +42,40 @@ class StubLLMClient:
         system_prompt: str | None = None,
         model: str | None = None,
         max_tokens: int | None = None,
+        **kwargs: Any,
     ) -> str:
+        _ = kwargs
         _ = system_prompt
         _ = prompt
         _ = model
         _ = max_tokens
         return '{"answer":"Stub grounded answer.","confidence":0.5,"status":"answered"}'
+
+    @staticmethod
+    def _supported_kwargs(function: Callable[..., str], candidates: dict[str, Any]) -> dict[str, Any]:
+        try:
+            signature = inspect.signature(function)
+        except (TypeError, ValueError):
+            return dict(candidates)
+
+        supports_var_keywords = False
+        selected: dict[str, Any] = {}
+        for parameter in signature.parameters.values():
+            if parameter.kind == inspect.Parameter.VAR_KEYWORD:
+                supports_var_keywords = True
+                continue
+            if parameter.kind not in (
+                inspect.Parameter.POSITIONAL_OR_KEYWORD,
+                inspect.Parameter.KEYWORD_ONLY,
+            ):
+                continue
+            if parameter.name in candidates:
+                selected[parameter.name] = candidates[parameter.name]
+
+        if supports_var_keywords:
+            for key, value in candidates.items():
+                selected.setdefault(key, value)
+        return selected
 
     def complete(
         self,
@@ -53,15 +83,70 @@ class StubLLMClient:
         system_prompt: str | None = None,
         model: str | None = None,
         max_tokens: int | None = None,
+        **kwargs: Any,
     ) -> str:
-        try:
-            return self._responder(prompt, system_prompt, model, max_tokens)
-        except TypeError:
-            # Backward compatibility for existing two-arg responder lambdas in tests.
-            try:
-                return self._responder(prompt, system_prompt, model)
-            except TypeError:
-                return self._responder(prompt, system_prompt)
+        candidates: dict[str, Any] = {
+            "prompt": prompt,
+            "system_prompt": system_prompt,
+            # Keep backward compatibility for legacy responder lambdas: (prompt, system, ...)
+            "system": system_prompt,
+            "model": model,
+            "max_tokens": max_tokens,
+        }
+        candidates.update(kwargs)
+        selected = self._supported_kwargs(self._responder, candidates)
+        return self._responder(**selected)
+
+
+def _normalize_complete_args(
+    *,
+    prompt: str,
+    system_prompt: str | None,
+    model: str | None,
+    max_tokens: int | None,
+) -> dict[str, Any]:
+    if not isinstance(prompt, str):
+        raise TypeError("prompt must be a string")
+    if system_prompt is not None and not isinstance(system_prompt, str):
+        raise TypeError("system_prompt must be a string or None")
+
+    payload: dict[str, Any] = {"prompt": prompt, "system_prompt": system_prompt}
+    normalized_model = model.strip() if isinstance(model, str) else ""
+    if normalized_model:
+        payload["model"] = normalized_model
+
+    if isinstance(max_tokens, bool):
+        return payload
+    if isinstance(max_tokens, int) and max_tokens > 0:
+        payload["max_tokens"] = max_tokens
+    return payload
+
+
+def _supported_complete_kwargs(llm_client: LLMClient, payload: dict[str, Any]) -> dict[str, Any]:
+    complete_fn = llm_client.complete
+    try:
+        signature = inspect.signature(complete_fn)
+    except (TypeError, ValueError):
+        return dict(payload)
+
+    supports_var_keywords = False
+    selected: dict[str, Any] = {}
+    for parameter in signature.parameters.values():
+        if parameter.kind == inspect.Parameter.VAR_KEYWORD:
+            supports_var_keywords = True
+            continue
+        if parameter.kind not in (
+            inspect.Parameter.POSITIONAL_OR_KEYWORD,
+            inspect.Parameter.KEYWORD_ONLY,
+        ):
+            continue
+        if parameter.name in payload:
+            selected[parameter.name] = payload[parameter.name]
+
+    if supports_var_keywords:
+        for key, value in payload.items():
+            selected.setdefault(key, value)
+    return selected
 
 
 def complete_with_model(
@@ -73,36 +158,14 @@ def complete_with_model(
     max_tokens: int | None = None,
 ) -> str:
     """Invoke completion while safely supporting optional per-call model override."""
-    normalized_model = model.strip() if isinstance(model, str) else ""
-
-    if normalized_model:
-        try:
-            return llm_client.complete(
-                prompt=prompt,
-                system_prompt=system_prompt,
-                model=normalized_model,
-                max_tokens=max_tokens,
-            )
-        except TypeError:
-            try:
-                return llm_client.complete(
-                    prompt=prompt,
-                    system_prompt=system_prompt,
-                    model=normalized_model,
-                )
-            except TypeError:
-                return llm_client.complete(
-                    prompt=prompt,
-                    system_prompt=system_prompt,
-                )
-    try:
-        return llm_client.complete(
-            prompt=prompt,
-            system_prompt=system_prompt,
-            max_tokens=max_tokens,
-        )
-    except TypeError:
-        return llm_client.complete(prompt=prompt, system_prompt=system_prompt)
+    payload = _normalize_complete_args(
+        prompt=prompt,
+        system_prompt=system_prompt,
+        model=model,
+        max_tokens=max_tokens,
+    )
+    selected = _supported_complete_kwargs(llm_client, payload)
+    return llm_client.complete(**selected)
 
 
 class OpenAICompatibleLLMClient:
@@ -183,7 +246,9 @@ class OpenAICompatibleLLMClient:
         system_prompt: str | None = None,
         model: str | None = None,
         max_tokens: int | None = None,
+        **kwargs: Any,
     ) -> str:
+        _ = kwargs
         messages: list[dict[str, str]] = []
         if system_prompt and system_prompt.strip():
             messages.append({"role": "system", "content": system_prompt.strip()})
@@ -226,7 +291,9 @@ class FallbackLLMClient:
         system_prompt: str | None = None,
         model: str | None = None,
         max_tokens: int | None = None,
+        **kwargs: Any,
     ) -> str:
+        _ = kwargs
         self.last_call_used_fallback = False
         try:
             return complete_with_model(

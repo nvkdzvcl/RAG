@@ -2,8 +2,6 @@
 
 from __future__ import annotations
 
-import pytest
-
 import app.indexing.bm25_index as bm25_module
 from app.indexing.bm25_index import BM25Index, tokenize_bm25
 from app.retrieval.sparse import SparseRetriever
@@ -35,7 +33,8 @@ def test_tokenize_bm25_uses_underthesea_when_available(monkeypatch) -> None:
 
 
 def test_tokenize_bm25_with_real_underthesea_segments_vietnamese(monkeypatch) -> None:
-    underthesea = pytest.importorskip("underthesea")
+    import underthesea
+
     monkeypatch.setattr(bm25_module, "_UNDERTHESEA_WORD_TOKENIZE", underthesea.word_tokenize)
 
     tokens = tokenize_bm25("Sinh viên đại học")
