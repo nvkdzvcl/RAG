@@ -117,8 +117,12 @@ def build_comparative_summary(
                     ),
                     retry_rate=_rate(subset, lambda row: row.metrics.retry_used),
                     hit_rate=_rate(subset, lambda row: row.metrics.retrieval_hit),
-                    avg_mrr=sum(r.metrics.retrieval_mrr for r in subset) / len(subset) if subset else 0.0,
-                    avg_ndcg=sum(r.metrics.retrieval_ndcg for r in subset) / len(subset) if subset else 0.0,
+                    avg_mrr=sum(r.metrics.retrieval_mrr for r in subset) / len(subset)
+                    if subset
+                    else 0.0,
+                    avg_ndcg=sum(r.metrics.retrieval_ndcg for r in subset) / len(subset)
+                    if subset
+                    else 0.0,
                 )
             )
 
@@ -128,8 +132,12 @@ def build_comparative_summary(
         avg_confidence_delta=_avg(confidence_deltas),
         advanced_retry_rate=advanced_retry_rate,
         hit_rate=_rate(flattened, lambda row: row.metrics.retrieval_hit),
-        avg_mrr=sum(row.metrics.retrieval_mrr for row in flattened) / len(flattened) if flattened else 0.0,
-        avg_ndcg=sum(row.metrics.retrieval_ndcg for row in flattened) / len(flattened) if flattened else 0.0,
+        avg_mrr=sum(row.metrics.retrieval_mrr for row in flattened) / len(flattened)
+        if flattened
+        else 0.0,
+        avg_ndcg=sum(row.metrics.retrieval_ndcg for row in flattened) / len(flattened)
+        if flattened
+        else 0.0,
         abstain_rate_by_mode=abstain_rate_by_mode,
         citation_rate_by_mode=citation_rate_by_mode,
         per_category=category_rows,

@@ -247,7 +247,7 @@ def compute_metrics(
         answer_contains_reference_keywords = bool(ref_terms.intersection(answer_terms))
 
     gold_overlap = cited_gold_source_overlap(citations, gold_sources)
-    
+
     hit, mrr, ndcg = compute_retrieval_metrics(
         trace_fields.retrieved_chunk_ids, gold_sources
     )

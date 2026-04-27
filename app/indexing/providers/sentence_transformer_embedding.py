@@ -62,7 +62,10 @@ class SentenceTransformerEmbeddingProvider(BaseEmbeddingProvider):
         )
 
     def _resolve_dimension(self) -> int:
-        getter = getattr(self._model, "get_sentence_embedding_dimension", None)
+        getter = getattr(self._model, "get_embedding_dimension", None)
+        if getter is None:
+            getter = getattr(self._model, "get_sentence_embedding_dimension", None)
+
         if callable(getter):
             dimension = getter()
             if dimension is not None and int(dimension) > 0:

@@ -78,7 +78,7 @@ def test_chunker_does_not_split_table_blocks() -> None:
         metadata={},
     )
 
-    chunker = Chunker(chunk_size=5, chunk_overlap=1)
+    chunker = Chunker(chunk_size=5, chunk_overlap=1, include_heading_context=False)
     chunks = chunker.chunk_document(table_doc)
 
     assert len(chunks) == 1
