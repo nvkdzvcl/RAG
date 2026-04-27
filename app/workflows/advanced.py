@@ -5,6 +5,7 @@ from __future__ import annotations
 import time
 from typing import Any
 
+from app.core.async_utils import run_coro_sync
 from app.core.config import get_settings
 from app.generation.citations import CitationBuilder
 from app.schemas.api import AdvancedQueryResponse
@@ -172,7 +173,7 @@ class AdvancedWorkflow:
             ]
         )
 
-    def run(
+    async def run_async(
         self,
         query: str,
         chat_history: list[dict[str, str]] | None = None,
@@ -199,7 +200,7 @@ class AdvancedWorkflow:
             normalized_history=normalized_history,
             resolved_language=resolved_language,
         )
-        self._build_pipeline_executor(context).run(state)
+        await self._build_pipeline_executor(context).run(state)
         if context.terminal_response is not None:
             return context.terminal_response
         generated_confidence = context.pipeline.generated.confidence if context.pipeline is not None else None
@@ -221,3 +222,26 @@ class AdvancedWorkflow:
             llm_fallback_used=state.llm_fallback_used,
             trace=context.trace,
         )
+
+    def run(
+        self,
+        query: str,
+        chat_history: list[dict[str, str]] | None = None,
+        model: str | None = None,
+        response_language: str | None = None,
+        query_filters: dict[str, Any] | None = None,
+    ) -> AdvancedQueryResponse:
+        """Sync wrapper for CLI/tests."""
+        return run_coro_sync(
+            self.run_async(
+                query=query,
+                chat_history=chat_history,
+                model=model,
+                response_language=response_language,
+                query_filters=query_filters,
+            )
+        )
+
+    async def aclose(self) -> None:
+        """Close shared resources."""
+        await self.standard_workflow.aclose()

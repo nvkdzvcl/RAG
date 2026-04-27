@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
+from app.core.async_utils import run_coro_sync
 from app.core.config import get_settings
 from app.core.json_utils import parse_json_object
 from app.core.prompting import PromptRepository
@@ -91,7 +92,7 @@ class AnswerRefiner:
 
         return refined
 
-    def refine(
+    async def refine_async(
         self,
         query: str,
         draft_answer: str,
@@ -139,7 +140,7 @@ class AnswerRefiner:
         )
 
         try:
-            raw = complete_with_model(
+            raw = await complete_with_model(
                 self.llm_client,
                 prompt,
                 system_prompt=build_language_system_prompt(response_language),
@@ -157,7 +158,7 @@ class AnswerRefiner:
 
         return heuristic
 
-    def refine_strict_grounded(
+    async def refine_strict_grounded_async(
         self,
         *,
         query: str,
@@ -200,7 +201,7 @@ class AnswerRefiner:
             response_language_name=response_language_name(response_language),
         )
         try:
-            raw = complete_with_model(
+            raw = await complete_with_model(
                 self.llm_client,
                 prompt,
                 system_prompt=build_language_system_prompt(response_language),
@@ -216,3 +217,49 @@ class AnswerRefiner:
             if refined_answer:
                 return refined_answer
         return default_answer
+
+    def refine(
+        self,
+        query: str,
+        draft_answer: str,
+        critique: CritiqueResult,
+        context: list[RetrievalResult],
+        *,
+        chat_history: list[dict[str, str]] | None = None,
+        model: str | None = None,
+        response_language: str = "en",
+    ) -> str:
+        """Sync wrapper for legacy callers."""
+        return run_coro_sync(
+            self.refine_async(
+                query=query,
+                draft_answer=draft_answer,
+                critique=critique,
+                context=context,
+                chat_history=chat_history,
+                model=model,
+                response_language=response_language,
+            )
+        )
+
+    def refine_strict_grounded(
+        self,
+        *,
+        query: str,
+        draft_answer: str,
+        context: list[RetrievalResult],
+        chat_history: list[dict[str, str]] | None = None,
+        model: str | None = None,
+        response_language: str = "en",
+    ) -> str:
+        """Sync wrapper for legacy callers."""
+        return run_coro_sync(
+            self.refine_strict_grounded_async(
+                query=query,
+                draft_answer=draft_answer,
+                context=context,
+                chat_history=chat_history,
+                model=model,
+                response_language=response_language,
+            )
+        )

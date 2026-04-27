@@ -2,9 +2,11 @@
 
 from __future__ import annotations
 
+import asyncio
 import time
 from typing import Any
 
+from app.core.async_utils import run_coro_sync
 from app.schemas.api import AdvancedQueryResponse, CompareQueryResponse, ComparisonSummary, StandardQueryResponse
 from app.workflows.advanced import AdvancedWorkflow
 from app.workflows.shared import detect_response_language
@@ -256,7 +258,71 @@ class CompareWorkflow:
             note=note,
         )
 
-    def run(
+    async def _run_standard_async(
+        self,
+        *,
+        query: str,
+        chat_history: list[dict[str, str]] | None,
+        model: str | None,
+        response_language: str,
+        query_filters: dict[str, Any] | None,
+    ) -> StandardQueryResponse:
+        run_async = getattr(self.standard_workflow, "run_async", None)
+        if callable(run_async):
+            return await run_async(
+                query=query,
+                chat_history=chat_history,
+                model=model,
+                response_language=response_language,
+                query_filters=query_filters,
+            )
+        kwargs: dict[str, Any] = {
+            "query": query,
+            "chat_history": chat_history,
+            "model": model,
+            "response_language": response_language,
+        }
+        if query_filters is not None:
+            kwargs["query_filters"] = query_filters
+        try:
+            return await asyncio.to_thread(self.standard_workflow.run, **kwargs)
+        except TypeError:
+            kwargs.pop("query_filters", None)
+            return await asyncio.to_thread(self.standard_workflow.run, **kwargs)
+
+    async def _run_advanced_async(
+        self,
+        *,
+        query: str,
+        chat_history: list[dict[str, str]] | None,
+        model: str | None,
+        response_language: str,
+        query_filters: dict[str, Any] | None,
+    ) -> AdvancedQueryResponse:
+        run_async = getattr(self.advanced_workflow, "run_async", None)
+        if callable(run_async):
+            return await run_async(
+                query=query,
+                chat_history=chat_history,
+                model=model,
+                response_language=response_language,
+                query_filters=query_filters,
+            )
+        kwargs: dict[str, Any] = {
+            "query": query,
+            "chat_history": chat_history,
+            "model": model,
+            "response_language": response_language,
+        }
+        if query_filters is not None:
+            kwargs["query_filters"] = query_filters
+        try:
+            return await asyncio.to_thread(self.advanced_workflow.run, **kwargs)
+        except TypeError:
+            kwargs.pop("query_filters", None)
+            return await asyncio.to_thread(self.advanced_workflow.run, **kwargs)
+
+    async def run_async(
         self,
         query: str,
         chat_history: list[dict[str, str]] | None = None,
@@ -266,35 +332,22 @@ class CompareWorkflow:
     ) -> CompareQueryResponse:
         started = time.perf_counter()
         resolved_language = response_language or detect_response_language(query)
-
-        if query_filters is None:
-            standard = self.standard_workflow.run(
-                query=query,
-                chat_history=chat_history,
-                model=model,
-                response_language=resolved_language,
-            )
-            advanced = self.advanced_workflow.run(
-                query=query,
-                chat_history=chat_history,
-                model=model,
-                response_language=resolved_language,
-            )
-        else:
-            standard = self.standard_workflow.run(
+        standard, advanced = await asyncio.gather(
+            self._run_standard_async(
                 query=query,
                 chat_history=chat_history,
                 model=model,
                 response_language=resolved_language,
                 query_filters=query_filters,
-            )
-            advanced = self.advanced_workflow.run(
+            ),
+            self._run_advanced_async(
                 query=query,
                 chat_history=chat_history,
                 model=model,
                 response_language=resolved_language,
                 query_filters=query_filters,
-            )
+            ),
+        )
 
         total_latency_ms = int((time.perf_counter() - started) * 1000)
         summary = self._build_summary(
@@ -310,3 +363,26 @@ class CompareWorkflow:
             advanced=advanced,
             comparison=summary,
         )
+
+    def run(
+        self,
+        query: str,
+        chat_history: list[dict[str, str]] | None = None,
+        model: str | None = None,
+        response_language: str | None = None,
+        query_filters: dict[str, Any] | None = None,
+    ) -> CompareQueryResponse:
+        """Sync wrapper for CLI/tests."""
+        return run_coro_sync(
+            self.run_async(
+                query=query,
+                chat_history=chat_history,
+                model=model,
+                response_language=response_language,
+                query_filters=query_filters,
+            )
+        )
+
+    async def aclose(self) -> None:
+        """Close workflow resources."""
+        await self.advanced_workflow.aclose()

@@ -2,15 +2,17 @@
 
 from __future__ import annotations
 
+import asyncio
 import logging
 import time
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
+from app.core.async_utils import run_coro_sync
 from app.core.config import get_settings
 from app.core.json_utils import parse_json_object
-from app.generation import BaselineGenerator, LLMClient, create_llm_client_from_settings
+from app.generation import BaselineGenerator, LLMClient, close_llm_client, create_llm_client_from_settings
 from app.generation.llm_client import complete_with_model
 from app.indexing.bm25_index import BM25Index
 from app.indexing.vector_index import VectorIndex
@@ -202,7 +204,7 @@ class StandardWorkflow:
         """Return effective rerank top_n (always <= retrieval top_k)."""
         return self.rerank_top_k
 
-    def run_pipeline(
+    async def run_pipeline(
         self,
         query: str,
         mode: Mode = Mode.STANDARD,
@@ -216,15 +218,28 @@ class StandardWorkflow:
         normalized_query = normalize_query(query)
         retrieval_top_k = max(1, self.hybrid_top_k)
         retriever = self._get_retriever(query_filters=query_filters)
-        retrieved = retriever.retrieve(normalized_query, top_k=retrieval_top_k)
+        retrieved = await asyncio.to_thread(
+            retriever.retrieve,
+            normalized_query,
+            retrieval_top_k,
+        )
         retrieval_debug: dict[str, Any] = {}
         debug_getter = getattr(retriever, "get_last_filter_debug", None)
         if callable(debug_getter):
             debug_payload = debug_getter()
             if isinstance(debug_payload, dict):
                 retrieval_debug = debug_payload
-        reranked = self.reranker.rerank(normalized_query, retrieved, top_k=self.rerank_top_k)
-        selected_context = self.context_selector.select(reranked, top_k=self.context_top_k)
+        reranked = await asyncio.to_thread(
+            self.reranker.rerank,
+            normalized_query,
+            retrieved,
+            self.rerank_top_k,
+        )
+        selected_context = await asyncio.to_thread(
+            self.context_selector.select,
+            reranked,
+            self.context_top_k,
+        )
         if not selected_context:
             generated = GeneratedAnswer(
                 answer=localized_insufficient_evidence(response_language),
@@ -239,7 +254,7 @@ class StandardWorkflow:
                 chat_history,
                 memory_window=self.memory_window,
             )
-            generated = self.generator.generate_answer(
+            generated = await self.generator.generate_answer_async(
                 query=normalized_query,
                 context=selected_context,
                 mode=mode,
@@ -266,7 +281,7 @@ class StandardWorkflow:
             retrieval_debug=retrieval_debug,
         )
 
-    def run(
+    async def run_async(
         self,
         query: str,
         chat_history: list[dict[str, str]] | None = None,
@@ -281,7 +296,7 @@ class StandardWorkflow:
         )
 
         resolved_language = response_language or detect_response_language(query)
-        pipeline = self.run_pipeline(
+        pipeline = await self.run_pipeline(
             query=query,
             mode=Mode.STANDARD,
             model=model,
@@ -295,7 +310,7 @@ class StandardWorkflow:
         context_texts = [item.content for item in pipeline.selected_context if item.content.strip()]
 
         if language_mismatch and pipeline.generated.status != "insufficient_evidence":
-            rewritten = self._rewrite_answer_language(
+            rewritten = await self._rewrite_answer_language(
                 query=pipeline.normalized_query,
                 answer=final_answer,
                 response_language=resolved_language,
@@ -444,7 +459,26 @@ class StandardWorkflow:
             trace=trace,
         )
 
-    def _rewrite_answer_language(
+    def run(
+        self,
+        query: str,
+        chat_history: list[dict[str, str]] | None = None,
+        model: str | None = None,
+        response_language: str | None = None,
+        query_filters: dict[str, Any] | None = None,
+    ) -> StandardQueryResponse:
+        """Sync wrapper for CLI/tests."""
+        return run_coro_sync(
+            self.run_async(
+                query=query,
+                chat_history=chat_history,
+                model=model,
+                response_language=response_language,
+                query_filters=query_filters,
+            )
+        )
+
+    async def _rewrite_answer_language(
         self,
         *,
         query: str,
@@ -468,7 +502,7 @@ class StandardWorkflow:
             response_language_name=response_language_name(response_language),
         )
         try:
-            raw = complete_with_model(
+            raw = await complete_with_model(
                 self.llm_client,
                 prompt,
                 system_prompt=build_language_system_prompt(response_language),
@@ -491,3 +525,7 @@ class StandardWorkflow:
         if fallback and not fallback.startswith("{"):
             return fallback
         return None
+
+    async def aclose(self) -> None:
+        """Release async resources held by the workflow."""
+        await close_llm_client(self.llm_client)

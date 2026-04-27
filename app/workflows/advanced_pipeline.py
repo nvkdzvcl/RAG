@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 from dataclasses import dataclass, field
 from typing import Any, Protocol, TYPE_CHECKING
 
@@ -56,7 +57,7 @@ class AdvancedPipelineContext:
 class PipelineStage(Protocol):
     """Stage contract for advanced pipeline execution."""
 
-    def execute(self, state: WorkflowState) -> WorkflowState: ...
+    async def execute(self, state: WorkflowState) -> WorkflowState: ...
 
 
 class Pipeline:
@@ -65,10 +66,10 @@ class Pipeline:
     def __init__(self, stages: list[PipelineStage]) -> None:
         self.stages = list(stages)
 
-    def run(self, state: WorkflowState) -> WorkflowState:
+    async def run(self, state: WorkflowState) -> WorkflowState:
         current_state = state
         for stage in self.stages:
-            current_state = stage.execute(current_state)
+            current_state = await stage.execute(current_state)
         return current_state
 
 
@@ -82,12 +83,12 @@ class BasePipelineStage:
 class RetrievalGateStage(BasePipelineStage):
     """Stage 1: decide whether retrieval is needed."""
 
-    def execute(self, state: WorkflowState) -> WorkflowState:
+    async def execute(self, state: WorkflowState) -> WorkflowState:
         context = self.context
         if context.terminal_response is not None:
             return state
         workflow = context.workflow
-        need_retrieval, gate_reason = workflow.retrieval_gate.decide(
+        need_retrieval, gate_reason = await workflow.retrieval_gate.decide_async(
             state.normalized_query,
             chat_history=context.normalized_history,
             model=context.model,
@@ -138,7 +139,7 @@ class RetrievalGateStage(BasePipelineStage):
 class CritiqueLoopStage(BasePipelineStage):
     """Stage 2: run rewrite/retrieve/generate/critique loop."""
 
-    def execute(self, state: WorkflowState) -> WorkflowState:
+    async def execute(self, state: WorkflowState) -> WorkflowState:
         context = self.context
         if context.terminal_response is not None:
             return state
@@ -154,7 +155,7 @@ class CritiqueLoopStage(BasePipelineStage):
             state.loop_count = loop
 
             if loop > 1:
-                rewrites = workflow.query_rewriter.rewrite(
+                rewrites = await workflow.query_rewriter.rewrite_async(
                     current_query,
                     critique=critique_result,
                     loop_count=loop,
@@ -168,7 +169,7 @@ class CritiqueLoopStage(BasePipelineStage):
                         if candidate not in state.rewritten_queries:
                             state.rewritten_queries.append(candidate)
 
-            pipeline = workflow.standard_workflow.run_pipeline(
+            pipeline = await workflow.standard_workflow.run_pipeline(
                 query=current_query,
                 mode=state.mode,
                 model=context.model,
@@ -182,7 +183,7 @@ class CritiqueLoopStage(BasePipelineStage):
             state.selected_context = [item.model_dump() for item in pipeline.selected_context]
             state.draft_answer = pipeline.generated.answer
 
-            critique_result = workflow.critic.critique(
+            critique_result = await workflow.critic.critique_async(
                 query=state.normalized_query,
                 draft_answer=pipeline.generated.answer,
                 context=pipeline.selected_context,
@@ -287,7 +288,72 @@ class CritiqueLoopStage(BasePipelineStage):
 class RefineStage(BasePipelineStage):
     """Stage 3: apply evidence checks + refine/recover decisions."""
 
-    def execute(self, state: WorkflowState) -> WorkflowState:
+    @staticmethod
+    async def _refine_with_compat(
+        workflow: AdvancedWorkflow,
+        *,
+        query: str,
+        draft_answer: str,
+        critique: CritiqueResult,
+        context_docs: list[Any],
+        chat_history: list[dict[str, str]],
+        model: str | None,
+        response_language: str,
+    ) -> str:
+        async_refine = getattr(workflow.refiner, "refine_async", None)
+        if callable(async_refine):
+            return await async_refine(
+                query=query,
+                draft_answer=draft_answer,
+                critique=critique,
+                context=context_docs,
+                chat_history=chat_history,
+                model=model,
+                response_language=response_language,
+            )
+        return await asyncio.to_thread(
+            workflow.refiner.refine,
+            query,
+            draft_answer,
+            critique,
+            context_docs,
+            chat_history=chat_history,
+            model=model,
+            response_language=response_language,
+        )
+
+    @staticmethod
+    async def _refine_strict_grounded_with_compat(
+        workflow: AdvancedWorkflow,
+        *,
+        query: str,
+        draft_answer: str,
+        context_docs: list[Any],
+        chat_history: list[dict[str, str]],
+        model: str | None,
+        response_language: str,
+    ) -> str:
+        async_refine_strict = getattr(workflow.refiner, "refine_strict_grounded_async", None)
+        if callable(async_refine_strict):
+            return await async_refine_strict(
+                query=query,
+                draft_answer=draft_answer,
+                context=context_docs,
+                chat_history=chat_history,
+                model=model,
+                response_language=response_language,
+            )
+        return await asyncio.to_thread(
+            workflow.refiner.refine_strict_grounded,
+            query=query,
+            draft_answer=draft_answer,
+            context=context_docs,
+            chat_history=chat_history,
+            model=model,
+            response_language=response_language,
+        )
+
+    async def execute(self, state: WorkflowState) -> WorkflowState:
         context = self.context
         if context.terminal_response is not None:
             return state
@@ -332,11 +398,12 @@ class RefineStage(BasePipelineStage):
             or critique_category in {"weak_evidence", "incomplete_answer", "hallucination"}
         )
         if needs_refine_with_context and has_relevant_context and final_status != "insufficient_evidence":
-            final_answer = workflow.refiner.refine(
+            final_answer = await self._refine_with_compat(
+                workflow,
                 query=state.normalized_query,
                 draft_answer=final_answer,
                 critique=critique_result,
-                context=pipeline.selected_context,
+                context_docs=pipeline.selected_context,
                 chat_history=context.normalized_history,
                 model=context.model,
                 response_language=context.resolved_language,
@@ -349,13 +416,16 @@ class RefineStage(BasePipelineStage):
             and has_relevant_context
             and final_citations
         ):
-            refined_from_insufficient = workflow.refiner.refine_strict_grounded(
-                query=state.normalized_query,
-                draft_answer=final_answer or insufficient_answer,
-                context=pipeline.selected_context,
-                chat_history=context.normalized_history,
-                model=context.model,
-                response_language=context.resolved_language,
+            refined_from_insufficient = (
+                await self._refine_strict_grounded_with_compat(
+                    workflow,
+                    query=state.normalized_query,
+                    draft_answer=final_answer or insufficient_answer,
+                    context_docs=pipeline.selected_context,
+                    chat_history=context.normalized_history,
+                    model=context.model,
+                    response_language=context.resolved_language,
+                )
             ).strip()
             refined_is_insufficient = refined_from_insufficient == insufficient_answer
             if refined_from_insufficient and not refined_is_insufficient:
@@ -399,7 +469,7 @@ class RefineStage(BasePipelineStage):
 class LanguageGuardStage(BasePipelineStage):
     """Stage 4: enforce response language when needed."""
 
-    def execute(self, state: WorkflowState) -> WorkflowState:
+    async def execute(self, state: WorkflowState) -> WorkflowState:
         context = self.context
         if context.terminal_response is not None:
             return state
@@ -412,7 +482,7 @@ class LanguageGuardStage(BasePipelineStage):
 
         language_mismatch = is_language_mismatch(final_answer, context.resolved_language)
         if language_mismatch and final_status != "insufficient_evidence":
-            rewritten = context.workflow.standard_workflow._rewrite_answer_language(
+            rewritten = await context.workflow.standard_workflow._rewrite_answer_language(
                 query=state.normalized_query,
                 answer=final_answer,
                 response_language=context.resolved_language,
@@ -436,7 +506,7 @@ class LanguageGuardStage(BasePipelineStage):
 class HallucinationGuardStage(BasePipelineStage):
     """Stage 5: enforce grounding thresholds and hallucination mitigation."""
 
-    def execute(self, state: WorkflowState) -> WorkflowState:
+    async def execute(self, state: WorkflowState) -> WorkflowState:
         context = self.context
         if context.terminal_response is not None:
             return state
@@ -479,10 +549,11 @@ class HallucinationGuardStage(BasePipelineStage):
         prior_stop_reason = context.stop_reason
 
         if hallucination_detected and context.final_status != "insufficient_evidence":
-            refined_grounded_answer = workflow.refiner.refine_strict_grounded(
+            refined_grounded_answer = await RefineStage._refine_strict_grounded_with_compat(
+                workflow,
                 query=state.normalized_query,
                 draft_answer=context.final_answer,
-                context=pipeline.selected_context,
+                context_docs=pipeline.selected_context,
                 chat_history=context.normalized_history,
                 model=context.model,
                 response_language=context.resolved_language,
@@ -583,7 +654,7 @@ class HallucinationGuardStage(BasePipelineStage):
 class FinalGroundingStage(BasePipelineStage):
     """Stage 6: finalize grounding/citation metadata and emit trace entries."""
 
-    def execute(self, state: WorkflowState) -> WorkflowState:
+    async def execute(self, state: WorkflowState) -> WorkflowState:
         context = self.context
         if context.terminal_response is not None:
             return state

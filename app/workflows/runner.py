@@ -1,8 +1,10 @@
 """Workflow router that dispatches based on selected mode."""
 
+import asyncio
 import logging
 from typing import Any
 
+from app.core.async_utils import run_coro_sync
 from app.core.config import get_settings
 from app.schemas.api import QueryResponse
 from app.schemas.common import Mode
@@ -55,7 +57,40 @@ class WorkflowRunner:
             self.selected_retrieval_mode = matched or "high"
             self.retrieval_mode = "preset" if matched is not None else "custom"
 
-    def run(
+    @staticmethod
+    async def _invoke_workflow_async(
+        workflow: Any,
+        *,
+        query: str,
+        chat_history: list[dict[str, str]] | None,
+        model: str | None,
+        response_language: str | None,
+        query_filters: dict[str, Any] | None,
+    ) -> QueryResponse:
+        run_async = getattr(workflow, "run_async", None)
+        if callable(run_async):
+            return await run_async(
+                query=query,
+                chat_history=chat_history,
+                model=model,
+                response_language=response_language,
+                query_filters=query_filters,
+            )
+        kwargs: dict[str, Any] = {
+            "query": query,
+            "chat_history": chat_history,
+            "model": model,
+            "response_language": response_language,
+        }
+        if query_filters is not None:
+            kwargs["query_filters"] = query_filters
+        try:
+            return await asyncio.to_thread(workflow.run, **kwargs)
+        except TypeError:
+            kwargs.pop("query_filters", None)
+            return await asyncio.to_thread(workflow.run, **kwargs)
+
+    async def run_async(
         self,
         query: str,
         mode: Mode,
@@ -65,7 +100,8 @@ class WorkflowRunner:
         query_filters: dict[str, Any] | None = None,
     ) -> QueryResponse:
         if mode == Mode.STANDARD:
-            return self._standard.run(
+            return await self._invoke_workflow_async(
+                self._standard,
                 query=query,
                 chat_history=chat_history,
                 model=model,
@@ -73,7 +109,8 @@ class WorkflowRunner:
                 query_filters=query_filters,
             )
         if mode == Mode.ADVANCED:
-            return self._advanced.run(
+            return await self._invoke_workflow_async(
+                self._advanced,
                 query=query,
                 chat_history=chat_history,
                 model=model,
@@ -81,7 +118,8 @@ class WorkflowRunner:
                 query_filters=query_filters,
             )
         if mode == Mode.COMPARE:
-            return self._compare.run(
+            return await self._invoke_workflow_async(
+                self._compare,
                 query=query,
                 chat_history=chat_history,
                 model=model,
@@ -89,6 +127,27 @@ class WorkflowRunner:
                 query_filters=query_filters,
             )
         raise NotImplementedError(f"Unsupported mode: {mode}")
+
+    def run(
+        self,
+        query: str,
+        mode: Mode,
+        chat_history: list[dict[str, str]] | None = None,
+        model: str | None = None,
+        response_language: str | None = None,
+        query_filters: dict[str, Any] | None = None,
+    ) -> QueryResponse:
+        """Sync wrapper for CLI/tests."""
+        return run_coro_sync(
+            self.run_async(
+                query=query,
+                mode=mode,
+                chat_history=chat_history,
+                model=model,
+                response_language=response_language,
+                query_filters=query_filters,
+            )
+        )
 
     def update_retrieval_settings(self, payload: RetrievalSettingsRequest) -> RetrievalSettingsResponse:
         """Apply retrieval mode/top_k to active workflows without rebuilding indexes."""
@@ -126,3 +185,7 @@ class WorkflowRunner:
             response.context_top_k,
         )
         return response
+
+    async def aclose(self) -> None:
+        """Close workflow-level resources."""
+        await self._advanced.aclose()

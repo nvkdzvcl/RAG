@@ -12,6 +12,17 @@ from app.schemas.retrieval import RetrievalResult
 class Generator(Protocol):
     """Generator contract shared across workflow modes."""
 
+    async def generate_answer_async(
+        self,
+        query: str,
+        context: list[RetrievalResult],
+        mode: Mode,
+        model: str | None = None,
+        response_language: str = "en",
+        chat_history_context: str = "(empty)",
+    ) -> GeneratedAnswer:
+        """Generate grounded answer from query and selected context."""
+
     def generate_answer(
         self,
         query: str,

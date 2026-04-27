@@ -6,6 +6,7 @@ import json
 import re
 from pathlib import Path
 
+from app.core.async_utils import run_coro_sync
 from app.core.config import get_settings
 from app.core.json_utils import parse_json_object
 from app.core.prompting import PromptRepository
@@ -201,7 +202,7 @@ class HeuristicCritic:
             note=note,
         )
 
-    def _llm_critique(
+    async def _llm_critique(
         self,
         query: str,
         draft_answer: str,
@@ -243,7 +244,7 @@ class HeuristicCritic:
         )
 
         try:
-            raw = complete_with_model(
+            raw = await complete_with_model(
                 self.llm_client,
                 prompt,
                 system_prompt=build_language_system_prompt(response_language),
@@ -283,7 +284,7 @@ class HeuristicCritic:
         except Exception:
             return None
 
-    def critique(
+    async def critique_async(
         self,
         query: str,
         draft_answer: str,
@@ -307,7 +308,7 @@ class HeuristicCritic:
         if "force retry" in normalized_query or "force abstain" in normalized_query:
             return heuristic
 
-        llm_result = self._llm_critique(
+        llm_result = await self._llm_critique(
             query=query,
             draft_answer=draft_answer,
             context=context,
@@ -319,3 +320,29 @@ class HeuristicCritic:
             response_language=response_language,
         )
         return llm_result or heuristic
+
+    def critique(
+        self,
+        query: str,
+        draft_answer: str,
+        context: list[RetrievalResult],
+        *,
+        loop_count: int,
+        max_loops: int,
+        chat_history: list[dict[str, str]] | None = None,
+        model: str | None = None,
+        response_language: str = "en",
+    ) -> CritiqueResult:
+        """Sync wrapper for legacy callers."""
+        return run_coro_sync(
+            self.critique_async(
+                query=query,
+                draft_answer=draft_answer,
+                context=context,
+                loop_count=loop_count,
+                max_loops=max_loops,
+                chat_history=chat_history,
+                model=model,
+                response_language=response_language,
+            )
+        )

@@ -4,10 +4,12 @@ from __future__ import annotations
 
 import inspect
 import logging
-from collections.abc import Callable
+from collections.abc import Awaitable, Callable
 from typing import Any, Protocol
 
 import httpx
+
+from app.core.async_utils import await_if_needed
 
 logger = logging.getLogger(__name__)
 
@@ -15,7 +17,7 @@ logger = logging.getLogger(__name__)
 class LLMClient(Protocol):
     """Abstraction for text generation providers."""
 
-    def complete(
+    async def complete(
         self,
         prompt: str,
         system_prompt: str | None = None,
@@ -31,7 +33,7 @@ class StubLLMClient:
 
     def __init__(
         self,
-        responder: Callable[..., str] | None = None,
+        responder: Callable[..., str | Awaitable[str]] | None = None,
     ) -> None:
         self._responder = responder or self._default_responder
         self.last_call_used_fallback = False
@@ -52,7 +54,7 @@ class StubLLMClient:
         return '{"answer":"Stub grounded answer.","confidence":0.5,"status":"answered"}'
 
     @staticmethod
-    def _supported_kwargs(function: Callable[..., str], candidates: dict[str, Any]) -> dict[str, Any]:
+    def _supported_kwargs(function: Callable[..., Any], candidates: dict[str, Any]) -> dict[str, Any]:
         try:
             signature = inspect.signature(function)
         except (TypeError, ValueError):
@@ -77,7 +79,7 @@ class StubLLMClient:
                 selected.setdefault(key, value)
         return selected
 
-    def complete(
+    async def complete(
         self,
         prompt: str,
         system_prompt: str | None = None,
@@ -95,7 +97,7 @@ class StubLLMClient:
         }
         candidates.update(kwargs)
         selected = self._supported_kwargs(self._responder, candidates)
-        return self._responder(**selected)
+        return await await_if_needed(self._responder(**selected))
 
 
 def _normalize_complete_args(
@@ -149,7 +151,7 @@ def _supported_complete_kwargs(llm_client: LLMClient, payload: dict[str, Any]) -
     return selected
 
 
-def complete_with_model(
+async def complete_with_model(
     llm_client: LLMClient,
     prompt: str,
     *,
@@ -165,7 +167,10 @@ def complete_with_model(
         max_tokens=max_tokens,
     )
     selected = _supported_complete_kwargs(llm_client, payload)
-    return llm_client.complete(**selected)
+    output = await await_if_needed(llm_client.complete(**selected))
+    if not isinstance(output, str):
+        raise TypeError("LLM completion output must be a string.")
+    return output
 
 
 class OpenAICompatibleLLMClient:
@@ -180,7 +185,7 @@ class OpenAICompatibleLLMClient:
         temperature: float,
         max_tokens: int,
         timeout_seconds: int,
-        client: httpx.Client | None = None,
+        client: httpx.AsyncClient | None = None,
     ) -> None:
         if not model.strip():
             raise ValueError("model must not be empty")
@@ -198,7 +203,8 @@ class OpenAICompatibleLLMClient:
         self.max_tokens = int(max_tokens)
         self.timeout_seconds = int(timeout_seconds)
         self.last_call_used_fallback = False
-        self._client = client or httpx.Client(
+        self._owns_client = client is None
+        self._client = client or httpx.AsyncClient(
             base_url=f"{self.api_base}/",
             timeout=httpx.Timeout(self.timeout_seconds),
         )
@@ -240,7 +246,7 @@ class OpenAICompatibleLLMClient:
 
         raise RuntimeError("Invalid response content type from OpenAI-compatible API.")
 
-    def complete(
+    async def complete(
         self,
         prompt: str,
         system_prompt: str | None = None,
@@ -263,7 +269,7 @@ class OpenAICompatibleLLMClient:
         }
 
         try:
-            response = self._client.post(
+            response = await self._client.post(
                 "chat/completions",
                 headers=self._build_headers(),
                 json=payload,
@@ -276,6 +282,11 @@ class OpenAICompatibleLLMClient:
         except Exception as exc:
             raise RuntimeError("OpenAI-compatible completion request failed.") from exc
 
+    async def aclose(self) -> None:
+        """Close owned async HTTP resources."""
+        if self._owns_client:
+            await self._client.aclose()
+
 
 class FallbackLLMClient:
     """Use primary client and fall back to secondary client on runtime errors."""
@@ -285,7 +296,7 @@ class FallbackLLMClient:
         self.fallback = fallback
         self.last_call_used_fallback = False
 
-    def complete(
+    async def complete(
         self,
         prompt: str,
         system_prompt: str | None = None,
@@ -296,7 +307,7 @@ class FallbackLLMClient:
         _ = kwargs
         self.last_call_used_fallback = False
         try:
-            return complete_with_model(
+            return await complete_with_model(
                 self.primary,
                 prompt,
                 system_prompt=system_prompt,
@@ -309,7 +320,7 @@ class FallbackLLMClient:
                 "Primary LLM client failed; falling back to stub client.",
                 exc_info=exc,
             )
-            return complete_with_model(
+            return await complete_with_model(
                 self.fallback,
                 prompt,
                 system_prompt=system_prompt,
@@ -317,11 +328,28 @@ class FallbackLLMClient:
                 max_tokens=max_tokens,
             )
 
+    async def aclose(self) -> None:
+        """Close underlying clients when they expose async close hooks."""
+        await close_llm_client(self.primary)
+        await close_llm_client(self.fallback)
+
 
 def did_use_fallback(llm_client: LLMClient) -> bool:
     """Best-effort flag indicating whether the latest call used fallback."""
     value = getattr(llm_client, "last_call_used_fallback", False)
     return bool(value)
+
+
+async def close_llm_client(llm_client: LLMClient) -> None:
+    """Close optional client resources when supported."""
+    async_closer = getattr(llm_client, "aclose", None)
+    if callable(async_closer):
+        await await_if_needed(async_closer())
+        return
+
+    sync_closer = getattr(llm_client, "close", None)
+    if callable(sync_closer):
+        sync_closer()
 
 
 OPENAI_COMPATIBLE_PROVIDER_NAMES = {

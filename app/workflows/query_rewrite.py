@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
+from app.core.async_utils import run_coro_sync
 from app.core.config import get_settings
 from app.core.json_utils import parse_json_list, parse_json_object
 from app.core.prompting import PromptRepository
@@ -87,7 +88,7 @@ class QueryRewriter:
 
         return self._dedupe(candidates, max_candidates=self.max_candidates)
 
-    def _llm_rewrite(
+    async def _llm_rewrite(
         self,
         query: str,
         *,
@@ -116,7 +117,7 @@ class QueryRewriter:
         )
 
         try:
-            raw = complete_with_model(
+            raw = await complete_with_model(
                 self.llm_client,
                 prompt,
                 system_prompt=build_language_system_prompt(response_language),
@@ -136,7 +137,7 @@ class QueryRewriter:
                 rewrites = [str(item).strip() for item in payload_list if str(item).strip()]
         return self._dedupe(rewrites, max_candidates=self.max_candidates)
 
-    def rewrite(
+    async def rewrite_async(
         self,
         query: str,
         *,
@@ -146,7 +147,7 @@ class QueryRewriter:
         model: str | None = None,
         response_language: str = "en",
     ) -> list[str]:
-        llm_candidates = self._llm_rewrite(
+        llm_candidates = await self._llm_rewrite(
             query,
             critique=critique,
             loop_count=loop_count,
@@ -162,4 +163,26 @@ class QueryRewriter:
         return self._dedupe(
             llm_candidates + heuristic_candidates,
             max_candidates=self.max_candidates,
+        )
+
+    def rewrite(
+        self,
+        query: str,
+        *,
+        critique: CritiqueResult | None = None,
+        loop_count: int = 0,
+        chat_history: list[dict[str, str]] | None = None,
+        model: str | None = None,
+        response_language: str = "en",
+    ) -> list[str]:
+        """Sync wrapper for legacy callers."""
+        return run_coro_sync(
+            self.rewrite_async(
+                query,
+                critique=critique,
+                loop_count=loop_count,
+                chat_history=chat_history,
+                model=model,
+                response_language=response_language,
+            )
         )

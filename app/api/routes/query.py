@@ -10,10 +10,10 @@ router = APIRouter(prefix="/query", tags=["query"])
 
 
 @router.post("", response_model=QueryResponse)
-def query(payload: QueryRequest, query_service: QueryService = Depends(get_query_service)) -> QueryResponse:
+async def query(payload: QueryRequest, query_service: QueryService = Depends(get_query_service)) -> QueryResponse:
     """Execute selected workflow mode for a user query."""
     try:
-        return query_service.run_request(payload)
+        return await query_service.run_request_async(payload)
     except NotImplementedError as exc:
         raise HTTPException(
             status_code=status.HTTP_501_NOT_IMPLEMENTED,

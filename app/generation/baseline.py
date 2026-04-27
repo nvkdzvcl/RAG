@@ -6,6 +6,7 @@ import logging
 import re
 from pathlib import Path
 
+from app.core.async_utils import run_coro_sync
 from app.core.config import get_settings
 from app.core.prompting import PromptRepository
 from app.generation.citations import CitationBuilder
@@ -237,7 +238,7 @@ class BaselineGenerator(Generator):
             llm_fallback_used=llm_fallback_used,
         )
 
-    def generate_answer(
+    async def generate_answer_async(
         self,
         query: str,
         context: list[RetrievalResult],
@@ -270,7 +271,7 @@ class BaselineGenerator(Generator):
             chat_history_context,
         )
         try:
-            raw_output = complete_with_model(
+            raw_output = await complete_with_model(
                 self.llm_client,
                 prompt,
                 system_prompt=build_language_system_prompt(response_language),
@@ -303,4 +304,25 @@ class BaselineGenerator(Generator):
             stop_reason="generated",
             raw_output=raw_output,
             llm_fallback_used=llm_fallback_used,
+        )
+
+    def generate_answer(
+        self,
+        query: str,
+        context: list[RetrievalResult],
+        mode: Mode,
+        model: str | None = None,
+        response_language: str = "en",
+        chat_history_context: str = "(empty)",
+    ) -> GeneratedAnswer:
+        """Sync wrapper for legacy callers."""
+        return run_coro_sync(
+            self.generate_answer_async(
+                query=query,
+                context=context,
+                mode=mode,
+                model=model,
+                response_language=response_language,
+                chat_history_context=chat_history_context,
+            )
         )
