@@ -1,4 +1,4 @@
-"""Shared workflow helpers."""
+"""Grounding assessment, hallucination detection, and semantic similarity."""
 
 from __future__ import annotations
 
@@ -6,24 +6,23 @@ import math
 import os
 import re
 import threading
-import unicodedata
 from dataclasses import dataclass
 from typing import Any, Protocol
 
-ResponseLanguage = str
+from app.core.math_utils import cosine_similarity
 
-_VI_DIACRITIC_PATTERN = re.compile(
-    r"[àáạảãăắằặẳẵâấầậẩẫèéẹẻẽêếềệểễìíịỉĩòóọỏõôốồộổỗơớờợởỡùúụủũưứừựửữỳýỵỷỹđ]",
-    re.IGNORECASE,
-)
-_CJK_PATTERN = re.compile(r"[\u3400-\u4dbf\u4e00-\u9fff\uf900-\ufaff]")
+# ---------------------------------------------------------------------------
+# Internal text-processing patterns (shared with language module via re-import)
+# ---------------------------------------------------------------------------
+
 _WORD_PATTERN = re.compile(r"[A-Za-zÀ-ỹĐđ0-9']+")
 _WHITESPACE_PATTERN = re.compile(r"\s+")
 _SANITIZE_PATTERN = re.compile(r"[^A-Za-zÀ-ỹĐđ0-9\s'_+]")
-# Noisy punctuation that hurts retrieval but carries no semantic value.
-# Deliberately keeps _ (underthesea compound tokens) and + (e.g. C++).
-_NOISY_PUNCT_PATTERN = re.compile(r"[~`!@#$%^&*()={}\[\]|\\;:\"<>,]+")
 
+
+# ---------------------------------------------------------------------------
+# Environment helpers
+# ---------------------------------------------------------------------------
 
 def _env_bool(name: str, default: bool) -> bool:
     raw = os.getenv(name)
@@ -52,6 +51,10 @@ def _env_float(name: str, default: float) -> float:
     except (TypeError, ValueError):
         return default
 
+
+# ---------------------------------------------------------------------------
+# Grounding semantic config
+# ---------------------------------------------------------------------------
 
 _GROUNDING_SEMANTIC_ENABLED = _env_bool("GROUNDING_SEMANTIC_ENABLED", True)
 _GROUNDING_SEMANTIC_MODEL = (
@@ -88,145 +91,14 @@ _SEMANTIC_ENCODER: _SentenceTransformerLike | None = None
 _SEMANTIC_ENCODER_INITIALIZED = False
 _SEMANTIC_ENCODER_LOCK = threading.Lock()
 
-_VI_COMMON_WORDS = {
-    "la",
-    "là",
-    "va",
-    "và",
-    "cua",
-    "của",
-    "cho",
-    "trong",
-    "tai",
-    "tại",
-    "voi",
-    "với",
-    "duoc",
-    "được",
-    "mot",
-    "một",
-    "nhung",
-    "những",
-    "the",
-    "thế",
-    "nao",
-    "nào",
-    "gi",
-    "gì",
-    "bao",
-    "nhieu",
-    "bao_nhieu",
-    "vi",
-    "vì",
-    "sao",
-    "hay",
-    "hãy",
-    "khong",
-    "không",
-    "toi",
-    "tôi",
-    "ban",
-    "bạn",
-    "nay",
-    "này",
-    "do",
-    "neu",
-    "nếu",
-    "theo",
-    "tren",
-    "trên",
-    "duoi",
-    "dưới",
-    "dang",
-    "đang",
-    "se",
-    "sẽ",
-    "da",
-    "đã",
-    "can",
-    "cần",
-    "them",
-    "thêm",
-    "tu",
-    "từ",
-    "den",
-    "đến",
-    "day",
-    "đây",
-    "kia",
-    "đó",
-    "ve",
-    "về",
-    "cung",
-    "cũng",
-    "len",
-    "lên",
-    "xuong",
-    "xuống",
-    "roi",
-    "rồi",
-    "chi",
-    "chỉ",
-    "rat",
-    "rất",
-    "co",
-    "có",
-    "thong",
-    "thông",
-    "tin",
-}
 
-_EN_COMMON_WORDS = {
-    "the",
-    "and",
-    "is",
-    "are",
-    "to",
-    "of",
-    "in",
-    "for",
-    "with",
-    "on",
-    "that",
-    "this",
-    "it",
-    "as",
-    "be",
-    "from",
-    "or",
-    "an",
-    "by",
-    "at",
-    "was",
-    "were",
-    "can",
-    "could",
-    "should",
-    "would",
-    "about",
-    "into",
-    "over",
-    "under",
-    "than",
-    "then",
-    "also",
-    "more",
-    "most",
-    "very",
-    "some",
-    "any",
-    "all",
-    "each",
-    "every",
-    "such",
-    "other",
-    "their",
-    "there",
-    "here",
-    "our",
-    "your",
-    "my",
-}
+# ---------------------------------------------------------------------------
+# Stop-word sets (imported from language for DRY, but kept inline for
+# grounding-specific keyword filtering).
+# ---------------------------------------------------------------------------
+
+from app.workflows.shared.language import _VI_COMMON_WORDS, _EN_COMMON_WORDS  # noqa: E402
+
 
 _GENERIC_PHRASES = (
     "không đủ thông tin",
@@ -249,6 +121,10 @@ class GroundingAssessment:
     grounding_reason: str
     hallucination_detected: bool
 
+
+# ---------------------------------------------------------------------------
+# Text normalization & keyword extraction
+# ---------------------------------------------------------------------------
 
 def _normalize_match_text(text: str) -> str:
     lowered = _WHITESPACE_PATTERN.sub(" ", text).strip().lower()
@@ -298,150 +174,13 @@ def _is_generic_answer(answer: str) -> bool:
     return len(_meaningful_keywords(answer)) <= 2
 
 
-def normalize_query(query: str) -> str:
-    """Normalize query text before retrieval or generation.
-
-    Steps:
-    1. Unicode NFC normalization (consistent Vietnamese diacritics).
-    2. Collapse multiple whitespace / newlines into a single space.
-    3. Sanitize with ``_SANITIZE_PATTERN`` (consistent with matching helpers).
-    4. Re-collapse whitespace and trim.
-
-    Semantic characters (Vietnamese, CJK, digits, ``_``, ``+``, ``'``) are
-    preserved so compound tokens (``sinh_viên``, ``C++``) remain intact.
-    """
-    if not query:
-        return ""
-    text = unicodedata.normalize("NFC", query)
-    text = _WHITESPACE_PATTERN.sub(" ", text)
-    text = _SANITIZE_PATTERN.sub(" ", text)
-    text = _WHITESPACE_PATTERN.sub(" ", text)  # re-collapse after sanitization
-    return text.strip()
-
-
-def trim_chat_history(
-    chat_history: list[dict[str, str]] | None,
-    *,
-    memory_window: int,
-) -> list[dict[str, str]]:
-    """Return the latest bounded conversation window for prompt context."""
-    if not chat_history:
-        return []
-    if memory_window <= 0:
-        return []
-
-    # Memory window is measured in turns; one turn roughly equals user + assistant.
-    max_messages = max(1, memory_window * 2)
-    normalized: list[dict[str, str]] = []
-    for item in chat_history[-max_messages:]:
-        role = str(item.get("role", "")).strip().lower()
-        content = str(item.get("content", "")).strip()
-        if role not in {"user", "assistant"} or not content:
-            continue
-        normalized.append({"role": role, "content": content})
-    return normalized
-
-
-def build_chat_history_context(
-    chat_history: list[dict[str, str]] | None,
-    *,
-    memory_window: int,
-) -> str:
-    """Render bounded chat history into concise prompt text."""
-    window = trim_chat_history(chat_history, memory_window=memory_window)
-    if not window:
-        return "(empty)"
-
-    lines: list[str] = []
-    for idx, message in enumerate(window, start=1):
-        role_label = "User" if message["role"] == "user" else "Assistant"
-        lines.append(f"{idx}. {role_label}: {message['content']}")
-    return "\n".join(lines)
-
-
-def detect_response_language(query: str) -> ResponseLanguage:
-    """Infer response language from query text (currently vi/en)."""
-    normalized = normalize_query(query)
-    if not normalized:
-        return "en"
-
-    lowered = normalized.lower()
-
-    if _VI_DIACRITIC_PATTERN.search(lowered):
-        return "vi"
-
-    phrase_markers = (" la gi", " nhu the nao", " bao nhieu", " tai sao")
-    if any(marker in f" {lowered}" for marker in phrase_markers):
-        return "vi"
-
-    words = _WORD_PATTERN.findall(lowered)
-    vi_hits = sum(1 for word in words if word in _VI_COMMON_WORDS)
-    if vi_hits >= 2:
-        return "vi"
-
-    return "en"
-
-
-def response_language_name(response_language: ResponseLanguage) -> str:
-    """Map language code to model-facing language name."""
-    return "Vietnamese" if response_language == "vi" else "English"
-
-
-def build_language_system_prompt(
-    response_language: ResponseLanguage,
-    *,
-    require_json: bool = True,
-) -> str:
-    """Build strict language system instruction for model calls."""
-    language_name = response_language_name(response_language)
-    parts = [
-        f"You must answer in {language_name}. Do not switch languages.",
-        "Do not answer in Chinese unless the user explicitly asks in Chinese.",
-    ]
-    if require_json:
-        parts.append("Return only valid JSON that matches the requested schema.")
-    return " ".join(parts)
-
-
-def is_language_mismatch(answer: str, expected_language: ResponseLanguage) -> bool:
-    """Heuristic language mismatch detection for final answers."""
-    text = answer.strip()
-    if not text:
-        return False
-
-    if expected_language != "vi":
-        return False
-
-    if _CJK_PATTERN.search(text):
-        return True
-
-    if _VI_DIACRITIC_PATTERN.search(text):
-        return False
-
-    words = [word.lower() for word in _WORD_PATTERN.findall(text)]
-    if not words:
-        return False
-
-    vi_hits = sum(1 for word in words if word in _VI_COMMON_WORDS)
-    en_hits = sum(1 for word in words if word in _EN_COMMON_WORDS)
-    if vi_hits == 0 and en_hits >= max(3, len(words) // 5):
-        return True
-    if vi_hits < 2 and len(words) >= 8:
-        return True
-
-    return False
-
-
-def localized_insufficient_evidence(response_language: ResponseLanguage) -> str:
-    """Localized insufficient-evidence message for final user responses."""
-    if response_language == "vi":
-        return "Không đủ thông tin từ tài liệu để trả lời"
-    return "Insufficient evidence to provide a grounded answer."
-
-
 def _normalized_terms(text: str) -> set[str]:
     return _meaningful_keywords(text)
 
+
+# ---------------------------------------------------------------------------
+# Semantic encoder (lazy singleton)
+# ---------------------------------------------------------------------------
 
 def _load_semantic_encoder() -> _SentenceTransformerLike | None:
     global _SEMANTIC_ENCODER_INITIALIZED, _SEMANTIC_ENCODER
@@ -496,18 +235,6 @@ def _normalize_vectors(raw_vectors: Any) -> list[list[float]]:
     return vectors
 
 
-def _cosine_similarity(vector_a: list[float], vector_b: list[float]) -> float:
-    if not vector_a or not vector_b or len(vector_a) != len(vector_b):
-        return 0.0
-
-    dot = sum(a * b for a, b in zip(vector_a, vector_b))
-    norm_a = math.sqrt(sum(a * a for a in vector_a))
-    norm_b = math.sqrt(sum(b * b for b in vector_b))
-    if norm_a == 0.0 or norm_b == 0.0:
-        return 0.0
-    return dot / (norm_a * norm_b)
-
-
 def _semantic_context_similarity(answer: str, context_chunks: list[str]) -> float | None:
     if not _GROUNDING_SEMANTIC_ENABLED:
         return None
@@ -542,9 +269,16 @@ def _semantic_context_similarity(answer: str, context_chunks: list[str]) -> floa
     if not answer_vector or not context_vectors:
         return None
 
-    best_similarity = max((_cosine_similarity(answer_vector, vector) for vector in context_vectors), default=0.0)
+    best_similarity = max(
+        (cosine_similarity(answer_vector, vector) for vector in context_vectors),
+        default=0.0,
+    )
     return round(max(0.0, min(1.0, best_similarity)), 4)
 
+
+# ---------------------------------------------------------------------------
+# Public scoring API
+# ---------------------------------------------------------------------------
 
 def grounded_overlap_score(answer: str, context_chunks: list[str]) -> float:
     """Compute a tolerant groundedness score using keyword and char overlap."""

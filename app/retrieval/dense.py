@@ -2,27 +2,12 @@
 
 from __future__ import annotations
 
-import math
-
 import numpy as np
 
 from app.core.cache import QueryCache
 from app.indexing.embeddings import EmbeddingProvider
 from app.indexing.vector_index import InMemoryVectorIndex
 from app.schemas.retrieval import RetrievalResult
-
-
-def _cosine_similarity(a: list[float], b: list[float]) -> float:
-    if len(a) != len(b):
-        raise ValueError("Vector dimension mismatch for cosine similarity")
-
-    dot = sum(x * y for x, y in zip(a, b))
-    norm_a = math.sqrt(sum(x * x for x in a))
-    norm_b = math.sqrt(sum(y * y for y in b))
-
-    if norm_a == 0.0 or norm_b == 0.0:
-        return 0.0
-    return dot / (norm_a * norm_b)
 
 
 def _rank_top_k_indices(scores: np.ndarray, top_k: int) -> np.ndarray:
