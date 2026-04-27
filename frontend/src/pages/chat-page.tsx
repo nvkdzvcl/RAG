@@ -131,9 +131,11 @@ export function ChatPage() {
     deletingDocumentId,
     uploadMessage,
     uploadError,
+    uploadBatchItems,
+    uploadBatchSummary,
     canQuery,
     queryDisabledReason,
-    uploadFile,
+    uploadFiles,
     clearAllUploadedDocuments,
     deleteUploadedDocument,
     reindexDocuments,
@@ -543,7 +545,9 @@ export function ChatPage() {
           deletingDocumentId={deletingDocumentId}
           uploadMessage={uploadMessage}
           uploadError={uploadError}
-          onUpload={uploadFile}
+          uploadBatchItems={uploadBatchItems}
+          uploadBatchSummary={uploadBatchSummary}
+          onUploadFiles={uploadFiles}
           onRequestDeleteDocument={(document) => setSelectedDocumentForDelete(document)}
           onRequestDeleteAllDocuments={() => setShowClearVectorDialog(true)}
         />

@@ -20,7 +20,12 @@ import type {
   ApiRetrievalMode,
 } from "@/api/types";
 import { getUploadFileValidationError } from "@/lib/upload-files";
-import type { DocumentRecord, DocumentStatus, ProcessingStage } from "@/types/document";
+import type {
+  DocumentRecord,
+  DocumentStatus,
+  ProcessingStage,
+  UploadBatchItem,
+} from "@/types/document";
 
 const BACKEND_POLL_INTERVAL_MS = 1400;
 const FALLBACK_UPLOAD_STEP_MS = 110;
@@ -124,9 +129,12 @@ export type UseDocumentIngestionResult = {
   deletingDocumentId: string | null;
   uploadMessage: string | null;
   uploadError: string | null;
+  uploadBatchItems: UploadBatchItem[];
+  uploadBatchSummary: string | null;
   canQuery: boolean;
   queryDisabledReason: string | null;
   uploadFile: (file: File) => Promise<void>;
+  uploadFiles: (files: File[]) => Promise<void>;
   clearAllUploadedDocuments: () => Promise<{ deletedDocuments: number; deletedFiles: number }>;
   deleteUploadedDocument: (documentId: string) => Promise<{ documentId: string; remainingDocuments: number }>;
   reindexDocuments: (payload: {
@@ -161,6 +169,8 @@ export function useDocumentIngestion(): UseDocumentIngestionResult {
   const [deletingDocumentId, setDeletingDocumentId] = useState<string | null>(null);
   const [uploadMessage, setUploadMessage] = useState<string | null>(null);
   const [uploadError, setUploadError] = useState<string | null>(null);
+  const [uploadBatchItems, setUploadBatchItems] = useState<UploadBatchItem[]>([]);
+  const [uploadBatchSummary, setUploadBatchSummary] = useState<string | null>(null);
   const [activeDocumentId, setActiveDocumentId] = useState<string | null>(null);
 
   const pollingRef = useRef<Map<string, number>>(new Map());
@@ -198,6 +208,27 @@ export function useDocumentIngestion(): UseDocumentIngestionResult {
       updated[existingIndex] = next;
       return updated;
     });
+  }, []);
+
+  const updateUploadBatchItem = useCallback(
+    (itemId: string, updater: (previous: UploadBatchItem) => UploadBatchItem) => {
+      setUploadBatchItems((previous) =>
+        previous.map((item) => (item.id === itemId ? updater(item) : item)),
+      );
+    },
+    [],
+  );
+
+  const refreshDocuments = useCallback(async () => {
+    try {
+      const payload = await listDocuments();
+      setDocuments(payload.map(mapApiDocument));
+      setBackendAvailability("available");
+    } catch (error) {
+      if (shouldFallback(error)) {
+        setBackendAvailability("unavailable");
+      }
+    }
   }, []);
 
   const startBackendPolling = useCallback(
@@ -294,7 +325,8 @@ export function useDocumentIngestion(): UseDocumentIngestionResult {
   }, [startBackendPolling]);
 
   const runFallbackSimulation = useCallback(
-    async (documentId: string, file: File) => {
+    async (documentId: string, file: File, options: { finalize?: boolean } = {}) => {
+      const shouldFinalize = options.finalize ?? true;
       setBackendAvailability("unavailable");
 
       for (let progress = 8; progress <= 100; progress += 8) {
@@ -324,95 +356,183 @@ export function useDocumentIngestion(): UseDocumentIngestionResult {
         }
       }
 
-      setUploadMessage(UPLOAD_SUCCESS_MESSAGE);
-      setIsUploading(false);
+      if (shouldFinalize) {
+        setUploadMessage(UPLOAD_SUCCESS_MESSAGE);
+        setIsUploading(false);
+      }
     },
     [updateDocument],
   );
 
-  const uploadFile = useCallback(
-    async (file: File) => {
-      const validationError = getUploadFileValidationError(file);
-      if (validationError) {
-        setUploadError(validationError);
+  const uploadFiles = useCallback(
+    async (files: File[]) => {
+      const selectedFiles = files.filter(Boolean);
+      if (selectedFiles.length === 0) {
         return;
       }
 
+      const batchSeed = Date.now();
+      let acceptedCount = 0;
+      let successCount = 0;
+      const initialItems: UploadBatchItem[] = selectedFiles.map((file, index) => {
+        const validationError = getUploadFileValidationError(file);
+        if (!validationError) {
+          acceptedCount += 1;
+        }
+        return {
+          id: `batch-${batchSeed}-${index}-${Math.random().toString(36).slice(2, 7)}`,
+          filename: file.name,
+          status: validationError ? "error" : "pending",
+          progress: validationError ? null : 0,
+          message: validationError,
+        };
+      });
+
+      setUploadBatchItems(initialItems);
+      setUploadBatchSummary(null);
       setUploadError(null);
       setUploadMessage(null);
+
+      if (acceptedCount === 0) {
+        setUploadError("Không có tệp hợp lệ để tải lên.");
+        setUploadBatchSummary(`Đã tải lên 0/${selectedFiles.length} tệp`);
+        return;
+      }
+
       setIsUploading(true);
+      let shouldUseBackend = backendAvailability !== "unavailable";
 
-      const temporaryId = `upload-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
-      const temporaryRecord: DocumentRecord = {
-        id: temporaryId,
-        filename: file.name,
-        status: "uploading",
-        stage: null,
-        uploadProgress: 0,
-        chunkCount: null,
-        createdAt: new Date().toISOString(),
-        message: null,
-        source: "fallback",
-      };
+      for (const [index, file] of selectedFiles.entries()) {
+        const batchItem = initialItems[index];
+        if (!batchItem || batchItem.status === "error") {
+          continue;
+        }
 
-      upsertDocument(temporaryRecord);
-      setActiveDocumentId(temporaryId);
+        updateUploadBatchItem(batchItem.id, (previous) => ({
+          ...previous,
+          status: "uploading",
+          progress: 0,
+          message: null,
+        }));
 
-      if (backendAvailability !== "unavailable") {
-        try {
-          const uploaded = await uploadDocument(file, (progressPercent) => {
-            updateDocument(temporaryId, (previous) => ({
-              ...previous,
-              uploadProgress: progressPercent,
-            }));
-          });
+        const temporaryId = `upload-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+        const temporaryRecord: DocumentRecord = {
+          id: temporaryId,
+          filename: file.name,
+          status: "uploading",
+          stage: null,
+          uploadProgress: 0,
+          chunkCount: null,
+          createdAt: new Date().toISOString(),
+          message: null,
+          source: "fallback",
+        };
 
-          const mapped = mapApiDocument(uploaded);
-          setBackendAvailability("available");
+        upsertDocument(temporaryRecord);
+        setActiveDocumentId(temporaryId);
 
-          setDocuments((previous) => {
-            const withoutTemporary = previous.filter((item) => item.id !== temporaryId);
-            return [
-              {
-                ...mapped,
-                uploadProgress: 100,
-              },
-              ...withoutTemporary,
-            ];
-          });
-          setActiveDocumentId(mapped.id);
+        let uploadedSuccessfully = false;
 
-          if (mapped.status === "ready") {
-            setUploadMessage(UPLOAD_SUCCESS_MESSAGE);
-            setIsUploading(false);
-          } else {
-            startBackendPolling(mapped.id);
+        if (shouldUseBackend) {
+          try {
+            const uploaded = await uploadDocument(file, (progressPercent) => {
+              updateDocument(temporaryId, (previous) => ({
+                ...previous,
+                uploadProgress: progressPercent,
+              }));
+              updateUploadBatchItem(batchItem.id, (previous) => ({
+                ...previous,
+                progress: progressPercent,
+              }));
+            });
+
+            const mapped = mapApiDocument(uploaded);
+            setBackendAvailability("available");
+            setDocuments((previous) => {
+              const withoutTemporary = previous.filter((item) => item.id !== temporaryId);
+              return [
+                {
+                  ...mapped,
+                  uploadProgress: 100,
+                },
+                ...withoutTemporary,
+              ];
+            });
+            setActiveDocumentId(mapped.id);
+            if (mapped.status !== "ready") {
+              startBackendPolling(mapped.id);
+            }
+            uploadedSuccessfully = true;
+          } catch (error) {
+            if (!shouldFallback(error)) {
+              const message = toErrorMessage(error, "Document upload failed.");
+              updateDocument(temporaryId, (previous) => ({
+                ...previous,
+                status: "error",
+                stage: "error",
+                uploadProgress: null,
+                message,
+              }));
+              updateUploadBatchItem(batchItem.id, (previous) => ({
+                ...previous,
+                status: "error",
+                progress: null,
+                message,
+              }));
+              continue;
+            }
+            shouldUseBackend = false;
           }
-          return;
-        } catch (error) {
-          if (!shouldFallback(error)) {
-            setUploadError(toErrorMessage(error, "Document upload failed."));
-            updateDocument(temporaryId, (previous) => ({
-              ...previous,
-              status: "error",
-              stage: "error",
-              uploadProgress: null,
-              message: toErrorMessage(error, "Document upload failed."),
-            }));
-            setIsUploading(false);
-            return;
-          }
+        }
+
+        if (!uploadedSuccessfully) {
+          await runFallbackSimulation(temporaryId, file, { finalize: false });
+          uploadedSuccessfully = true;
+        }
+
+        if (uploadedSuccessfully) {
+          successCount += 1;
+          updateUploadBatchItem(batchItem.id, (previous) => ({
+            ...previous,
+            status: "success",
+            progress: 100,
+            message: "Hoàn tất",
+          }));
         }
       }
 
-      await runFallbackSimulation(temporaryId, file);
+      await refreshDocuments();
+      setIsUploading(false);
+      const summary = `Đã tải lên ${successCount}/${selectedFiles.length} tệp`;
+      setUploadBatchSummary(summary);
+      setUploadMessage(summary);
+      if (successCount < acceptedCount) {
+        setUploadError(`Có ${acceptedCount - successCount} tệp tải lên thất bại.`);
+      }
     },
-    [backendAvailability, runFallbackSimulation, startBackendPolling, updateDocument, upsertDocument],
+    [
+      backendAvailability,
+      refreshDocuments,
+      runFallbackSimulation,
+      startBackendPolling,
+      updateDocument,
+      updateUploadBatchItem,
+      upsertDocument,
+    ],
+  );
+
+  const uploadFile = useCallback(
+    async (file: File) => {
+      await uploadFiles([file]);
+    },
+    [uploadFiles],
   );
 
   const clearAllUploadedDocuments = useCallback(async () => {
     setUploadError(null);
     setUploadMessage(null);
+    setUploadBatchItems([]);
+    setUploadBatchSummary(null);
     setIsDeletingDocuments(true);
     setDeletingDocumentId(null);
     setIsUploading(false);
@@ -601,9 +721,12 @@ export function useDocumentIngestion(): UseDocumentIngestionResult {
     deletingDocumentId,
     uploadMessage,
     uploadError,
+    uploadBatchItems,
+    uploadBatchSummary,
     canQuery: queryState.canQuery,
     queryDisabledReason: queryState.reason,
     uploadFile,
+    uploadFiles,
     clearAllUploadedDocuments,
     deleteUploadedDocument,
     reindexDocuments,

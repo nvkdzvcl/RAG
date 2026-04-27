@@ -13,7 +13,7 @@ import {
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
-import type { DocumentRecord, ProcessingStage } from "@/types/document";
+import type { DocumentRecord, ProcessingStage, UploadBatchItem } from "@/types/document";
 import { translations } from "@/lib/translations";
 import {
   SUPPORTED_UPLOAD_ACCEPT,
@@ -29,7 +29,9 @@ type DocumentUploadCardProps = {
   deletingDocumentId?: string | null;
   uploadMessage: string | null;
   uploadError: string | null;
-  onUpload: (file: File) => Promise<void>;
+  uploadBatchItems?: UploadBatchItem[];
+  uploadBatchSummary?: string | null;
+  onUploadFiles: (files: File[]) => Promise<void>;
   onRequestDeleteDocument?: (document: DocumentRecord) => void;
   onRequestDeleteAllDocuments?: () => void;
 };
@@ -65,6 +67,32 @@ function statusBadgeClass(status: DocumentRecord["status"]): string {
     return "border-blue-300 bg-blue-50 text-blue-700";
   }
   return "border-violet-300 bg-violet-50 text-violet-700";
+}
+
+function uploadBatchStatusLabel(status: UploadBatchItem["status"]): string {
+  if (status === "pending") {
+    return "pending";
+  }
+  if (status === "uploading") {
+    return "uploading";
+  }
+  if (status === "success") {
+    return "success";
+  }
+  return "error";
+}
+
+function uploadBatchStatusClass(status: UploadBatchItem["status"]): string {
+  if (status === "success") {
+    return "border-emerald-300 bg-emerald-50 text-emerald-700";
+  }
+  if (status === "error") {
+    return "border-rose-300 bg-rose-50 text-rose-700";
+  }
+  if (status === "uploading") {
+    return "border-blue-300 bg-blue-50 text-blue-700";
+  }
+  return "border-slate-300 bg-slate-50 text-slate-600";
 }
 
 function stageState(active: DocumentRecord | null, stage: ProcessingStage): StageState {
@@ -115,7 +143,9 @@ export function DocumentUploadCard({
   deletingDocumentId = null,
   uploadMessage,
   uploadError,
-  onUpload,
+  uploadBatchItems = [],
+  uploadBatchSummary = null,
+  onUploadFiles,
   onRequestDeleteDocument,
   onRequestDeleteAllDocuments,
 }: DocumentUploadCardProps) {
@@ -156,12 +186,11 @@ export function DocumentUploadCard({
       return;
     }
 
-    const { accepted, rejected } = splitValidUploadFiles(Array.from(files));
+    const selectedFiles = Array.from(files);
+    const { rejected } = splitValidUploadFiles(selectedFiles);
     setFileSelectionErrors(formatUploadValidationMessages(rejected));
 
-    for (const file of accepted) {
-      await onUpload(file);
-    }
+    await onUploadFiles(selectedFiles);
   };
 
   const handleDragEnter = (event: ReactDragEvent<HTMLDivElement>) => {
@@ -263,6 +292,32 @@ export function DocumentUploadCard({
                 style={{ width: `${Math.max(0, Math.min(100, activeProgress))}%` }}
               />
             </div>
+          </div>
+        ) : null}
+
+        {uploadBatchItems.length > 0 ? (
+          <div className="space-y-2 rounded-lg border border-slate-200 bg-white px-3 py-2">
+            <div className="flex items-center justify-between gap-2">
+              <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">Danh sách tải lên</p>
+              {uploadBatchSummary ? <p className="text-xs font-medium text-slate-600">{uploadBatchSummary}</p> : null}
+            </div>
+            <ul className="max-h-32 space-y-1 overflow-y-auto pr-1">
+              {uploadBatchItems.map((item) => (
+                <li key={item.id} className="flex items-center justify-between gap-2 rounded-md bg-slate-50 px-2 py-1">
+                  <div className="min-w-0">
+                    <p className="truncate text-xs font-medium text-slate-700">{item.filename}</p>
+                    {item.message ? (
+                      <p className="truncate text-[11px] text-slate-500">{item.message}</p>
+                    ) : item.status === "uploading" && typeof item.progress === "number" ? (
+                      <p className="text-[11px] text-slate-500">{item.progress}%</p>
+                    ) : null}
+                  </div>
+                  <Badge variant="outline" className={`shrink-0 ${uploadBatchStatusClass(item.status)}`}>
+                    {uploadBatchStatusLabel(item.status)}
+                  </Badge>
+                </li>
+              ))}
+            </ul>
           </div>
         ) : null}
 
