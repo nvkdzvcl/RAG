@@ -6,6 +6,7 @@ import math
 import os
 import re
 import threading
+import unicodedata
 from dataclasses import dataclass
 from typing import Any, Protocol
 
@@ -18,7 +19,10 @@ _VI_DIACRITIC_PATTERN = re.compile(
 _CJK_PATTERN = re.compile(r"[\u3400-\u4dbf\u4e00-\u9fff\uf900-\ufaff]")
 _WORD_PATTERN = re.compile(r"[A-Za-zÀ-ỹĐđ0-9']+")
 _WHITESPACE_PATTERN = re.compile(r"\s+")
-_SANITIZE_PATTERN = re.compile(r"[^A-Za-zÀ-ỹĐđ0-9\s']")
+_SANITIZE_PATTERN = re.compile(r"[^A-Za-zÀ-ỹĐđ0-9\s'_+]")
+# Noisy punctuation that hurts retrieval but carries no semantic value.
+# Deliberately keeps _ (underthesea compound tokens) and + (e.g. C++).
+_NOISY_PUNCT_PATTERN = re.compile(r"[~`!@#$%^&*()={}\[\]|\\;:\"<>,]+")
 
 
 def _env_bool(name: str, default: bool) -> bool:
@@ -295,8 +299,24 @@ def _is_generic_answer(answer: str) -> bool:
 
 
 def normalize_query(query: str) -> str:
-    """Normalize query text before retrieval or generation."""
-    return query.strip()
+    """Normalize query text before retrieval or generation.
+
+    Steps:
+    1. Unicode NFC normalization (consistent Vietnamese diacritics).
+    2. Collapse multiple whitespace / newlines into a single space.
+    3. Sanitize with ``_SANITIZE_PATTERN`` (consistent with matching helpers).
+    4. Re-collapse whitespace and trim.
+
+    Semantic characters (Vietnamese, CJK, digits, ``_``, ``+``, ``'``) are
+    preserved so compound tokens (``sinh_viên``, ``C++``) remain intact.
+    """
+    if not query:
+        return ""
+    text = unicodedata.normalize("NFC", query)
+    text = _WHITESPACE_PATTERN.sub(" ", text)
+    text = _SANITIZE_PATTERN.sub(" ", text)
+    text = _WHITESPACE_PATTERN.sub(" ", text)  # re-collapse after sanitization
+    return text.strip()
 
 
 def trim_chat_history(
