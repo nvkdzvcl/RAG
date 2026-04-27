@@ -115,10 +115,15 @@ class DenseRetriever:
 
         self._refresh_index_cache_if_needed()
         query_vector = self._embed_query(query)
-        if query_vector.ndim != 1 or query_vector.shape[0] != self._vector_matrix.shape[1]:
+        if (
+            query_vector.ndim != 1
+            or query_vector.shape[0] != self._vector_matrix.shape[1]
+        ):
             raise ValueError("Vector dimension mismatch for cosine similarity")
 
-        scores = _cosine_similarity_matrix(query_vector, self._vector_matrix, self._vector_norms)
+        scores = _cosine_similarity_matrix(
+            query_vector, self._vector_matrix, self._vector_norms
+        )
         ranked_indices = _rank_top_k_indices(scores, top_k)
         chunks = self.vector_index.chunks
 

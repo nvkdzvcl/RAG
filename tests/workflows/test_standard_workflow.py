@@ -11,7 +11,9 @@ from app.workflows.standard import StandardWorkflow
 def test_standard_workflow_run_path() -> None:
     workflow = StandardWorkflow()
 
-    response = workflow.run(query="How does standard mode perform retrieval?", chat_history=None)
+    response = workflow.run(
+        query="How does standard mode perform retrieval?", chat_history=None
+    )
 
     assert isinstance(response, StandardQueryResponse)
     assert response.mode == "standard"
@@ -27,7 +29,9 @@ def test_standard_workflow_uses_ingested_files_instead_of_memory_corpus() -> Non
 
     assert response.trace[0]["step"] == "retrieve"
     assert response.trace[0]["count"] > 0
-    assert all(not citation.source.startswith("memory://") for citation in response.citations)
+    assert all(
+        not citation.source.startswith("memory://") for citation in response.citations
+    )
 
 
 def test_standard_runner_route_and_contract() -> None:
@@ -163,7 +167,9 @@ def test_standard_workflow_passes_model_override_to_llm_client() -> None:
             return "seeded"
 
     llm_client = _RecordingLLMClient()
-    workflow = StandardWorkflow(index_manager=_FakeIndexManager(), llm_client=llm_client)
+    workflow = StandardWorkflow(
+        index_manager=_FakeIndexManager(), llm_client=llm_client
+    )
 
     response = workflow.run(query="Use qwen2.5:7b", model="qwen2.5:7b")
 

@@ -5,7 +5,11 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any
 
-from app.ingestion.base_loader import BaseLoader, blocks_to_loaded_documents, build_doc_id
+from app.ingestion.base_loader import (
+    BaseLoader,
+    blocks_to_loaded_documents,
+    build_doc_id,
+)
 from app.ingestion.parsers import MarkdownParser
 from app.schemas.ingestion import DocumentBlock, LoadedDocument
 
@@ -41,7 +45,12 @@ class MarkdownLoader(BaseLoader):
                 DocumentBlock(
                     type="text",
                     content=raw,
-                    metadata={"page": None, "section": None, "bbox": None, "parser_fallback": True},
+                    metadata={
+                        "page": None,
+                        "section": None,
+                        "bbox": None,
+                        "parser_fallback": True,
+                    },
                 )
             ]
 

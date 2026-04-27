@@ -15,7 +15,9 @@ from app.main import create_app
 
 
 @pytest.fixture
-def isolated_client(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> tuple[TestClient, Path]:
+def isolated_client(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> tuple[TestClient, Path]:
     data_dir = tmp_path / "data"
     corpus_dir = tmp_path / "corpus"
     corpus_dir.mkdir(parents=True, exist_ok=True)
@@ -87,7 +89,9 @@ def isolated_client_ocr_enabled(
         "app.ingestion.parsers.pdf_parser.pdfplumber",
         SimpleNamespace(open=lambda _: FakePDF()),
     )
-    monkeypatch.setattr("app.ingestion.parsers.pdf_parser.is_tesseract_available", lambda: True)
+    monkeypatch.setattr(
+        "app.ingestion.parsers.pdf_parser.is_tesseract_available", lambda: True
+    )
     monkeypatch.setattr(
         "app.ingestion.parsers.pdf_parser.ocr_pdf_page_with_pymupdf",
         lambda *args, **kwargs: "Nội dung OCR tiếng Việt: tokendebugocr-77",
@@ -110,7 +114,13 @@ def test_upload_endpoint_returns_document_payload(
 
     response = client.post(
         "/api/v1/documents/upload",
-        files={"file": ("uploaded.txt", b"Upload flow should build hybrid indexes from this chunk.", "text/plain")},
+        files={
+            "file": (
+                "uploaded.txt",
+                b"Upload flow should build hybrid indexes from this chunk.",
+                "text/plain",
+            )
+        },
     )
 
     assert response.status_code == 201
@@ -182,8 +192,12 @@ def test_ocr_chunk_is_indexed_retrievable_and_marked_in_sources(
     body = query_response.json()
     assert body["status"] != "insufficient_evidence"
     assert body["trace"][0]["index_source"] == "uploaded"
-    assert any(citation.get("block_type") == "ocr_text" for citation in body["citations"])
-    context_steps = [step for step in body["trace"] if step.get("step") == "context_select"]
+    assert any(
+        citation.get("block_type") == "ocr_text" for citation in body["citations"]
+    )
+    context_steps = [
+        step for step in body["trace"] if step.get("step") == "context_select"
+    ]
     assert context_steps
     selected_docs = context_steps[0].get("docs", [])
     assert any(doc.get("block_type") == "ocr_text" for doc in selected_docs)
@@ -318,7 +332,9 @@ def test_query_trace_and_citations_include_uploaded_file_metadata(
     assert query_response.status_code == 200
     body = query_response.json()
 
-    context_steps = [step for step in body["trace"] if step.get("step") == "context_select"]
+    context_steps = [
+        step for step in body["trace"] if step.get("step") == "context_select"
+    ]
     assert context_steps
     docs = context_steps[0]["docs"]
     assert docs
@@ -352,11 +368,23 @@ def test_query_filter_doc_id_a_returns_only_document_a(
 
     upload_a = client.post(
         "/api/v1/documents/upload",
-        files={"file": ("filter-a.txt", b"shared-filter-token-991 alpha-doc-only-a", "text/plain")},
+        files={
+            "file": (
+                "filter-a.txt",
+                b"shared-filter-token-991 alpha-doc-only-a",
+                "text/plain",
+            )
+        },
     )
     upload_b = client.post(
         "/api/v1/documents/upload",
-        files={"file": ("filter-b.txt", b"shared-filter-token-991 beta-doc-only-b", "text/plain")},
+        files={
+            "file": (
+                "filter-b.txt",
+                b"shared-filter-token-991 beta-doc-only-b",
+                "text/plain",
+            )
+        },
     )
     assert upload_a.status_code == 201
     assert upload_b.status_code == 201
@@ -377,7 +405,10 @@ def test_query_filter_doc_id_a_returns_only_document_a(
 
     assert body["trace"][0]["index_source"] == "uploaded"
     assert body["trace"][0]["applied_filters"]["doc_ids"] == [doc_a]
-    assert body["trace"][0]["candidate_count_before_filter"] >= body["trace"][0]["candidate_count_after_filter"]
+    assert (
+        body["trace"][0]["candidate_count_before_filter"]
+        >= body["trace"][0]["candidate_count_after_filter"]
+    )
     citations = body["citations"]
     assert citations
     assert all(citation["doc_id"] == doc_a for citation in citations)
@@ -391,11 +422,23 @@ def test_query_filter_doc_id_b_returns_only_document_b(
 
     upload_a = client.post(
         "/api/v1/documents/upload",
-        files={"file": ("filter-a.txt", b"shared-filter-token-776 alpha-doc-only-a", "text/plain")},
+        files={
+            "file": (
+                "filter-a.txt",
+                b"shared-filter-token-776 alpha-doc-only-a",
+                "text/plain",
+            )
+        },
     )
     upload_b = client.post(
         "/api/v1/documents/upload",
-        files={"file": ("filter-b.txt", b"shared-filter-token-776 beta-doc-only-b", "text/plain")},
+        files={
+            "file": (
+                "filter-b.txt",
+                b"shared-filter-token-776 beta-doc-only-b",
+                "text/plain",
+            )
+        },
     )
     assert upload_a.status_code == 201
     assert upload_b.status_code == 201
@@ -429,11 +472,23 @@ def test_query_filter_by_filename_returns_expected_document(
 
     upload_a = client.post(
         "/api/v1/documents/upload",
-        files={"file": ("finance-a.txt", b"shared-filename-filter-311 in file a", "text/plain")},
+        files={
+            "file": (
+                "finance-a.txt",
+                b"shared-filename-filter-311 in file a",
+                "text/plain",
+            )
+        },
     )
     upload_b = client.post(
         "/api/v1/documents/upload",
-        files={"file": ("finance-b.txt", b"shared-filename-filter-311 in file b", "text/plain")},
+        files={
+            "file": (
+                "finance-b.txt",
+                b"shared-filename-filter-311 in file b",
+                "text/plain",
+            )
+        },
     )
     assert upload_a.status_code == 201
     assert upload_b.status_code == 201
@@ -466,7 +521,13 @@ def test_deleted_document_cannot_be_retrieved_even_with_doc_id_filter(
 
     upload_a = client.post(
         "/api/v1/documents/upload",
-        files={"file": ("stale-a.txt", b"stale-doc-token-551 only in deleted doc", "text/plain")},
+        files={
+            "file": (
+                "stale-a.txt",
+                b"stale-doc-token-551 only in deleted doc",
+                "text/plain",
+            )
+        },
     )
     upload_b = client.post(
         "/api/v1/documents/upload",
@@ -555,11 +616,23 @@ def test_advanced_query_respects_doc_id_filter(
 
     upload_a = client.post(
         "/api/v1/documents/upload",
-        files={"file": ("adv-filter-a.txt", b"shared-adv-filter-121 alpha-doc-a", "text/plain")},
+        files={
+            "file": (
+                "adv-filter-a.txt",
+                b"shared-adv-filter-121 alpha-doc-a",
+                "text/plain",
+            )
+        },
     )
     upload_b = client.post(
         "/api/v1/documents/upload",
-        files={"file": ("adv-filter-b.txt", b"shared-adv-filter-121 beta-doc-b", "text/plain")},
+        files={
+            "file": (
+                "adv-filter-b.txt",
+                b"shared-adv-filter-121 beta-doc-b",
+                "text/plain",
+            )
+        },
     )
     assert upload_a.status_code == 201
     assert upload_b.status_code == 201
@@ -621,7 +694,9 @@ def test_compare_query_passes_filters_to_both_standard_and_advanced_branches(
     assert standard_retrieve["candidate_count_after_filter"] == 0
     assert standard_retrieve["count"] == 0
 
-    advanced_loop_steps = [step for step in body["advanced"]["trace"] if step.get("step") == "loop"]
+    advanced_loop_steps = [
+        step for step in body["advanced"]["trace"] if step.get("step") == "loop"
+    ]
     assert advanced_loop_steps
     advanced_loop = advanced_loop_steps[0]
     assert advanced_loop["applied_filters"]["doc_ids"] == [filtered_doc_id]
@@ -661,7 +736,9 @@ def test_standard_mode_retrieves_vietnamese_uploaded_chunks(
         files={
             "file": (
                 "vi-knowledge.txt",
-                "Hệ thống truy hồi thông tin dùng cụm từ khóa độc nhất: baobietviet42.".encode("utf-8"),
+                "Hệ thống truy hồi thông tin dùng cụm từ khóa độc nhất: baobietviet42.".encode(
+                    "utf-8"
+                ),
                 "text/plain",
             )
         },
@@ -728,7 +805,9 @@ def test_delete_all_documents_clears_registry_raw_files_and_runtime_indexes(
     assert listed_after.status_code == 200
     assert listed_after.json()["documents"] == []
 
-    registry_payload = json.loads((data_dir / "document_registry.json").read_text(encoding="utf-8"))
+    registry_payload = json.loads(
+        (data_dir / "document_registry.json").read_text(encoding="utf-8")
+    )
     assert registry_payload["documents"] == []
 
     raw_files = [path for path in (data_dir / "raw").rglob("*") if path.is_file()]
@@ -746,7 +825,9 @@ def test_delete_all_documents_clears_registry_raw_files_and_runtime_indexes(
     assert query_after_delete.status_code == 200
     query_body = query_after_delete.json()
     assert query_body["trace"][0]["index_source"] == "seeded"
-    assert all(citation["doc_id"] not in deleted_ids for citation in query_body["citations"])
+    assert all(
+        citation["doc_id"] not in deleted_ids for citation in query_body["citations"]
+    )
 
 
 def test_delete_all_documents_when_empty_is_idempotent(
@@ -773,7 +854,9 @@ def test_delete_single_document_rebuilds_runtime_from_remaining_uploaded_docs(
     )
     second_upload = client.post(
         "/api/v1/documents/upload",
-        files={"file": ("second.txt", b"second doc token keep-this-doc-999", "text/plain")},
+        files={
+            "file": ("second.txt", b"second doc token keep-this-doc-999", "text/plain")
+        },
     )
     assert first_upload.status_code == 201
     assert second_upload.status_code == 201
@@ -819,7 +902,9 @@ def test_upload_then_delete_same_document_never_returns_deleted_doc(
 
     upload = client.post(
         "/api/v1/documents/upload",
-        files={"file": ("single-delete.txt", b"single-delete-token-4477", "text/plain")},
+        files={
+            "file": ("single-delete.txt", b"single-delete-token-4477", "text/plain")
+        },
     )
     assert upload.status_code == 201
     doc_id = upload.json()["document_id"]
@@ -833,7 +918,9 @@ def test_upload_then_delete_same_document_never_returns_deleted_doc(
         },
     )
     assert before_delete.status_code == 200
-    assert any(citation["doc_id"] == doc_id for citation in before_delete.json()["citations"])
+    assert any(
+        citation["doc_id"] == doc_id for citation in before_delete.json()["citations"]
+    )
 
     deleted = client.delete(f"/api/v1/documents/{doc_id}")
     assert deleted.status_code == 200
@@ -1224,7 +1311,10 @@ def test_uploaded_retrieval_excludes_deleted_document_chunks(
         },
     )
     assert query_a_before_delete.status_code == 200
-    assert any(citation["doc_id"] == doc_a for citation in query_a_before_delete.json()["citations"])
+    assert any(
+        citation["doc_id"] == doc_a
+        for citation in query_a_before_delete.json()["citations"]
+    )
 
     query_b = client.post(
         "/api/v1/query",
@@ -1286,7 +1376,9 @@ def test_restart_with_empty_registry_does_not_use_stale_uploaded_indexes(
     assert (data_dir / "indexes" / "vector_index.json").exists()
     assert (data_dir / "indexes" / "bm25_index.json").exists()
 
-    (data_dir / "document_registry.json").write_text('{"documents": []}', encoding="utf-8")
+    (data_dir / "document_registry.json").write_text(
+        '{"documents": []}', encoding="utf-8"
+    )
     raw_dir = data_dir / "raw"
     for path in raw_dir.rglob("*"):
         if path.is_file():
@@ -1307,7 +1399,9 @@ def test_restart_with_empty_registry_does_not_use_stale_uploaded_indexes(
         assert stale_query.status_code == 200
         stale_body = stale_query.json()
         assert stale_body["trace"][0]["index_source"] == "seeded"
-        assert all(citation["doc_id"] != stale_doc_id for citation in stale_body["citations"])
+        assert all(
+            citation["doc_id"] != stale_doc_id for citation in stale_body["citations"]
+        )
 
         seeded_query = client_second.post(
             "/api/v1/query",

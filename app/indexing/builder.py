@@ -37,7 +37,9 @@ class IndexBuilder:
         if not chunks:
             raise ValueError("Cannot build indexes from empty chunks")
 
-        vectors = self.embedding_provider.embed_documents([chunk.content for chunk in chunks])
+        vectors = self.embedding_provider.embed_documents(
+            [chunk.content for chunk in chunks]
+        )
         self.vector_index.build(chunks, vectors)
         self.bm25_index.build(chunks)
 

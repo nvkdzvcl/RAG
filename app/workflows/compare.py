@@ -7,7 +7,12 @@ import time
 from typing import Any
 
 from app.core.async_utils import run_coro_sync
-from app.schemas.api import AdvancedQueryResponse, CompareQueryResponse, ComparisonSummary, StandardQueryResponse
+from app.schemas.api import (
+    AdvancedQueryResponse,
+    CompareQueryResponse,
+    ComparisonSummary,
+    StandardQueryResponse,
+)
 from app.workflows.advanced import AdvancedWorkflow
 from app.workflows.shared import detect_response_language
 from app.workflows.streaming import StreamEventHandler, emit_stream_event
@@ -42,8 +47,16 @@ class CompareWorkflow:
         if standard.latency_ms is not None and advanced.latency_ms is not None:
             latency_delta_ms = advanced.latency_ms - standard.latency_ms
 
-        standard_citation_count = standard.citation_count if standard.citation_count > 0 else len(standard.citations)
-        advanced_citation_count = advanced.citation_count if advanced.citation_count > 0 else len(advanced.citations)
+        standard_citation_count = (
+            standard.citation_count
+            if standard.citation_count > 0
+            else len(standard.citations)
+        )
+        advanced_citation_count = (
+            advanced.citation_count
+            if advanced.citation_count > 0
+            else len(advanced.citations)
+        )
         citation_delta = advanced_citation_count - standard_citation_count
 
         standard_grounded = standard.grounded_score
@@ -138,18 +151,34 @@ class CompareWorkflow:
         winner = "tie"
         reasons: list[str] = []
 
-        if standard_status == "insufficient_evidence" and advanced_status != "insufficient_evidence" and advanced_citation_count > 0:
+        if (
+            standard_status == "insufficient_evidence"
+            and advanced_status != "insufficient_evidence"
+            and advanced_citation_count > 0
+        ):
             winner = "advanced"
             if response_language == "vi":
-                reasons.append("Nâng cao có trích dẫn trong khi Chuẩn trả về thiếu bằng chứng.")
+                reasons.append(
+                    "Nâng cao có trích dẫn trong khi Chuẩn trả về thiếu bằng chứng."
+                )
             else:
-                reasons.append("Advanced has citations while Standard returned insufficient evidence.")
-        elif advanced_status == "insufficient_evidence" and standard_status != "insufficient_evidence" and standard_citation_count > 0:
+                reasons.append(
+                    "Advanced has citations while Standard returned insufficient evidence."
+                )
+        elif (
+            advanced_status == "insufficient_evidence"
+            and standard_status != "insufficient_evidence"
+            and standard_citation_count > 0
+        ):
             winner = "standard"
             if response_language == "vi":
-                reasons.append("Chuẩn có trích dẫn trong khi Nâng cao trả về thiếu bằng chứng.")
+                reasons.append(
+                    "Chuẩn có trích dẫn trong khi Nâng cao trả về thiếu bằng chứng."
+                )
             else:
-                reasons.append("Standard has citations while Advanced returned insufficient evidence.")
+                reasons.append(
+                    "Standard has citations while Advanced returned insufficient evidence."
+                )
         elif standard.hallucination_detected and not advanced.hallucination_detected:
             winner = "advanced"
             if response_language == "vi":
@@ -177,9 +206,13 @@ class CompareWorkflow:
             ):
                 winner = "standard"
                 if response_language == "vi":
-                    reasons.append("Nâng cao không có trích dẫn nên không thể thắng chỉ nhờ độ tự tin.")
+                    reasons.append(
+                        "Nâng cao không có trích dẫn nên không thể thắng chỉ nhờ độ tự tin."
+                    )
                 else:
-                    reasons.append("Advanced cannot win on confidence alone when it has zero citations.")
+                    reasons.append(
+                        "Advanced cannot win on confidence alone when it has zero citations."
+                    )
             else:
                 score_gap = standard_score - advanced_score
                 if abs(score_gap) <= 0.35:
@@ -196,34 +229,62 @@ class CompareWorkflow:
         if winner in {"standard", "advanced"} and not reasons:
             if winner == "standard":
                 if response_language == "vi":
-                    if standard_citation_count > advanced_citation_count and standard_grounded >= advanced_grounded:
-                        reasons.append("Chuẩn có nhiều trích dẫn và độ bám tài liệu cao hơn.")
+                    if (
+                        standard_citation_count > advanced_citation_count
+                        and standard_grounded >= advanced_grounded
+                    ):
+                        reasons.append(
+                            "Chuẩn có nhiều trích dẫn và độ bám tài liệu cao hơn."
+                        )
                     elif standard_citation_count > advanced_citation_count:
                         reasons.append("Chuẩn có nhiều trích dẫn hơn.")
                     else:
-                        reasons.append("Chuẩn ổn định hơn về groundedness và tín hiệu an toàn.")
+                        reasons.append(
+                            "Chuẩn ổn định hơn về groundedness và tín hiệu an toàn."
+                        )
                 else:
-                    if standard_citation_count > advanced_citation_count and standard_grounded >= advanced_grounded:
-                        reasons.append("Standard has more citations and higher groundedness.")
+                    if (
+                        standard_citation_count > advanced_citation_count
+                        and standard_grounded >= advanced_grounded
+                    ):
+                        reasons.append(
+                            "Standard has more citations and higher groundedness."
+                        )
                     elif standard_citation_count > advanced_citation_count:
                         reasons.append("Standard has more citations.")
                     else:
-                        reasons.append("Standard is more stable on groundedness and safety signals.")
+                        reasons.append(
+                            "Standard is more stable on groundedness and safety signals."
+                        )
             else:
                 if response_language == "vi":
-                    if advanced_citation_count > standard_citation_count and advanced_grounded >= standard_grounded:
-                        reasons.append("Nâng cao có nhiều trích dẫn và độ bám tài liệu cao hơn.")
+                    if (
+                        advanced_citation_count > standard_citation_count
+                        and advanced_grounded >= standard_grounded
+                    ):
+                        reasons.append(
+                            "Nâng cao có nhiều trích dẫn và độ bám tài liệu cao hơn."
+                        )
                     elif advanced_citation_count > standard_citation_count:
                         reasons.append("Nâng cao có nhiều trích dẫn hơn.")
                     else:
-                        reasons.append("Nâng cao ổn định hơn về groundedness và tín hiệu an toàn.")
+                        reasons.append(
+                            "Nâng cao ổn định hơn về groundedness và tín hiệu an toàn."
+                        )
                 else:
-                    if advanced_citation_count > standard_citation_count and advanced_grounded >= standard_grounded:
-                        reasons.append("Advanced has more citations and higher groundedness.")
+                    if (
+                        advanced_citation_count > standard_citation_count
+                        and advanced_grounded >= standard_grounded
+                    ):
+                        reasons.append(
+                            "Advanced has more citations and higher groundedness."
+                        )
                     elif advanced_citation_count > standard_citation_count:
                         reasons.append("Advanced has more citations.")
                     else:
-                        reasons.append("Advanced is more stable on groundedness and safety signals.")
+                        reasons.append(
+                            "Advanced is more stable on groundedness and safety signals."
+                        )
 
         preferred_mode = winner if winner in {"standard", "advanced"} else "review"
 
@@ -231,7 +292,9 @@ class CompareWorkflow:
             if winner == "advanced":
                 note = "Nâng cao đáng tin cậy hơn vì có trích dẫn và độ bám tài liệu cao hơn"
             elif winner == "standard":
-                note = "Chuẩn đáng tin cậy hơn vì có trích dẫn và độ bám tài liệu cao hơn"
+                note = (
+                    "Chuẩn đáng tin cậy hơn vì có trích dẫn và độ bám tài liệu cao hơn"
+                )
             elif winner == "both_weak":
                 note = "Cả hai cần kiểm tra lại vì thiếu bằng chứng đủ mạnh"
             else:

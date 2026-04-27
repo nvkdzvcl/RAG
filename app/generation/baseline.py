@@ -28,17 +28,17 @@ logger = logging.getLogger(__name__)
 
 _STANDARD_PROMPT_FALLBACK = (
     "You are a grounded RAG assistant.\n"
-    "Use chat history only to resolve follow-up references (for example: \"còn điều 3 thì sao\").\n"
+    'Use chat history only to resolve follow-up references (for example: "còn điều 3 thì sao").\n'
     "Do not let chat history override provided evidence context.\n"
     "Answer in the required response language only.\n"
     "If response_language is Vietnamese, write fully in Vietnamese.\n"
     "Do not answer in Chinese unless the user asks in Chinese.\n"
-    "Only for explicit title queries (e.g., \"tên của Điều 2 là gì\", \"điều 2 tên là gì\", \"tên mục/phần ... là gì\"), "
+    'Only for explicit title queries (e.g., "tên của Điều 2 là gì", "điều 2 tên là gì", "tên mục/phần ... là gì"), '
     "if context contains the exact heading/title, "
-    "return it exactly as: \"Tên của Điều X là: <exact title>.\"\n"
-    "Do not use the title format for compare/explain questions (for example: \"phân biệt\", \"so sánh\", \"giải thích\", \"trình bày\").\n"
-    "For compare questions (for example \"Phân biệt A và B\"), explain differences based only on provided context.\n"
-    "For factual definition/name queries (for example containing \"là gì\", \"định nghĩa\", \"tên\"), answer directly and concisely.\n"
+    'return it exactly as: "Tên của Điều X là: <exact title>."\n'
+    'Do not use the title format for compare/explain questions (for example: "phân biệt", "so sánh", "giải thích", "trình bày").\n'
+    'For compare questions (for example "Phân biệt A và B"), explain differences based only on provided context.\n'
+    'For factual definition/name queries (for example containing "là gì", "định nghĩa", "tên"), answer directly and concisely.\n'
     "Do not paraphrase official title text.\n"
     "Use only the provided context; do not invent unsupported facts.\n"
     "If evidence is insufficient, set status to insufficient_evidence.\n"
@@ -55,19 +55,19 @@ _ADVANCED_PROMPT_FALLBACK = (
     "ONLY use the provided context chunks.\n"
     "Every answer must be supported by context.\n"
     "Do NOT use external knowledge.\n"
-    "Use chat history only to resolve follow-up references (for example: \"còn điều 3 thì sao\").\n"
+    'Use chat history only to resolve follow-up references (for example: "còn điều 3 thì sao").\n'
     "Do not let chat history override provided evidence context.\n"
     "If the answer is not found in context, respond exactly: "
-    "\"Không đủ thông tin từ tài liệu để trả lời\"\n"
+    '"Không đủ thông tin từ tài liệu để trả lời"\n'
     "Answer in the required response language only.\n"
     "If response_language is Vietnamese, write fully in Vietnamese.\n"
     "Do not answer in Chinese unless the user asks in Chinese.\n"
-    "Only for explicit title queries (e.g., \"tên của Điều 2 là gì\", \"điều 2 tên là gì\", \"tên mục/phần ... là gì\"), "
+    'Only for explicit title queries (e.g., "tên của Điều 2 là gì", "điều 2 tên là gì", "tên mục/phần ... là gì"), '
     "if context contains the exact heading/title, "
-    "return it exactly as: \"Tên của Điều X là: <exact title>.\"\n"
-    "Do not use the title format for compare/explain questions (for example: \"phân biệt\", \"so sánh\", \"giải thích\", \"trình bày\").\n"
-    "For compare questions (for example \"Phân biệt A và B\"), explain differences based only on provided context.\n"
-    "For factual definition/name queries (for example containing \"là gì\", \"định nghĩa\", \"tên\"), answer directly and concisely.\n"
+    'return it exactly as: "Tên của Điều X là: <exact title>."\n'
+    'Do not use the title format for compare/explain questions (for example: "phân biệt", "so sánh", "giải thích", "trình bày").\n'
+    'For compare questions (for example "Phân biệt A và B"), explain differences based only on provided context.\n'
+    'For factual definition/name queries (for example containing "là gì", "định nghĩa", "tên"), answer directly and concisely.\n'
     "Do not paraphrase official title text.\n"
     "Ground every claim in the context. If evidence is weak, abstain with status=insufficient_evidence.\n"
     "Return strict JSON with keys: answer, confidence, status.\n"
@@ -95,11 +95,24 @@ _NON_TITLE_INTENT_KEYWORDS = (
 )
 
 _EXPLICIT_TITLE_PATTERNS = (
-    re.compile(r"\btên\s+(?:của\s+)?điều\s+(?P<article>\d+[a-z]?)\s+là\s+gì\b", flags=re.IGNORECASE),
-    re.compile(r"\bten\s+(?:cua\s+)?dieu\s+(?P<article>\d+[a-z]?)\s+la\s+gi\b", flags=re.IGNORECASE),
-    re.compile(r"\bđiều\s+(?P<article>\d+[a-z]?)\s+tên\s+là\s+gì\b", flags=re.IGNORECASE),
-    re.compile(r"\bdieu\s+(?P<article>\d+[a-z]?)\s+ten\s+la\s+gi\b", flags=re.IGNORECASE),
-    re.compile(r"\bwhat\s+is\s+the\s+(?:title|name)\s+of\s+article\s+(?P<article>\d+[a-z]?)\b", flags=re.IGNORECASE),
+    re.compile(
+        r"\btên\s+(?:của\s+)?điều\s+(?P<article>\d+[a-z]?)\s+là\s+gì\b",
+        flags=re.IGNORECASE,
+    ),
+    re.compile(
+        r"\bten\s+(?:cua\s+)?dieu\s+(?P<article>\d+[a-z]?)\s+la\s+gi\b",
+        flags=re.IGNORECASE,
+    ),
+    re.compile(
+        r"\bđiều\s+(?P<article>\d+[a-z]?)\s+tên\s+là\s+gì\b", flags=re.IGNORECASE
+    ),
+    re.compile(
+        r"\bdieu\s+(?P<article>\d+[a-z]?)\s+ten\s+la\s+gi\b", flags=re.IGNORECASE
+    ),
+    re.compile(
+        r"\bwhat\s+is\s+the\s+(?:title|name)\s+of\s+article\s+(?P<article>\d+[a-z]?)\b",
+        flags=re.IGNORECASE,
+    ),
 )
 
 
@@ -119,7 +132,9 @@ class BaselineGenerator(Generator):
         self.citation_builder = citation_builder or CitationBuilder()
         settings = get_settings()
         resolved_prompt_dir = prompt_dir or settings.prompt_dir
-        self.prompt_repository = prompt_repository or PromptRepository(resolved_prompt_dir)
+        self.prompt_repository = prompt_repository or PromptRepository(
+            resolved_prompt_dir
+        )
 
     def _build_prompt(
         self,
@@ -132,8 +147,14 @@ class BaselineGenerator(Generator):
         joined_context = "\n\n".join(
             f"[chunk_id={doc.chunk_id}] {doc.content}" for doc in context
         )
-        prompt_name = "advanced_answer.md" if mode == Mode.ADVANCED else "standard_answer.md"
-        prompt_fallback = _ADVANCED_PROMPT_FALLBACK if mode == Mode.ADVANCED else _STANDARD_PROMPT_FALLBACK
+        prompt_name = (
+            "advanced_answer.md" if mode == Mode.ADVANCED else "standard_answer.md"
+        )
+        prompt_fallback = (
+            _ADVANCED_PROMPT_FALLBACK
+            if mode == Mode.ADVANCED
+            else _STANDARD_PROMPT_FALLBACK
+        )
         return self.prompt_repository.render(
             prompt_name,
             fallback=prompt_fallback,

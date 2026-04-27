@@ -48,7 +48,9 @@ class StoredDocumentRecord(BaseModel):
     ) -> "StoredDocumentRecord":
         now = datetime.now(timezone.utc)
         resolved_original_filename = original_filename or filename
-        resolved_file_type = file_type or Path(filename).suffix.lower().lstrip(".") or None
+        resolved_file_type = (
+            file_type or Path(filename).suffix.lower().lstrip(".") or None
+        )
         return cls(
             document_id=document_id,
             filename=filename,
@@ -72,7 +74,9 @@ class StoredDocumentRecord(BaseModel):
         return self.model_copy(
             update={
                 "status": status,
-                "chunk_count": chunk_count if chunk_count is not None else self.chunk_count,
+                "chunk_count": chunk_count
+                if chunk_count is not None
+                else self.chunk_count,
                 "message": message,
                 "updated_at": datetime.now(timezone.utc),
             }
@@ -109,7 +113,9 @@ class DocumentResponse(BaseModel):
         debug_stats: dict[str, int] | None = None,
     ) -> "DocumentResponse":
         stats = debug_stats or {}
-        resolved_file_type = record.file_type or Path(record.filename).suffix.lower().lstrip(".") or None
+        resolved_file_type = (
+            record.file_type or Path(record.filename).suffix.lower().lstrip(".") or None
+        )
         resolved_original_filename = record.original_filename or record.filename
         return cls(
             document_id=record.document_id,
@@ -188,11 +194,17 @@ class ChunkingSettingsRequest(BaseModel):
             return self
 
         if self.chunk_size is None or self.chunk_overlap is None:
-            raise ValueError("chunk_size and chunk_overlap are required when mode=custom.")
+            raise ValueError(
+                "chunk_size and chunk_overlap are required when mode=custom."
+            )
         if self.chunk_size < 100 or self.chunk_size > 4000:
-            raise ValueError("chunk_size must be between 100 and 4000 when mode=custom.")
+            raise ValueError(
+                "chunk_size must be between 100 and 4000 when mode=custom."
+            )
         if self.chunk_overlap < 0 or self.chunk_overlap > 1000:
-            raise ValueError("chunk_overlap must be between 0 and 1000 when mode=custom.")
+            raise ValueError(
+                "chunk_overlap must be between 0 and 1000 when mode=custom."
+            )
         if self.chunk_overlap >= self.chunk_size:
             raise ValueError("chunk_overlap must be smaller than chunk_size.")
         return self

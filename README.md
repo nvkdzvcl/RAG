@@ -6,6 +6,14 @@
 - `advanced`: vòng lặp Self-RAG thực dụng (gate/rewrite/critique/retry/refine/abstain)
 - `compare`: chạy đồng thời `standard` + `advanced` và trả kết quả so sánh song song
 
+## Các Tính Năng Nổi Bật
+
+- **Kiến trúc Self-RAG:** Workflow tự động đánh giá (critique), viết lại truy vấn (rewrite) và tinh chỉnh câu trả lời (refine) nhằm giảm thiểu hallucination.
+- **Caching Layer (Mới):** Tích hợp LRU Cache đa tầng (Embedding, Retrieval, LLM) giúp tăng tốc độ đáng kể với các truy vấn lặp lại.
+- **Multilingual & Prompt Tuning:** Hỗ trợ song ngữ Việt-Anh với prompt được tối ưu hóa cho Self-RAG và kiểm duyệt grounding.
+- **Reranker Tối Ưu:** Sử dụng cross-encoder model mạnh mẽ với fallback an toàn giúp tối ưu hóa thứ tự ngữ cảnh.
+- **Hệ thống Ingestion Linh Hoạt:** Parser mạnh mẽ cho PDF, DOCX, Markdown lưu giữ layout và cấu trúc gốc.
+
 ## Công Nghệ Sử Dụng
 
 **Backend**
@@ -29,6 +37,12 @@
 ![Qwen](https://img.shields.io/badge/Qwen-LLM-7C3AED)
 ![Ollama](https://img.shields.io/badge/Ollama-Local_Runtime-000000?logo=ollama&logoColor=white)
 
+**CI/CD & Code Quality**
+
+![GitHub Actions](https://img.shields.io/badge/GitHub_Actions-CI-2088FF?logo=github-actions&logoColor=white)
+![Ruff](https://img.shields.io/badge/Ruff-Linter-FCC21B?logo=python&logoColor=black)
+![Mypy](https://img.shields.io/badge/Mypy-Type_Check-2B5B84?logo=python&logoColor=white)
+
 **Evaluation**
 
 ![Golden Dataset](https://img.shields.io/badge/Golden_Dataset-Eval-F59E0B)
@@ -37,6 +51,8 @@
 ## Cấu Trúc Repository
 
 ```text
+.github/
+  workflows/
 app/
   api/
   core/
@@ -212,6 +228,17 @@ LLM_PROVIDER=openai_compatible
 LLM_MODEL=qwen2.5:3b
 LLM_API_BASE=http://localhost:11434/v1
 LLM_API_KEY=ollama
+```
+
+### Biến môi trường Caching (Tuỳ chọn)
+
+Hệ thống có LRU Cache để tối ưu hóa truy vấn trùng lặp:
+
+```bash
+CACHE_ENABLED=true
+CACHE_EMBEDDING_MAXSIZE=256
+CACHE_RETRIEVAL_MAXSIZE=128
+CACHE_LLM_MAXSIZE=64
 ```
 
 ### vLLM (GPU)

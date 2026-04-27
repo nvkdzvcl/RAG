@@ -13,13 +13,30 @@ from app.core.async_utils import run_coro_sync
 from app.core.cache import create_cache_group_from_settings
 from app.core.config import get_settings
 from app.core.json_utils import parse_json_object
-from app.generation import BaselineGenerator, LLMClient, close_llm_client, create_llm_client_from_settings
+from app.generation import (
+    BaselineGenerator,
+    LLMClient,
+    close_llm_client,
+    create_llm_client_from_settings,
+)
 from app.generation.llm_client import complete_with_model
 from app.indexing.bm25_index import BM25Index
 from app.indexing.vector_index import VectorIndex
-from app.indexing import BaseEmbeddingProvider, IndexBuilder, LocalIndexStore, create_embedding_provider
+from app.indexing import (
+    BaseEmbeddingProvider,
+    IndexBuilder,
+    LocalIndexStore,
+    create_embedding_provider,
+)
 from app.ingestion import Chunker, DirectoryIngestor, TextCleaner
-from app.retrieval import BaseReranker, ContextSelector, DenseRetriever, HybridRetriever, SparseRetriever, create_reranker
+from app.retrieval import (
+    BaseReranker,
+    ContextSelector,
+    DenseRetriever,
+    HybridRetriever,
+    SparseRetriever,
+    create_reranker,
+)
 from app.schemas.api import StandardQueryResponse
 from app.schemas.common import Mode
 from app.schemas.generation import GeneratedAnswer
@@ -62,7 +79,7 @@ class StandardWorkflow:
         "Rewrite the answer into $response_language_name while keeping the same grounded meaning.\n"
         "Do not add new facts.\n"
         "Do not use Chinese unless explicitly requested.\n"
-        "Return strict JSON only: {\"answer\": \"string\"}\n"
+        'Return strict JSON only: {"answer": "string"}\n'
         "response_language: $response_language\n"
         "question: $question\n"
         "answer:\n$draft_answer"
@@ -86,15 +103,27 @@ class StandardWorkflow:
         llm_client: LLMClient | None = None,
     ) -> None:
         settings = get_settings()
-        configured_top_k = hybrid_top_k if hybrid_top_k is not None else int(getattr(settings, "retrieval_top_k", 8))
+        configured_top_k = (
+            hybrid_top_k
+            if hybrid_top_k is not None
+            else int(getattr(settings, "retrieval_top_k", 8))
+        )
         self.hybrid_top_k = max(1, int(configured_top_k))
-        configured_rerank = rerank_top_k if rerank_top_k is not None else int(settings.reranker_top_n)
+        configured_rerank = (
+            rerank_top_k if rerank_top_k is not None else int(settings.reranker_top_n)
+        )
         self.configured_rerank_top_n = max(1, int(configured_rerank))
         self.rerank_top_k = min(self.configured_rerank_top_n, self.hybrid_top_k)
         self.context_top_k = context_top_k
-        self.chunk_size = chunk_size if chunk_size is not None else int(getattr(settings, "chunk_size", 320))
+        self.chunk_size = (
+            chunk_size
+            if chunk_size is not None
+            else int(getattr(settings, "chunk_size", 320))
+        )
         self.chunk_overlap = (
-            chunk_overlap if chunk_overlap is not None else int(getattr(settings, "chunk_overlap", 40))
+            chunk_overlap
+            if chunk_overlap is not None
+            else int(getattr(settings, "chunk_overlap", 40))
         )
         self.memory_window = max(0, int(getattr(settings, "memory_window", 3)))
         self.corpus_dir = Path(corpus_dir or settings.corpus_dir)
@@ -138,7 +167,9 @@ class StandardWorkflow:
             device=settings.reranker_device,
             batch_size=settings.reranker_batch_size,
         )
-        self.context_selector = ContextSelector(max_chunks=context_top_k, max_chars=context_max_chars)
+        self.context_selector = ContextSelector(
+            max_chunks=context_top_k, max_chars=context_max_chars
+        )
         resolved_llm_client = llm_client or create_llm_client_from_settings(settings)
         self.generator = BaselineGenerator(
             llm_client=resolved_llm_client,
@@ -158,7 +189,9 @@ class StandardWorkflow:
         chunker = Chunker(chunk_size=self.chunk_size, chunk_overlap=self.chunk_overlap)
         chunks = chunker.chunk_documents(cleaner.clean_documents(loaded))
         if not chunks:
-            raise ValueError(f"No chunks were produced from corpus directory: {self.corpus_dir}")
+            raise ValueError(
+                f"No chunks were produced from corpus directory: {self.corpus_dir}"
+            )
         return chunks
 
     def _save_indexes(self, vector_index: VectorIndex, bm25_index: BM25Index) -> None:
@@ -388,7 +421,9 @@ class StandardWorkflow:
         final_answer = pipeline.generated.answer
         language_mismatch = is_language_mismatch(final_answer, resolved_language)
         stop_reason = pipeline.generated.stop_reason
-        context_texts = [item.content for item in pipeline.selected_context if item.content.strip()]
+        context_texts = [
+            item.content for item in pipeline.selected_context if item.content.strip()
+        ]
 
         if language_mismatch and pipeline.generated.status != "insufficient_evidence":
             rewritten = await self._rewrite_answer_language(
@@ -399,7 +434,9 @@ class StandardWorkflow:
             )
             if rewritten:
                 final_answer = rewritten
-                language_mismatch = is_language_mismatch(final_answer, resolved_language)
+                language_mismatch = is_language_mismatch(
+                    final_answer, resolved_language
+                )
                 if not language_mismatch:
                     stop_reason = "language_refined"
 
@@ -444,7 +481,9 @@ class StandardWorkflow:
             },
             {
                 "step": "rerank",
-                "provider": getattr(self.reranker, "name", self.reranker.__class__.__name__),
+                "provider": getattr(
+                    self.reranker, "name", self.reranker.__class__.__name__
+                ),
                 "top_k": self.hybrid_top_k,
                 "rerank_top_n": self.rerank_top_k,
                 "count": len(pipeline.reranked),
@@ -453,7 +492,8 @@ class StandardWorkflow:
                     {
                         "chunk_id": item.chunk_id,
                         "doc_id": item.doc_id,
-                        "file_name": item.metadata.get("file_name") or item.metadata.get("filename"),
+                        "file_name": item.metadata.get("file_name")
+                        or item.metadata.get("filename"),
                         "file_type": item.metadata.get("file_type"),
                         "uploaded_at": item.metadata.get("uploaded_at"),
                         "created_at": item.metadata.get("created_at"),
@@ -478,7 +518,8 @@ class StandardWorkflow:
                     {
                         "chunk_id": item.chunk_id,
                         "doc_id": item.doc_id,
-                        "file_name": item.metadata.get("file_name") or item.metadata.get("filename"),
+                        "file_name": item.metadata.get("file_name")
+                        or item.metadata.get("filename"),
                         "file_type": item.metadata.get("file_type"),
                         "uploaded_at": item.metadata.get("uploaded_at"),
                         "created_at": item.metadata.get("created_at"),

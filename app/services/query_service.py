@@ -159,7 +159,9 @@ class QueryService:
             )
         )
 
-    def update_retrieval_settings(self, payload: RetrievalSettingsRequest) -> RetrievalSettingsResponse:
+    def update_retrieval_settings(
+        self, payload: RetrievalSettingsRequest
+    ) -> RetrievalSettingsResponse:
         """Apply retrieval settings to standard/advanced/compare workflows."""
         return self.runner.update_retrieval_settings(payload)
 

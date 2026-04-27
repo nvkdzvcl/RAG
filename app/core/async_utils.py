@@ -16,7 +16,9 @@ def run_coro_sync(coro: Awaitable[T]) -> T:
         asyncio.get_running_loop()
     except RuntimeError:
         return asyncio.run(coro)
-    raise RuntimeError("Cannot call sync wrapper from an active event loop; use async API instead.")
+    raise RuntimeError(
+        "Cannot call sync wrapper from an active event loop; use async API instead."
+    )
 
 
 async def await_if_needed(value: T | Awaitable[T]) -> T:

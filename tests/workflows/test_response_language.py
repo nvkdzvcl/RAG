@@ -44,7 +44,10 @@ class _FakeIndexManager:
 
 def test_detect_response_language_vi() -> None:
     assert detect_response_language("Self-RAG là gì?") == "vi"
-    assert detect_response_language("Co the giai thich self rag nhu the nao khong?") == "vi"
+    assert (
+        detect_response_language("Co the giai thich self rag nhu the nao khong?")
+        == "vi"
+    )
 
 
 def test_detect_response_language_en() -> None:
@@ -66,7 +69,9 @@ def test_standard_prompt_includes_vietnamese_language_instruction() -> None:
             _ = model
             self.prompts.append(prompt)
             self.system_prompts.append(system_prompt)
-            return '{"answer":"Đây là câu trả lời.","confidence":0.83,"status":"answered"}'
+            return (
+                '{"answer":"Đây là câu trả lời.","confidence":0.83,"status":"answered"}'
+            )
 
     llm = _RecordingLLMClient()
     generator = BaselineGenerator(llm_client=llm)
@@ -81,7 +86,10 @@ def test_standard_prompt_includes_vietnamese_language_instruction() -> None:
     assert llm.prompts
     assert "Response language: `vi` (`Vietnamese`)" in llm.prompts[-1]
     assert llm.system_prompts[-1] is not None
-    assert "You must answer in Vietnamese. Do not switch languages." in llm.system_prompts[-1]
+    assert (
+        "You must answer in Vietnamese. Do not switch languages."
+        in llm.system_prompts[-1]
+    )
 
 
 def test_advanced_prompt_includes_vietnamese_language_instruction() -> None:
@@ -195,7 +203,9 @@ def test_compare_passes_same_response_language_to_both_branches() -> None:
     assert response.advanced.response_language == "vi"
 
 
-def test_standard_sets_language_mismatch_for_chinese_output_on_vietnamese_query() -> None:
+def test_standard_sets_language_mismatch_for_chinese_output_on_vietnamese_query() -> (
+    None
+):
     class _AlwaysChineseLLM:
         def complete(
             self,
@@ -261,7 +271,9 @@ def test_language_guard_rewrite_failure_keeps_workflow_stable() -> None:
             _ = model
             self.calls += 1
             if self.calls == 1:
-                return '{"answer":"这是中文回答。","confidence":0.82,"status":"answered"}'
+                return (
+                    '{"answer":"这是中文回答。","confidence":0.82,"status":"answered"}'
+                )
             raise RuntimeError("rewrite failed")
 
     workflow = StandardWorkflow(

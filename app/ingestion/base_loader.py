@@ -61,7 +61,9 @@ def blocks_to_loaded_documents(
                 "doc_id": doc_id,
                 "filename": str(merged_metadata.get("filename") or default_file_name),
                 "file_name": str(merged_metadata.get("file_name") or default_file_name),
-                "file_extension": str(merged_metadata.get("file_extension") or default_file_extension),
+                "file_extension": str(
+                    merged_metadata.get("file_extension") or default_file_extension
+                ),
                 "file_type": str(merged_metadata.get("file_type") or default_file_type),
                 "page": block.metadata.get("page"),
                 "block_type": str(merged_metadata.get("block_type") or block.type),

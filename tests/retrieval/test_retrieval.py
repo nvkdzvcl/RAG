@@ -260,11 +260,15 @@ def test_hybrid_retriever_runs_dense_and_sparse_then_returns_top_k_rrf() -> None
     assert sparse.calls == [("mixed query", 4)]
     assert len(results) == 2
     assert results[0].chunk_id == "shared"
-    assert {item.chunk_id for item in results}.issubset({"dense_only", "shared", "sparse_only"})
+    assert {item.chunk_id for item in results}.issubset(
+        {"dense_only", "shared", "sparse_only"}
+    )
     assert any(item.chunk_id in {"dense_only", "sparse_only"} for item in results[1:])
 
 
-def test_hybrid_retriever_logs_dense_sparse_and_merged_debug_views(caplog: pytest.LogCaptureFixture) -> None:
+def test_hybrid_retriever_logs_dense_sparse_and_merged_debug_views(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
     class _FakeRetriever:
         def __init__(self, results: list[RetrievalResult]) -> None:
             self._results = list(results)
@@ -291,7 +295,11 @@ def test_hybrid_retriever_logs_dense_sparse_and_merged_debug_views(caplog: pytes
     results = hybrid.retrieve("debug query", top_k=2)
 
     assert len(results) == 2
-    messages = [record.getMessage() for record in caplog.records if record.name == "app.retrieval.hybrid"]
+    messages = [
+        record.getMessage()
+        for record in caplog.records
+        if record.name == "app.retrieval.hybrid"
+    ]
     assert any("Hybrid dense results" in message for message in messages)
     assert any("Hybrid bm25 results" in message for message in messages)
     assert any("Hybrid merged results" in message for message in messages)
@@ -311,7 +319,9 @@ def test_hybrid_retriever_runs_dense_and_sparse_concurrently() -> None:
             return [self._item]
 
     dense = _BarrierRetriever(_retrieval_result("dense", score=0.9, score_type="dense"))
-    sparse = _BarrierRetriever(_retrieval_result("sparse", score=6.0, score_type="sparse"))
+    sparse = _BarrierRetriever(
+        _retrieval_result("sparse", score=6.0, score_type="sparse")
+    )
     hybrid = HybridRetriever(dense, sparse)  # type: ignore[arg-type]
 
     results = hybrid.retrieve("parallel query", top_k=2)
@@ -440,7 +450,9 @@ def test_dense_vectorized_similarity_is_at_least_10x_faster_than_legacy_loop() -
     query_list = query_vector.tolist()
 
     # Warm up to reduce one-off startup overhead in timing.
-    _ = _rank_top_k_indices(_cosine_similarity_matrix(query_vector, vector_matrix, vector_norms), top_k)
+    _ = _rank_top_k_indices(
+        _cosine_similarity_matrix(query_vector, vector_matrix, vector_norms), top_k
+    )
 
     legacy_start = time.perf_counter()
     legacy_ranked = _legacy_rank(query_list, vectors_list, top_k=top_k)

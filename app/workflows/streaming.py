@@ -10,7 +10,9 @@ StreamEvent = dict[str, Any]
 StreamEventHandler = Callable[[StreamEvent], Awaitable[None] | None]
 
 
-async def emit_stream_event(handler: StreamEventHandler | None, event: StreamEvent) -> None:
+async def emit_stream_event(
+    handler: StreamEventHandler | None, event: StreamEvent
+) -> None:
     """Emit one stream event when a handler is configured."""
     if handler is None:
         return

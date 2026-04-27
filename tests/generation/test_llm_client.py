@@ -65,7 +65,15 @@ def test_openai_compatible_chat_completion_supports_model_override() -> None:
         captured_models.append(payload["model"])
         return httpx.Response(
             status_code=200,
-            json={"choices": [{"message": {"content": '{"answer":"ok","confidence":0.7,"status":"answered"}'}}]},
+            json={
+                "choices": [
+                    {
+                        "message": {
+                            "content": '{"answer":"ok","confidence":0.7,"status":"answered"}'
+                        }
+                    }
+                ]
+            },
         )
 
     client = httpx.AsyncClient(
@@ -181,7 +189,9 @@ def test_timeout_or_http_error_uses_fallback_client() -> None:
         client=client,
     )
     fallback = StubLLMClient(
-        responder=lambda prompt, system: '{"answer":"fallback","confidence":0.1,"status":"answered"}'
+        responder=lambda prompt, system: (
+            '{"answer":"fallback","confidence":0.1,"status":"answered"}'
+        )
     )
     wrapped = FallbackLLMClient(primary=primary, fallback=fallback)
 
@@ -193,7 +203,9 @@ def test_timeout_or_http_error_uses_fallback_client() -> None:
 
 def test_create_llm_client_unknown_provider_falls_back_to_stub() -> None:
     fallback = StubLLMClient(
-        responder=lambda prompt, system: '{"answer":"stub","confidence":0.2,"status":"answered"}'
+        responder=lambda prompt, system: (
+            '{"answer":"stub","confidence":0.2,"status":"answered"}'
+        )
     )
     client = create_llm_client(
         provider_name="unknown-provider",
@@ -206,7 +218,10 @@ def test_create_llm_client_unknown_provider_falls_back_to_stub() -> None:
         fallback_client=fallback,
     )
 
-    assert asyncio.run(client.complete("test")) == '{"answer":"stub","confidence":0.2,"status":"answered"}'
+    assert (
+        asyncio.run(client.complete("test"))
+        == '{"answer":"stub","confidence":0.2,"status":"answered"}'
+    )
 
 
 def test_complete_with_model_filters_unsupported_kwargs_for_legacy_client() -> None:
@@ -236,6 +251,8 @@ def test_complete_with_model_filters_unsupported_kwargs_for_legacy_client() -> N
 def test_stub_responder_supports_legacy_system_param_name() -> None:
     client = StubLLMClient(responder=lambda prompt, system: f"{prompt}|{system}")
 
-    result = asyncio.run(client.complete("hello", system_prompt="world", model="ignored", max_tokens=99))
+    result = asyncio.run(
+        client.complete("hello", system_prompt="world", model="ignored", max_tokens=99)
+    )
 
     assert result == "hello|world"

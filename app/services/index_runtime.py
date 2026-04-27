@@ -13,9 +13,22 @@ from threading import RLock
 from typing import Any
 
 from app.core.config import get_settings
-from app.indexing import BaseEmbeddingProvider, IndexBuilder, LocalIndexStore, create_embedding_provider
+from app.indexing import (
+    BaseEmbeddingProvider,
+    IndexBuilder,
+    LocalIndexStore,
+    create_embedding_provider,
+)
 from app.ingestion.base_loader import build_doc_id
-from app.ingestion import BaseLoader, Chunker, DocxLoader, MarkdownLoader, PdfLoader, TextCleaner, TextLoader
+from app.ingestion import (
+    BaseLoader,
+    Chunker,
+    DocxLoader,
+    MarkdownLoader,
+    PdfLoader,
+    TextCleaner,
+    TextLoader,
+)
 from app.retrieval import DenseRetriever, HybridRetriever, SparseRetriever
 from app.schemas.index_manifest import UploadedIndexFileEntry, UploadedIndexManifest
 from app.schemas.ingestion import DocumentChunk, LoadedDocument
@@ -142,7 +155,9 @@ class QueryMetadataFilters:
     def _matches_uploaded_time(self, metadata: dict[str, Any]) -> bool:
         if self.uploaded_after is None and self.uploaded_before is None:
             return True
-        timestamp = self._coerce_datetime(metadata.get("uploaded_at") or metadata.get("created_at"))
+        timestamp = self._coerce_datetime(
+            metadata.get("uploaded_at") or metadata.get("created_at")
+        )
         if timestamp is None:
             return False
         if self.uploaded_after is not None and timestamp < self.uploaded_after:
@@ -164,14 +179,22 @@ class QueryMetadataFilters:
 
     @staticmethod
     def _resolve_filename(metadata: dict[str, Any], source: str | None) -> str:
-        filename = str(metadata.get("file_name") or metadata.get("filename") or "").strip().lower()
+        filename = (
+            str(metadata.get("file_name") or metadata.get("filename") or "")
+            .strip()
+            .lower()
+        )
         if filename:
             return Path(filename).name
         return QueryMetadataFilters._normalize_source_filename(source)
 
     @staticmethod
     def _resolve_file_type(metadata: dict[str, Any], source: str | None) -> str:
-        file_type = str(metadata.get("file_type") or metadata.get("file_extension") or "").strip().lower()
+        file_type = (
+            str(metadata.get("file_type") or metadata.get("file_extension") or "")
+            .strip()
+            .lower()
+        )
         if file_type.startswith("."):
             file_type = file_type[1:]
         if file_type:
@@ -199,7 +222,10 @@ class QueryMetadataFilters:
                 return False
 
         if self.include_ocr is not None:
-            is_ocr = bool(metadata.get("ocr")) or str(metadata.get("block_type", "")).strip().lower() == "ocr_text"
+            is_ocr = (
+                bool(metadata.get("ocr"))
+                or str(metadata.get("block_type", "")).strip().lower() == "ocr_text"
+            )
             if is_ocr != self.include_ocr:
                 return False
 
@@ -264,7 +290,10 @@ class _ResultFilteringRetriever:
             }
             return []
 
-        if self._query_filters.requires_uploaded_scope() and self._active_source != "uploaded":
+        if (
+            self._query_filters.requires_uploaded_scope()
+            and self._active_source != "uploaded"
+        ):
             # Explicit uploaded-metadata filters must not fall back to unrelated seeded corpus.
             self._last_filter_debug = {
                 "applied_filters": applied_filters,
@@ -283,7 +312,9 @@ class _ResultFilteringRetriever:
         filtered = list(results)
         if self._allowed_doc_ids:
             # Keep stale-index safety first: only active uploaded doc IDs are allowed.
-            filtered = [item for item in filtered if item.doc_id in self._allowed_doc_ids]
+            filtered = [
+                item for item in filtered if item.doc_id in self._allowed_doc_ids
+            ]
         if self._query_filters.has_any_filter():
             filtered = [item for item in filtered if self._query_filters.matches(item)]
 
@@ -304,7 +335,10 @@ class _ResultFilteringRetriever:
             }
             return []
 
-        if self._query_filters.requires_uploaded_scope() and self._active_source != "uploaded":
+        if (
+            self._query_filters.requires_uploaded_scope()
+            and self._active_source != "uploaded"
+        ):
             self._last_filter_debug = {
                 "applied_filters": applied_filters,
                 "candidate_count_before_filter": 0,
@@ -330,7 +364,9 @@ class _ResultFilteringRetriever:
 
         filtered = list(results)
         if self._allowed_doc_ids:
-            filtered = [item for item in filtered if item.doc_id in self._allowed_doc_ids]
+            filtered = [
+                item for item in filtered if item.doc_id in self._allowed_doc_ids
+            ]
         if self._query_filters.has_any_filter():
             filtered = [item for item in filtered if self._query_filters.matches(item)]
 
@@ -367,12 +403,34 @@ class RuntimeIndexManager:
         embedding_dimension: int | None = None,
     ) -> None:
         settings = get_settings()
-        resolved_provider_name = embedding_provider_name if embedding_provider_name is not None else settings.embedding_provider
-        resolved_model = embedding_model if embedding_model is not None else settings.embedding_model
-        resolved_device = embedding_device if embedding_device is not None else settings.embedding_device
-        resolved_batch_size = embedding_batch_size if embedding_batch_size is not None else settings.embedding_batch_size
-        resolved_normalize = embedding_normalize if embedding_normalize is not None else settings.embedding_normalize
-        resolved_dimension = embedding_dimension if embedding_dimension is not None else settings.embedding_hash_dimension
+        resolved_provider_name = (
+            embedding_provider_name
+            if embedding_provider_name is not None
+            else settings.embedding_provider
+        )
+        resolved_model = (
+            embedding_model if embedding_model is not None else settings.embedding_model
+        )
+        resolved_device = (
+            embedding_device
+            if embedding_device is not None
+            else settings.embedding_device
+        )
+        resolved_batch_size = (
+            embedding_batch_size
+            if embedding_batch_size is not None
+            else settings.embedding_batch_size
+        )
+        resolved_normalize = (
+            embedding_normalize
+            if embedding_normalize is not None
+            else settings.embedding_normalize
+        )
+        resolved_dimension = (
+            embedding_dimension
+            if embedding_dimension is not None
+            else settings.embedding_hash_dimension
+        )
 
         self.corpus_dir = Path(corpus_dir)
         self.index_dir = Path(index_dir)
@@ -389,7 +447,12 @@ class RuntimeIndexManager:
         self.index_store = LocalIndexStore(self.index_dir)
         self.cleaner = TextCleaner()
         self.chunker = Chunker(chunk_size=chunk_size, chunk_overlap=chunk_overlap)
-        self.loaders: list[BaseLoader] = [MarkdownLoader(), TextLoader(), PdfLoader(), DocxLoader()]
+        self.loaders: list[BaseLoader] = [
+            MarkdownLoader(),
+            TextLoader(),
+            PdfLoader(),
+            DocxLoader(),
+        ]
 
         self._lock = RLock()
         self._retriever: HybridRetriever | EmptyRetriever = EmptyRetriever()
@@ -432,7 +495,9 @@ class RuntimeIndexManager:
             return remainder
         return filename
 
-    def _ingest_files(self, paths: list[Path], *, source_label: str) -> list[LoadedDocument]:
+    def _ingest_files(
+        self, paths: list[Path], *, source_label: str
+    ) -> list[LoadedDocument]:
         loaded: list[LoadedDocument] = []
         for path in sorted(paths):
             if not path.exists() or not path.is_file():
@@ -443,7 +508,9 @@ class RuntimeIndexManager:
 
             extension = path.suffix.lower()
             stat = path.stat()
-            created_at = datetime.fromtimestamp(stat.st_mtime, tz=timezone.utc).isoformat()
+            created_at = datetime.fromtimestamp(
+                stat.st_mtime, tz=timezone.utc
+            ).isoformat()
             doc_id = build_doc_id(path)
             display_filename = self._display_filename(path, source_label=source_label)
             metadata = {
@@ -461,7 +528,9 @@ class RuntimeIndexManager:
             loaded.extend(loader.load(path, metadata=metadata))
         return loaded
 
-    def _build_chunks(self, paths: list[Path], *, source_label: str) -> list[DocumentChunk]:
+    def _build_chunks(
+        self, paths: list[Path], *, source_label: str
+    ) -> list[DocumentChunk]:
         loaded = self._ingest_files(paths, source_label=source_label)
         if not loaded:
             logger.info(
@@ -473,14 +542,16 @@ class RuntimeIndexManager:
         ocr_blocks = sum(
             1
             for doc in loaded
-            if doc.metadata.get("block_type") == "ocr_text" or bool(doc.metadata.get("ocr"))
+            if doc.metadata.get("block_type") == "ocr_text"
+            or bool(doc.metadata.get("ocr"))
         )
         cleaned = self.cleaner.clean_documents(loaded)
         chunks = self.chunker.chunk_documents(cleaned)
         ocr_chunks = sum(
             1
             for chunk in chunks
-            if chunk.metadata.get("block_type") == "ocr_text" or bool(chunk.metadata.get("ocr"))
+            if chunk.metadata.get("block_type") == "ocr_text"
+            or bool(chunk.metadata.get("ocr"))
         )
         logger.info(
             (
@@ -569,7 +640,9 @@ class RuntimeIndexManager:
             payload = json.loads(path.read_text(encoding="utf-8"))
             return UploadedIndexManifest.model_validate(payload)
         except Exception:
-            logger.warning("Invalid uploaded index manifest; forcing uploaded index rebuild.")
+            logger.warning(
+                "Invalid uploaded index manifest; forcing uploaded index rebuild."
+            )
             return None
 
     def _is_uploaded_manifest_match(
@@ -585,7 +658,9 @@ class RuntimeIndexManager:
             return False
         return stored_fingerprint == expected.fingerprint
 
-    def _remove_uploaded_persisted_artifacts(self, *, include_legacy_generic: bool) -> int:
+    def _remove_uploaded_persisted_artifacts(
+        self, *, include_legacy_generic: bool
+    ) -> int:
         deleted_files = 0
         index_root = self.index_dir.resolve()
         target_filenames = [
@@ -601,7 +676,10 @@ class RuntimeIndexManager:
             try:
                 candidate.relative_to(index_root)
             except ValueError:
-                logger.warning("Skipped deleting index file outside index_dir", extra={"path": str(candidate)})
+                logger.warning(
+                    "Skipped deleting index file outside index_dir",
+                    extra={"path": str(candidate)},
+                )
                 continue
 
             if candidate.exists() and candidate.is_file():
@@ -609,7 +687,10 @@ class RuntimeIndexManager:
                     candidate.unlink()
                     deleted_files += 1
                 except OSError:
-                    logger.exception("Failed to delete persisted index file", extra={"path": str(candidate)})
+                    logger.exception(
+                        "Failed to delete persisted index file",
+                        extra={"path": str(candidate)},
+                    )
         return deleted_files
 
     def _load_uploaded_indexes_from_disk(
@@ -620,23 +701,34 @@ class RuntimeIndexManager:
         stored_manifest = self._load_uploaded_manifest()
         if stored_manifest is None:
             return None
-        if not self._is_uploaded_manifest_match(expected=expected_manifest, stored=stored_manifest):
-            logger.info("Uploaded index manifest mismatch; stale uploaded indexes will be rebuilt.")
+        if not self._is_uploaded_manifest_match(
+            expected=expected_manifest, stored=stored_manifest
+        ):
+            logger.info(
+                "Uploaded index manifest mismatch; stale uploaded indexes will be rebuilt."
+            )
             self._remove_uploaded_persisted_artifacts(include_legacy_generic=False)
             return None
 
         try:
-            vector_index = self.index_store.load_vector_index(filename=self.UPLOADED_VECTOR_FILENAME)
-            bm25_index = self.index_store.load_bm25_index(filename=self.UPLOADED_BM25_FILENAME)
+            vector_index = self.index_store.load_vector_index(
+                filename=self.UPLOADED_VECTOR_FILENAME
+            )
+            bm25_index = self.index_store.load_bm25_index(
+                filename=self.UPLOADED_BM25_FILENAME
+            )
         except Exception:
-            logger.warning("Failed loading persisted uploaded indexes; rebuilding from ready documents.")
+            logger.warning(
+                "Failed loading persisted uploaded indexes; rebuilding from ready documents."
+            )
             self._remove_uploaded_persisted_artifacts(include_legacy_generic=False)
             return None
 
         ocr_chunk_count = sum(
             1
             for chunk in vector_index.chunks
-            if chunk.metadata.get("block_type") == "ocr_text" or bool(chunk.metadata.get("ocr"))
+            if chunk.metadata.get("block_type") == "ocr_text"
+            or bool(chunk.metadata.get("ocr"))
         )
         chunk_count = len(vector_index.chunks)
         dense = DenseRetriever(vector_index, self.embedding_provider)
@@ -678,7 +770,9 @@ class RuntimeIndexManager:
                 self._retriever = EmptyRetriever()
                 self._active_source = source
                 self._active_chunk_count = 0
-                self._active_uploaded_doc_ids = resolved_uploaded_ids if source == "uploaded" else set()
+                self._active_uploaded_doc_ids = (
+                    resolved_uploaded_ids if source == "uploaded" else set()
+                )
                 self._last_activation_stats = {
                     "chunk_count": 0,
                     "ocr_chunks": 0,
@@ -689,7 +783,8 @@ class RuntimeIndexManager:
         ocr_chunk_count = sum(
             1
             for chunk in chunks
-            if chunk.metadata.get("block_type") == "ocr_text" or bool(chunk.metadata.get("ocr"))
+            if chunk.metadata.get("block_type") == "ocr_text"
+            or bool(chunk.metadata.get("ocr"))
         )
         built = IndexBuilder(embedding_provider=self.embedding_provider).build(chunks)
         dense = DenseRetriever(built.vector_index, self.embedding_provider)
@@ -726,7 +821,9 @@ class RuntimeIndexManager:
             self._retriever = hybrid
             self._active_source = source
             self._active_chunk_count = built.chunk_count
-            self._active_uploaded_doc_ids = resolved_uploaded_ids if source == "uploaded" else set()
+            self._active_uploaded_doc_ids = (
+                resolved_uploaded_ids if source == "uploaded" else set()
+            )
             self._last_activation_stats = {
                 "chunk_count": built.chunk_count,
                 "ocr_chunks": ocr_chunk_count,
@@ -782,7 +879,9 @@ class RuntimeIndexManager:
         if not self.corpus_dir.exists() or not self.corpus_dir.is_dir():
             return self._activate_chunks([], source="seeded")
 
-        candidate_files = [path for path in self.corpus_dir.rglob("*") if path.is_file()]
+        candidate_files = [
+            path for path in self.corpus_dir.rglob("*") if path.is_file()
+        ]
         chunks = self._build_chunks(candidate_files, source_label="seeded")
         return self._activate_chunks(chunks, source="seeded")
 
@@ -812,7 +911,9 @@ class RuntimeIndexManager:
         if active_source == "uploaded" or normalized_filters.has_any_filter():
             return _ResultFilteringRetriever(
                 retriever,
-                allowed_doc_ids=uploaded_doc_ids if active_source == "uploaded" else set(),
+                allowed_doc_ids=uploaded_doc_ids
+                if active_source == "uploaded"
+                else set(),
                 active_source=active_source,
                 query_filters=normalized_filters,
             )

@@ -1,6 +1,11 @@
 """Generation baseline tests."""
 
-from app.generation import BaselineGenerator, CitationBuilder, StubLLMClient, StructuredOutputParser
+from app.generation import (
+    BaselineGenerator,
+    CitationBuilder,
+    StubLLMClient,
+    StructuredOutputParser,
+)
 from app.schemas.common import Mode
 from app.schemas.retrieval import RetrievalResult
 
@@ -86,7 +91,9 @@ def test_structured_output_parsing_extracts_nested_answer_json() -> None:
 
 def test_insufficient_evidence_path() -> None:
     llm = StubLLMClient(
-        responder=lambda prompt, system: '{"answer":"","confidence":0.1,"status":"insufficient_evidence"}'
+        responder=lambda prompt, system: (
+            '{"answer":"","confidence":0.1,"status":"insufficient_evidence"}'
+        )
     )
     generator = BaselineGenerator(llm_client=llm)
 

@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
-from app.indexing.providers.sentence_transformer_embedding import SentenceTransformerEmbeddingProvider
+from app.indexing.providers.sentence_transformer_embedding import (
+    SentenceTransformerEmbeddingProvider,
+)
 
 
 class _FakeSentenceTransformerModel:

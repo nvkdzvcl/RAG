@@ -71,7 +71,9 @@ def _parse_confidence(raw_value: Any) -> float | None:
     return parsed
 
 
-def _line_from_words(words: list[dict[str, Any]], *, image_width: int, x_gap_ratio: float) -> str:
+def _line_from_words(
+    words: list[dict[str, Any]], *, image_width: int, x_gap_ratio: float
+) -> str:
     if not words:
         return ""
     ordered = sorted(words, key=lambda item: item["left"])

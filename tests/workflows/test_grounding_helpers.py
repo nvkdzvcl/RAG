@@ -57,8 +57,14 @@ def test_zero_citation_generic_answer_gets_warning() -> None:
 
 
 def test_paraphrased_answer_gets_semantic_grounding_boost(monkeypatch) -> None:
-    monkeypatch.setattr(grounding_mod, "grounded_overlap_score", lambda answer, context_chunks: 0.0)
-    monkeypatch.setattr(grounding_mod, "_semantic_context_similarity", lambda answer, context_chunks: 0.86)
+    monkeypatch.setattr(
+        grounding_mod, "grounded_overlap_score", lambda answer, context_chunks: 0.0
+    )
+    monkeypatch.setattr(
+        grounding_mod,
+        "_semantic_context_similarity",
+        lambda answer, context_chunks: 0.86,
+    )
     monkeypatch.setattr(grounding_mod, "_GROUNDING_SEMANTIC_WEIGHT", 0.35)
     monkeypatch.setattr(grounding_mod, "_GROUNDING_SEMANTIC_MIN_SIMILARITY", 0.58)
 
@@ -76,8 +82,14 @@ def test_paraphrased_answer_gets_semantic_grounding_boost(monkeypatch) -> None:
 
 
 def test_grounding_falls_back_to_overlap_when_semantic_unavailable(monkeypatch) -> None:
-    monkeypatch.setattr(grounding_mod, "grounded_overlap_score", lambda answer, context_chunks: 0.13)
-    monkeypatch.setattr(grounding_mod, "_semantic_context_similarity", lambda answer, context_chunks: None)
+    monkeypatch.setattr(
+        grounding_mod, "grounded_overlap_score", lambda answer, context_chunks: 0.13
+    )
+    monkeypatch.setattr(
+        grounding_mod,
+        "_semantic_context_similarity",
+        lambda answer, context_chunks: None,
+    )
 
     assessment = assess_grounding(
         "Self-RAG keeps answers grounded in retrieved context.",

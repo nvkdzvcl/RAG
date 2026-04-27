@@ -26,7 +26,12 @@ from app.workflows.critique import HeuristicCritic
 from app.workflows.query_rewrite import QueryRewriter
 from app.workflows.refine import AnswerRefiner
 from app.workflows.retrieval_gate import HeuristicRetrievalGate
-from app.workflows.shared import detect_response_language, localized_insufficient_evidence, normalize_query, trim_chat_history
+from app.workflows.shared import (
+    detect_response_language,
+    localized_insufficient_evidence,
+    normalize_query,
+    trim_chat_history,
+)
 from app.workflows.streaming import StreamEventHandler
 from app.workflows.standard import StandardWorkflow
 
@@ -48,7 +53,11 @@ class AdvancedWorkflow:
         refiner: AnswerRefiner | None = None,
     ) -> None:
         settings = get_settings()
-        self.max_loops = max_loops if max_loops is not None else int(getattr(settings, "max_advanced_loops", 1))
+        self.max_loops = (
+            max_loops
+            if max_loops is not None
+            else int(getattr(settings, "max_advanced_loops", 1))
+        )
         self.memory_window = max(0, int(getattr(settings, "memory_window", 3)))
 
         self.standard_workflow = standard_workflow or StandardWorkflow()
@@ -78,7 +87,13 @@ class AdvancedWorkflow:
         if not note:
             return None
         lowered = note.strip().lower()
-        for category in ("no_evidence", "weak_evidence", "incomplete_answer", "hallucination", "grounded"):
+        for category in (
+            "no_evidence",
+            "weak_evidence",
+            "incomplete_answer",
+            "hallucination",
+            "grounded",
+        ):
             if lowered.startswith(f"{category}:"):
                 return category
         return None
@@ -187,7 +202,9 @@ class AdvancedWorkflow:
         start = time.perf_counter()
         normalized_query = normalize_query(query)
         resolved_language = response_language or detect_response_language(query)
-        normalized_history = trim_chat_history(chat_history, memory_window=self.memory_window)
+        normalized_history = trim_chat_history(
+            chat_history, memory_window=self.memory_window
+        )
         state = WorkflowState(
             mode=Mode.ADVANCED,
             user_query=query,
@@ -208,10 +225,17 @@ class AdvancedWorkflow:
         await self._build_pipeline_executor(context).run(state)
         if context.terminal_response is not None:
             return context.terminal_response
-        generated_confidence = context.pipeline.generated.confidence if context.pipeline is not None else None
-        final_confidence = state.confidence if state.confidence is not None else generated_confidence
+        generated_confidence = (
+            context.pipeline.generated.confidence
+            if context.pipeline is not None
+            else None
+        )
+        final_confidence = (
+            state.confidence if state.confidence is not None else generated_confidence
+        )
         return self._build_response(
-            answer=state.final_answer or localized_insufficient_evidence(resolved_language),
+            answer=state.final_answer
+            or localized_insufficient_evidence(resolved_language),
             citations=state.citations,
             confidence=final_confidence,
             status=context.final_status,

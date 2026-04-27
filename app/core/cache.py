@@ -116,13 +116,20 @@ def make_cache_key(*parts: str | int | float | None) -> str:
 # Factory
 # ------------------------------------------------------------------
 
+
 @dataclass
 class CacheGroup:
     """Bundle of caches for the three pipeline stages."""
 
-    embedding: QueryCache = field(default_factory=lambda: QueryCache(maxsize=0, enabled=False))
-    retrieval: QueryCache = field(default_factory=lambda: QueryCache(maxsize=0, enabled=False))
-    llm: QueryCache = field(default_factory=lambda: QueryCache(maxsize=0, enabled=False))
+    embedding: QueryCache = field(
+        default_factory=lambda: QueryCache(maxsize=0, enabled=False)
+    )
+    retrieval: QueryCache = field(
+        default_factory=lambda: QueryCache(maxsize=0, enabled=False)
+    )
+    llm: QueryCache = field(
+        default_factory=lambda: QueryCache(maxsize=0, enabled=False)
+    )
 
     def invalidate_all(self) -> None:
         """Clear every cache (e.g. on index rebuild)."""

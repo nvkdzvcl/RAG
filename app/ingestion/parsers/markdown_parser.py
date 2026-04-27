@@ -15,7 +15,9 @@ class MarkdownParser(BaseDocumentParser):
     def supports(self, path: Path) -> bool:
         return path.suffix.lower() in {".md", ".markdown"}
 
-    def _flush_text_buffer(self, blocks: list[DocumentBlock], buffer: list[str], section: str | None) -> None:
+    def _flush_text_buffer(
+        self, blocks: list[DocumentBlock], buffer: list[str], section: str | None
+    ) -> None:
         if not buffer:
             return
         joined = "\n".join(buffer).strip()
@@ -31,7 +33,9 @@ class MarkdownParser(BaseDocumentParser):
             )
         buffer.clear()
 
-    def _flush_table_buffer(self, blocks: list[DocumentBlock], rows: list[str], section: str | None) -> None:
+    def _flush_table_buffer(
+        self, blocks: list[DocumentBlock], rows: list[str], section: str | None
+    ) -> None:
         if not rows:
             return
         table_text = "\n".join(rows).strip()
@@ -93,7 +97,11 @@ class MarkdownParser(BaseDocumentParser):
                     DocumentBlock(
                         type="image",
                         content=stripped,
-                        metadata={"page": None, "section": current_section, "bbox": None},
+                        metadata={
+                            "page": None,
+                            "section": current_section,
+                            "bbox": None,
+                        },
                     )
                 )
                 continue

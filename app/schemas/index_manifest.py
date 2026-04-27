@@ -28,4 +28,3 @@ class UploadedIndexManifest(BaseModel):
     active_doc_ids: list[str] = Field(default_factory=list)
     files: list[UploadedIndexFileEntry] = Field(default_factory=list)
     fingerprint: str
-

@@ -11,12 +11,16 @@ from app.core.json_utils import parse_json_list, parse_json_object
 from app.core.prompting import PromptRepository
 from app.generation.llm_client import LLMClient, complete_with_model
 from app.schemas.workflow import CritiqueResult
-from app.workflows.shared import build_chat_history_context, build_language_system_prompt, response_language_name
+from app.workflows.shared import (
+    build_chat_history_context,
+    build_language_system_prompt,
+    response_language_name,
+)
 
 _REWRITE_PROMPT_FALLBACK = (
     "Rewrite the query to improve retrieval quality.\n"
     "Return strict JSON only.\n"
-    "Schema: {\"rewrites\": [\"string\", ...]}\n"
+    'Schema: {"rewrites": ["string", ...]}\n'
     "Use chat history only to resolve follow-up references.\n"
     "Provide up to 3 concise alternatives in $response_language_name.\n"
     "response_language: $response_language\n"
@@ -46,7 +50,9 @@ class QueryRewriter:
         self.memory_window = max(0, int(getattr(settings, "memory_window", 3)))
         self.max_tokens = max(1, int(getattr(settings, "llm_rewrite_max_tokens", 256)))
         resolved_prompt_dir = prompt_dir or settings.prompt_dir
-        self.prompt_repository = prompt_repository or PromptRepository(resolved_prompt_dir)
+        self.prompt_repository = prompt_repository or PromptRepository(
+            resolved_prompt_dir
+        )
 
     @staticmethod
     def _dedupe(candidates: list[str], max_candidates: int) -> list[str]:
@@ -101,7 +107,9 @@ class QueryRewriter:
         if not self.use_llm or self.llm_client is None:
             return []
 
-        critique_payload = critique.model_dump(mode="json") if critique is not None else {}
+        critique_payload = (
+            critique.model_dump(mode="json") if critique is not None else {}
+        )
         prompt = self.prompt_repository.render(
             "query_rewrite.md",
             fallback=_REWRITE_PROMPT_FALLBACK,
@@ -130,11 +138,15 @@ class QueryRewriter:
         rewrites: list[str] = []
         payload = parse_json_object(raw)
         if payload and isinstance(payload.get("rewrites"), list):
-            rewrites = [str(item).strip() for item in payload["rewrites"] if str(item).strip()]
+            rewrites = [
+                str(item).strip() for item in payload["rewrites"] if str(item).strip()
+            ]
         else:
             payload_list = parse_json_list(raw)
             if payload_list:
-                rewrites = [str(item).strip() for item in payload_list if str(item).strip()]
+                rewrites = [
+                    str(item).strip() for item in payload_list if str(item).strip()
+                ]
         return self._dedupe(rewrites, max_candidates=self.max_candidates)
 
     async def rewrite_async(

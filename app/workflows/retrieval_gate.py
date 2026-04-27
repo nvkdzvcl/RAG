@@ -51,7 +51,9 @@ class HeuristicRetrievalGate:
         self.use_llm = use_llm
         self.max_tokens = max(1, int(getattr(settings, "llm_gate_max_tokens", 128)))
         resolved_prompt_dir = prompt_dir or settings.prompt_dir
-        self.prompt_repository = prompt_repository or PromptRepository(resolved_prompt_dir)
+        self.prompt_repository = prompt_repository or PromptRepository(
+            resolved_prompt_dir
+        )
 
     def _heuristic_decide(
         self, query: str, chat_history: list[dict[str, str]] | None = None
@@ -68,7 +70,9 @@ class HeuristicRetrievalGate:
         if tokens and tokens.issubset(self._small_talk_tokens):
             return False, "small_talk"
 
-        if len(tokens) <= 2 and any(token in self._small_talk_tokens for token in tokens):
+        if len(tokens) <= 2 and any(
+            token in self._small_talk_tokens for token in tokens
+        ):
             return False, "small_talk_short"
 
         return True, "default_retrieval"
@@ -124,8 +128,15 @@ class HeuristicRetrievalGate:
         model: str | None = None,
         response_language: str = "en",
     ) -> tuple[bool, str]:
-        heuristic_need, heuristic_reason = self._heuristic_decide(query, chat_history=chat_history)
-        if heuristic_reason in {"empty_query", "forced_retrieval", "small_talk", "small_talk_short"}:
+        heuristic_need, heuristic_reason = self._heuristic_decide(
+            query, chat_history=chat_history
+        )
+        if heuristic_reason in {
+            "empty_query",
+            "forced_retrieval",
+            "small_talk",
+            "small_talk_short",
+        }:
             return heuristic_need, heuristic_reason
 
         llm_decision = await self._llm_decide(

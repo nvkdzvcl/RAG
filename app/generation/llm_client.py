@@ -55,7 +55,9 @@ class StubLLMClient:
         return '{"answer":"Stub grounded answer.","confidence":0.5,"status":"answered"}'
 
     @staticmethod
-    def _supported_kwargs(function: Callable[..., Any], candidates: dict[str, Any]) -> dict[str, Any]:
+    def _supported_kwargs(
+        function: Callable[..., Any], candidates: dict[str, Any]
+    ) -> dict[str, Any]:
         try:
             signature = inspect.signature(function)
         except (TypeError, ValueError):
@@ -129,7 +131,9 @@ def _normalize_complete_args(
     return payload
 
 
-def _supported_complete_kwargs(llm_client: LLMClient, payload: dict[str, Any]) -> dict[str, Any]:
+def _supported_complete_kwargs(
+    llm_client: LLMClient, payload: dict[str, Any]
+) -> dict[str, Any]:
     complete_fn = llm_client.complete
     try:
         signature = inspect.signature(complete_fn)
@@ -338,8 +342,14 @@ class OpenAICompatibleLLMClient:
         if system_prompt and system_prompt.strip():
             messages.append({"role": "system", "content": system_prompt.strip()})
         messages.append({"role": "user", "content": prompt})
-        selected_model = model.strip() if isinstance(model, str) and model.strip() else self.model
-        resolved_max_tokens = int(max_tokens) if isinstance(max_tokens, int) and max_tokens > 0 else self.max_tokens
+        selected_model = (
+            model.strip() if isinstance(model, str) and model.strip() else self.model
+        )
+        resolved_max_tokens = (
+            int(max_tokens)
+            if isinstance(max_tokens, int) and max_tokens > 0
+            else self.max_tokens
+        )
 
         if callable(on_delta):
             try:
@@ -352,7 +362,10 @@ class OpenAICompatibleLLMClient:
                 if streamed:
                     return streamed
             except Exception:
-                logger.debug("Streaming completion path failed; falling back to non-streaming completion.", exc_info=True)
+                logger.debug(
+                    "Streaming completion path failed; falling back to non-streaming completion.",
+                    exc_info=True,
+                )
 
         payload: dict[str, object] = {
             "model": selected_model,
@@ -493,11 +506,15 @@ def create_llm_client(
     if normalized in STUB_PROVIDER_NAMES:
         return fallback
 
-    logger.warning("Unknown LLM provider '%s'. Falling back to stub client.", provider_name)
+    logger.warning(
+        "Unknown LLM provider '%s'. Falling back to stub client.", provider_name
+    )
     return fallback
 
 
-def create_llm_client_from_settings(settings: Any, fallback_client: LLMClient | None = None) -> LLMClient:
+def create_llm_client_from_settings(
+    settings: Any, fallback_client: LLMClient | None = None
+) -> LLMClient:
     """Create a runtime LLM client from application settings."""
     return create_llm_client(
         provider_name=getattr(settings, "llm_provider"),

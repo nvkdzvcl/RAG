@@ -35,7 +35,9 @@ def test_tokenize_bm25_uses_underthesea_when_available(monkeypatch) -> None:
 def test_tokenize_bm25_with_real_underthesea_segments_vietnamese(monkeypatch) -> None:
     import underthesea
 
-    monkeypatch.setattr(bm25_module, "_UNDERTHESEA_WORD_TOKENIZE", underthesea.word_tokenize)
+    monkeypatch.setattr(
+        bm25_module, "_UNDERTHESEA_WORD_TOKENIZE", underthesea.word_tokenize
+    )
 
     tokens = tokenize_bm25("Sinh viên đại học")
     assert "sinh_viên" in tokens or "đại_học" in tokens

@@ -24,6 +24,7 @@ _SANITIZE_PATTERN = re.compile(r"[^A-Za-zÀ-ỹĐđ0-9\s'_+]")
 # Environment helpers
 # ---------------------------------------------------------------------------
 
+
 def _env_bool(name: str, default: bool) -> bool:
     raw = os.getenv(name)
     if raw is None:
@@ -58,12 +59,21 @@ def _env_float(name: str, default: float) -> float:
 
 _GROUNDING_SEMANTIC_ENABLED = _env_bool("GROUNDING_SEMANTIC_ENABLED", True)
 _GROUNDING_SEMANTIC_MODEL = (
-    os.getenv("GROUNDING_SEMANTIC_MODEL", "sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2").strip()
+    os.getenv(
+        "GROUNDING_SEMANTIC_MODEL",
+        "sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2",
+    ).strip()
     or "sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2"
 )
-_GROUNDING_SEMANTIC_DEVICE = os.getenv("GROUNDING_SEMANTIC_DEVICE", "cpu").strip() or "cpu"
-_GROUNDING_SEMANTIC_LOCAL_FILES_ONLY = _env_bool("GROUNDING_SEMANTIC_LOCAL_FILES_ONLY", False)
-_GROUNDING_SEMANTIC_MAX_CONTEXT_CHUNKS = _env_int("GROUNDING_SEMANTIC_MAX_CONTEXT_CHUNKS", 6, minimum=1)
+_GROUNDING_SEMANTIC_DEVICE = (
+    os.getenv("GROUNDING_SEMANTIC_DEVICE", "cpu").strip() or "cpu"
+)
+_GROUNDING_SEMANTIC_LOCAL_FILES_ONLY = _env_bool(
+    "GROUNDING_SEMANTIC_LOCAL_FILES_ONLY", False
+)
+_GROUNDING_SEMANTIC_MAX_CONTEXT_CHUNKS = _env_int(
+    "GROUNDING_SEMANTIC_MAX_CONTEXT_CHUNKS", 6, minimum=1
+)
 _GROUNDING_SEMANTIC_MIN_SIMILARITY = max(
     0.0,
     min(1.0, _env_float("GROUNDING_SEMANTIC_MIN_SIMILARITY", 0.58)),
@@ -92,9 +102,6 @@ _SEMANTIC_ENCODER_INITIALIZED = False
 _SEMANTIC_ENCODER_LOCK = threading.Lock()
 
 
-
-
-
 _GENERIC_PHRASES = (
     "không đủ thông tin",
     "khó xác định",
@@ -120,6 +127,7 @@ class GroundingAssessment:
 # ---------------------------------------------------------------------------
 # Text normalization & keyword extraction
 # ---------------------------------------------------------------------------
+
 
 def _normalize_match_text(text: str) -> str:
     lowered = _WHITESPACE_PATTERN.sub(" ", text).strip().lower()
@@ -151,8 +159,12 @@ def _char_ngram_precision(answer: str, context_chunks: list[str], n: int = 3) ->
     if len(answer_text) < n or len(context_text) < n:
         return 0.0
 
-    answer_ngrams = {answer_text[idx : idx + n] for idx in range(len(answer_text) - n + 1)}
-    context_ngrams = {context_text[idx : idx + n] for idx in range(len(context_text) - n + 1)}
+    answer_ngrams = {
+        answer_text[idx : idx + n] for idx in range(len(answer_text) - n + 1)
+    }
+    context_ngrams = {
+        context_text[idx : idx + n] for idx in range(len(context_text) - n + 1)
+    }
     if not answer_ngrams or not context_ngrams:
         return 0.0
 
@@ -176,6 +188,7 @@ def _normalized_terms(text: str) -> set[str]:
 # ---------------------------------------------------------------------------
 # Semantic encoder (lazy singleton)
 # ---------------------------------------------------------------------------
+
 
 def _load_semantic_encoder() -> _SentenceTransformerLike | None:
     global _SEMANTIC_ENCODER_INITIALIZED, _SEMANTIC_ENCODER
@@ -230,7 +243,9 @@ def _normalize_vectors(raw_vectors: Any) -> list[list[float]]:
     return vectors
 
 
-def _semantic_context_similarity(answer: str, context_chunks: list[str]) -> float | None:
+def _semantic_context_similarity(
+    answer: str, context_chunks: list[str]
+) -> float | None:
     if not _GROUNDING_SEMANTIC_ENABLED:
         return None
 
@@ -275,6 +290,7 @@ def _semantic_context_similarity(answer: str, context_chunks: list[str]) -> floa
 # Public scoring API
 # ---------------------------------------------------------------------------
 
+
 def grounded_overlap_score(answer: str, context_chunks: list[str]) -> float:
     """Compute a tolerant groundedness score using keyword and char overlap."""
     answer_terms = _normalized_terms(answer)
@@ -300,7 +316,9 @@ def grounded_score(answer: str, context_chunks: list[str]) -> float:
     if semantic_score is None or semantic_score < _GROUNDING_SEMANTIC_MIN_SIMILARITY:
         return overlap_score
 
-    blended = ((1.0 - _GROUNDING_SEMANTIC_WEIGHT) * overlap_score) + (_GROUNDING_SEMANTIC_WEIGHT * semantic_score)
+    blended = ((1.0 - _GROUNDING_SEMANTIC_WEIGHT) * overlap_score) + (
+        _GROUNDING_SEMANTIC_WEIGHT * semantic_score
+    )
     return round(max(overlap_score, min(1.0, blended)), 4)
 
 
@@ -314,7 +332,11 @@ def assess_grounding(
 ) -> GroundingAssessment:
     """Assess grounding and hallucination risk from answer/context signals."""
     normalized_status = (status or "").strip().lower()
-    has_context = bool(context_chunks) if has_selected_context is None else bool(has_selected_context)
+    has_context = (
+        bool(context_chunks)
+        if has_selected_context is None
+        else bool(has_selected_context)
+    )
 
     score = grounded_score(answer, context_chunks)
     if normalized_status == "insufficient_evidence":

@@ -45,7 +45,9 @@ def _dedupe_key(item: RetrievalResult) -> str:
     return f"chunk:{item.chunk_id}"
 
 
-def _deduplicate_ranked_results(results: list[RetrievalResult]) -> list[RetrievalResult]:
+def _deduplicate_ranked_results(
+    results: list[RetrievalResult],
+) -> list[RetrievalResult]:
     """Drop duplicate documents while preserving ranked-list order."""
     deduped: list[RetrievalResult] = []
     seen: set[str] = set()
@@ -68,8 +70,12 @@ def _debug_results(results: list[RetrievalResult]) -> list[dict[str, object]]:
                 "chunk_id": item.chunk_id,
                 "doc_id": item.doc_id,
                 "score": round(float(item.score), 6),
-                "dense_score": None if item.dense_score is None else round(float(item.dense_score), 6),
-                "sparse_score": None if item.sparse_score is None else round(float(item.sparse_score), 6),
+                "dense_score": None
+                if item.dense_score is None
+                else round(float(item.dense_score), 6),
+                "sparse_score": None
+                if item.sparse_score is None
+                else round(float(item.sparse_score), 6),
                 "score_type": item.score_type,
             }
         )

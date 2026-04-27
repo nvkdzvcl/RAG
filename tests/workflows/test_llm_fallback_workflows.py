@@ -19,7 +19,9 @@ class _FailingPrimaryLLM:
 
 def _build_safe_fallback_client() -> FallbackLLMClient:
     fallback = StubLLMClient(
-        responder=lambda prompt, system: '{"answer":"Fallback answer","confidence":0.4,"status":"answered"}'
+        responder=lambda prompt, system: (
+            '{"answer":"Fallback answer","confidence":0.4,"status":"answered"}'
+        )
     )
     return FallbackLLMClient(primary=_FailingPrimaryLLM(), fallback=fallback)
 

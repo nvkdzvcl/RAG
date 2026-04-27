@@ -13,7 +13,9 @@ from app.workflows.standard import StandardWorkflow
 def test_compare_mode_response_contains_both_branches() -> None:
     runner = WorkflowRunner()
 
-    response = runner.run(query="Compare standard and advanced reliability", mode=Mode.COMPARE)
+    response = runner.run(
+        query="Compare standard and advanced reliability", mode=Mode.COMPARE
+    )
 
     assert isinstance(response, CompareQueryResponse)
     assert response.mode == "compare"
@@ -82,8 +84,12 @@ def test_compare_workflow_uses_injected_qwen_backed_branches() -> None:
 
     response = compare.run(query="compare via di", chat_history=None)
 
-    assert response.standard.answer == "Compare mode uses standard and advanced branches."
-    assert response.advanced.answer == "Compare mode uses standard and advanced branches."
+    assert (
+        response.standard.answer == "Compare mode uses standard and advanced branches."
+    )
+    assert (
+        response.advanced.answer == "Compare mode uses standard and advanced branches."
+    )
 
 
 def test_compare_workflow_preserves_model_override_for_both_branches() -> None:
@@ -218,7 +224,10 @@ def test_compare_prefers_grounded_answer_over_higher_confidence() -> None:
     assert response.comparison.standard_score > response.comparison.advanced_score
     assert response.comparison.grounded_score_delta is not None
     assert response.comparison.grounded_score_delta < 0
-    assert response.comparison.note == "Standard is more reliable due to stronger citations and groundedness."
+    assert (
+        response.comparison.note
+        == "Standard is more reliable due to stronger citations and groundedness."
+    )
 
 
 def test_compare_summary_rule_messages_for_vietnamese() -> None:
@@ -250,7 +259,9 @@ def test_compare_summary_rule_messages_for_vietnamese() -> None:
         )
 
     class _StandardStrong:
-        def run(self, query: str, chat_history=None, model=None, response_language=None):
+        def run(
+            self, query: str, chat_history=None, model=None, response_language=None
+        ):
             _ = query
             _ = chat_history
             _ = model
@@ -263,7 +274,9 @@ def test_compare_summary_rule_messages_for_vietnamese() -> None:
             )
 
     class _AdvancedNoCitations:
-        def run(self, query: str, chat_history=None, model=None, response_language=None):
+        def run(
+            self, query: str, chat_history=None, model=None, response_language=None
+        ):
             _ = query
             _ = chat_history
             _ = model
@@ -283,10 +296,15 @@ def test_compare_summary_rule_messages_for_vietnamese() -> None:
     response = compare.run(query="so sanh", response_language="vi")
     assert response.comparison.preferred_mode == "standard"
     assert response.comparison.winner == "standard"
-    assert response.comparison.note == "Chuẩn đáng tin cậy hơn vì có trích dẫn và độ bám tài liệu cao hơn"
+    assert (
+        response.comparison.note
+        == "Chuẩn đáng tin cậy hơn vì có trích dẫn và độ bám tài liệu cao hơn"
+    )
 
     class _BothWeakStandard:
-        def run(self, query: str, chat_history=None, model=None, response_language=None):
+        def run(
+            self, query: str, chat_history=None, model=None, response_language=None
+        ):
             _ = query
             _ = chat_history
             _ = model
@@ -300,7 +318,9 @@ def test_compare_summary_rule_messages_for_vietnamese() -> None:
             )
 
     class _BothWeakAdvanced:
-        def run(self, query: str, chat_history=None, model=None, response_language=None):
+        def run(
+            self, query: str, chat_history=None, model=None, response_language=None
+        ):
             _ = query
             _ = chat_history
             _ = model
@@ -320,10 +340,15 @@ def test_compare_summary_rule_messages_for_vietnamese() -> None:
     response = compare.run(query="so sanh", response_language="vi")
     assert response.comparison.preferred_mode == "review"
     assert response.comparison.winner == "both_weak"
-    assert response.comparison.note == "Cả hai cần kiểm tra lại vì thiếu bằng chứng đủ mạnh"
+    assert (
+        response.comparison.note
+        == "Cả hai cần kiểm tra lại vì thiếu bằng chứng đủ mạnh"
+    )
 
     class _AdvancedStrong:
-        def run(self, query: str, chat_history=None, model=None, response_language=None):
+        def run(
+            self, query: str, chat_history=None, model=None, response_language=None
+        ):
             _ = query
             _ = chat_history
             _ = model
@@ -342,12 +367,17 @@ def test_compare_summary_rule_messages_for_vietnamese() -> None:
     response = compare.run(query="so sanh", response_language="vi")
     assert response.comparison.preferred_mode == "advanced"
     assert response.comparison.winner == "advanced"
-    assert response.comparison.note == "Nâng cao đáng tin cậy hơn vì có trích dẫn và độ bám tài liệu cao hơn"
+    assert (
+        response.comparison.note
+        == "Nâng cao đáng tin cậy hơn vì có trích dẫn và độ bám tài liệu cao hơn"
+    )
 
 
 def test_compare_zero_citation_high_confidence_loses_to_cited_answer() -> None:
     class _StandardCited:
-        def run(self, query: str, chat_history=None, model=None, response_language=None):
+        def run(
+            self, query: str, chat_history=None, model=None, response_language=None
+        ):
             _ = query
             _ = chat_history
             _ = model
@@ -355,7 +385,9 @@ def test_compare_zero_citation_high_confidence_loses_to_cited_answer() -> None:
                 {
                     "mode": "standard",
                     "answer": "Cited standard",
-                    "citations": [{"chunk_id": "s1", "doc_id": "d1", "source": "seeded://s1"}],
+                    "citations": [
+                        {"chunk_id": "s1", "doc_id": "d1", "source": "seeded://s1"}
+                    ],
                     "confidence": 0.45,
                     "status": "answered",
                     "response_language": response_language or "en",
@@ -367,7 +399,9 @@ def test_compare_zero_citation_high_confidence_loses_to_cited_answer() -> None:
             )
 
     class _AdvancedNoCitationButConfident:
-        def run(self, query: str, chat_history=None, model=None, response_language=None):
+        def run(
+            self, query: str, chat_history=None, model=None, response_language=None
+        ):
             _ = query
             _ = chat_history
             _ = model
@@ -401,7 +435,9 @@ def test_compare_zero_citation_high_confidence_loses_to_cited_answer() -> None:
 
 def test_compare_hallucination_loses_to_non_hallucinated_branch() -> None:
     class _StandardHallucinated:
-        def run(self, query: str, chat_history=None, model=None, response_language=None):
+        def run(
+            self, query: str, chat_history=None, model=None, response_language=None
+        ):
             _ = query
             _ = chat_history
             _ = model
@@ -409,7 +445,9 @@ def test_compare_hallucination_loses_to_non_hallucinated_branch() -> None:
                 {
                     "mode": "standard",
                     "answer": "Hallucinated standard",
-                    "citations": [{"chunk_id": "s1", "doc_id": "d1", "source": "seeded://s1"}],
+                    "citations": [
+                        {"chunk_id": "s1", "doc_id": "d1", "source": "seeded://s1"}
+                    ],
                     "confidence": 0.9,
                     "status": "answered",
                     "response_language": response_language or "en",
@@ -421,7 +459,9 @@ def test_compare_hallucination_loses_to_non_hallucinated_branch() -> None:
             )
 
     class _AdvancedSafe:
-        def run(self, query: str, chat_history=None, model=None, response_language=None):
+        def run(
+            self, query: str, chat_history=None, model=None, response_language=None
+        ):
             _ = query
             _ = chat_history
             _ = model
@@ -429,7 +469,9 @@ def test_compare_hallucination_loses_to_non_hallucinated_branch() -> None:
                 {
                     "mode": "advanced",
                     "answer": "Grounded advanced",
-                    "citations": [{"chunk_id": "a1", "doc_id": "d2", "source": "seeded://a1"}],
+                    "citations": [
+                        {"chunk_id": "a1", "doc_id": "d2", "source": "seeded://a1"}
+                    ],
                     "confidence": 0.55,
                     "status": "answered",
                     "response_language": response_language or "en",
@@ -452,7 +494,9 @@ def test_compare_hallucination_loses_to_non_hallucinated_branch() -> None:
 
 def test_compare_insufficient_evidence_loses_to_grounded_cited_answer() -> None:
     class _StandardInsufficient:
-        def run(self, query: str, chat_history=None, model=None, response_language=None):
+        def run(
+            self, query: str, chat_history=None, model=None, response_language=None
+        ):
             _ = query
             _ = chat_history
             _ = model
@@ -472,7 +516,9 @@ def test_compare_insufficient_evidence_loses_to_grounded_cited_answer() -> None:
             )
 
     class _AdvancedGrounded:
-        def run(self, query: str, chat_history=None, model=None, response_language=None):
+        def run(
+            self, query: str, chat_history=None, model=None, response_language=None
+        ):
             _ = query
             _ = chat_history
             _ = model
@@ -480,7 +526,9 @@ def test_compare_insufficient_evidence_loses_to_grounded_cited_answer() -> None:
                 {
                     "mode": "advanced",
                     "answer": "Grounded advanced",
-                    "citations": [{"chunk_id": "a1", "doc_id": "d2", "source": "seeded://a1"}],
+                    "citations": [
+                        {"chunk_id": "a1", "doc_id": "d2", "source": "seeded://a1"}
+                    ],
                     "confidence": 0.52,
                     "status": "answered",
                     "response_language": response_language or "en",
@@ -504,7 +552,9 @@ def test_compare_insufficient_evidence_loses_to_grounded_cited_answer() -> None:
 
 def test_compare_tie_when_both_similar_quality() -> None:
     class _StandardSimilar:
-        def run(self, query: str, chat_history=None, model=None, response_language=None):
+        def run(
+            self, query: str, chat_history=None, model=None, response_language=None
+        ):
             _ = query
             _ = chat_history
             _ = model
@@ -512,7 +562,9 @@ def test_compare_tie_when_both_similar_quality() -> None:
                 {
                     "mode": "standard",
                     "answer": "Standard similar",
-                    "citations": [{"chunk_id": "s1", "doc_id": "d1", "source": "seeded://s1"}],
+                    "citations": [
+                        {"chunk_id": "s1", "doc_id": "d1", "source": "seeded://s1"}
+                    ],
                     "confidence": 0.61,
                     "status": "answered",
                     "response_language": response_language or "en",
@@ -524,7 +576,9 @@ def test_compare_tie_when_both_similar_quality() -> None:
             )
 
     class _AdvancedSimilar:
-        def run(self, query: str, chat_history=None, model=None, response_language=None):
+        def run(
+            self, query: str, chat_history=None, model=None, response_language=None
+        ):
             _ = query
             _ = chat_history
             _ = model
@@ -532,7 +586,9 @@ def test_compare_tie_when_both_similar_quality() -> None:
                 {
                     "mode": "advanced",
                     "answer": "Advanced similar",
-                    "citations": [{"chunk_id": "a1", "doc_id": "d2", "source": "seeded://a1"}],
+                    "citations": [
+                        {"chunk_id": "a1", "doc_id": "d2", "source": "seeded://a1"}
+                    ],
                     "confidence": 0.63,
                     "status": "answered",
                     "response_language": response_language or "en",

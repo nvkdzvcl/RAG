@@ -50,12 +50,16 @@ class SentenceTransformerEmbeddingProvider(BaseEmbeddingProvider):
     def _load_model(*, model_name: str, device: str) -> _SentenceTransformerLike:
         try:
             from sentence_transformers import SentenceTransformer
-        except ModuleNotFoundError as exc:  # pragma: no cover - tested via provider factory fallback.
+        except (
+            ModuleNotFoundError
+        ) as exc:  # pragma: no cover - tested via provider factory fallback.
             raise RuntimeError(
                 "sentence-transformers is not installed. Install dependencies or use hash embeddings."
             ) from exc
 
-        return cast(_SentenceTransformerLike, SentenceTransformer(model_name, device=device))
+        return cast(
+            _SentenceTransformerLike, SentenceTransformer(model_name, device=device)
+        )
 
     def _resolve_dimension(self) -> int:
         getter = getattr(self._model, "get_sentence_embedding_dimension", None)
@@ -66,7 +70,9 @@ class SentenceTransformerEmbeddingProvider(BaseEmbeddingProvider):
 
         probe_vectors = self._encode_batch([self._format_passage("dimension probe")])
         if not probe_vectors or not probe_vectors[0]:
-            raise ValueError("Could not infer embedding dimension from sentence-transformers model.")
+            raise ValueError(
+                "Could not infer embedding dimension from sentence-transformers model."
+            )
         return len(probe_vectors[0])
 
     @staticmethod

@@ -26,9 +26,13 @@ async def update_chunking_settings(
 ) -> ChunkingSettingsResponse:
     """Apply preset/custom chunking mode and trigger uploaded-document reindex."""
     try:
-        return await asyncio.to_thread(document_service.apply_chunking_settings, payload)
+        return await asyncio.to_thread(
+            document_service.apply_chunking_settings, payload
+        )
     except ValueError as exc:
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)
+        ) from exc
 
 
 @router.post("/retrieval", response_model=RetrievalSettingsResponse)
@@ -40,4 +44,6 @@ async def update_retrieval_settings(
     try:
         return await asyncio.to_thread(query_service.update_retrieval_settings, payload)
     except ValueError as exc:
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)
+        ) from exc

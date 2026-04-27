@@ -45,7 +45,9 @@ class _NoRebuildEmbeddingProvider(BaseEmbeddingProvider):
 
     def embed_documents(self, texts: list[str]) -> list[list[float]]:
         _ = texts
-        raise AssertionError("embed_documents should not be called when loading matching persisted uploaded index")
+        raise AssertionError(
+            "embed_documents should not be called when loading matching persisted uploaded index"
+        )
 
     def embed_query(self, text: str) -> list[float]:
         self.query_inputs.append(text)
@@ -81,7 +83,9 @@ def test_runtime_index_build_uses_embedding_provider_interface(tmp_path: Path) -
     assert (index_dir / "bm25_index.json").exists()
 
 
-def test_runtime_index_manager_uses_configured_provider_factory(monkeypatch, tmp_path: Path) -> None:
+def test_runtime_index_manager_uses_configured_provider_factory(
+    monkeypatch, tmp_path: Path
+) -> None:
     class _Settings:
         embedding_provider = "hash"
         embedding_model = "intfloat/multilingual-e5-base"
@@ -115,7 +119,9 @@ def test_runtime_index_manager_uses_configured_provider_factory(monkeypatch, tmp
         return configured_provider
 
     monkeypatch.setattr("app.services.index_runtime.get_settings", lambda: _Settings())
-    monkeypatch.setattr("app.services.index_runtime.create_embedding_provider", _fake_factory)
+    monkeypatch.setattr(
+        "app.services.index_runtime.create_embedding_provider", _fake_factory
+    )
 
     manager = RuntimeIndexManager(
         corpus_dir=tmp_path / "corpus",
@@ -133,7 +139,9 @@ def test_runtime_index_manager_uses_configured_provider_factory(monkeypatch, tmp
     }
 
 
-def test_runtime_index_manager_uses_sentence_transformers_when_configured(monkeypatch, tmp_path: Path) -> None:
+def test_runtime_index_manager_uses_sentence_transformers_when_configured(
+    monkeypatch, tmp_path: Path
+) -> None:
     class _Settings:
         embedding_provider = "sentence_transformers"
         embedding_model = "intfloat/multilingual-e5-base"
@@ -167,7 +175,9 @@ def test_runtime_index_manager_uses_sentence_transformers_when_configured(monkey
         return configured_provider
 
     monkeypatch.setattr("app.services.index_runtime.get_settings", lambda: _Settings())
-    monkeypatch.setattr("app.services.index_runtime.create_embedding_provider", _fake_factory)
+    monkeypatch.setattr(
+        "app.services.index_runtime.create_embedding_provider", _fake_factory
+    )
 
     manager = RuntimeIndexManager(
         corpus_dir=tmp_path / "corpus",
@@ -179,7 +189,9 @@ def test_runtime_index_manager_uses_sentence_transformers_when_configured(monkey
     assert captured["model"] == "intfloat/multilingual-e5-base"
 
 
-def test_runtime_index_manager_indexes_and_retrieves_ocr_chunks(monkeypatch, tmp_path: Path) -> None:
+def test_runtime_index_manager_indexes_and_retrieves_ocr_chunks(
+    monkeypatch, tmp_path: Path
+) -> None:
     class _Settings:
         embedding_provider = "hash"
         embedding_model = "intfloat/multilingual-e5-base"
@@ -229,10 +241,14 @@ def test_runtime_index_manager_indexes_and_retrieves_ocr_chunks(monkeypatch, tmp
         "app.ingestion.parsers.pdf_parser.pdfplumber",
         SimpleNamespace(open=lambda _: FakePDF()),
     )
-    monkeypatch.setattr("app.ingestion.parsers.pdf_parser.is_tesseract_available", lambda: True)
+    monkeypatch.setattr(
+        "app.ingestion.parsers.pdf_parser.is_tesseract_available", lambda: True
+    )
     monkeypatch.setattr(
         "app.ingestion.parsers.pdf_parser.ocr_pdf_page_with_pymupdf",
-        lambda *args, **kwargs: "Nội dung OCR thử nghiệm với token duy nhất: ocrtokenviet99",
+        lambda *args, **kwargs: (
+            "Nội dung OCR thử nghiệm với token duy nhất: ocrtokenviet99"
+        ),
     )
 
     provider = _CountingEmbeddingProvider(dimension=8)
@@ -257,7 +273,9 @@ def test_runtime_index_manager_indexes_and_retrieves_ocr_chunks(monkeypatch, tmp
     assert activation_stats["ocr_chunks"] >= 1
 
 
-def test_runtime_uploaded_retrieval_filters_to_active_document_ids(tmp_path: Path) -> None:
+def test_runtime_uploaded_retrieval_filters_to_active_document_ids(
+    tmp_path: Path,
+) -> None:
     provider = _CountingEmbeddingProvider(dimension=8)
     manager = RuntimeIndexManager(
         corpus_dir=tmp_path / "corpus",
@@ -267,8 +285,12 @@ def test_runtime_uploaded_retrieval_filters_to_active_document_ids(tmp_path: Pat
 
     file_a = tmp_path / "a.txt"
     file_b = tmp_path / "b.txt"
-    file_a.write_text("alpha-only-token-71 appears in this uploaded file.", encoding="utf-8")
-    file_b.write_text("beta-only-token-92 appears in this uploaded file.", encoding="utf-8")
+    file_a.write_text(
+        "alpha-only-token-71 appears in this uploaded file.", encoding="utf-8"
+    )
+    file_b.write_text(
+        "beta-only-token-92 appears in this uploaded file.", encoding="utf-8"
+    )
     doc_a = build_doc_id(file_a)
     doc_b = build_doc_id(file_b)
 
@@ -290,7 +312,9 @@ def test_runtime_uploaded_chunks_include_metadata_fields(tmp_path: Path) -> None
     )
 
     uploaded = tmp_path / "meta-runtime.txt"
-    uploaded.write_text("metadata-runtime-token-441 appears in this uploaded file.", encoding="utf-8")
+    uploaded.write_text(
+        "metadata-runtime-token-441 appears in this uploaded file.", encoding="utf-8"
+    )
 
     chunk_count = manager.activate_from_uploaded_files([uploaded])
     results = manager.get_retriever().retrieve("metadata-runtime-token-441", top_k=3)
@@ -321,12 +345,16 @@ def test_clear_uploaded_indexes_preserves_seeded_runtime_state(tmp_path: Path) -
     )
 
     manager.activate_from_seeded_corpus()
-    seeded_results_before = manager.get_retriever().retrieve("seed-token-clear-check-55", top_k=3)
+    seeded_results_before = manager.get_retriever().retrieve(
+        "seed-token-clear-check-55", top_k=3
+    )
     assert seeded_results_before
     assert manager.get_active_source() == "seeded"
 
     deleted_files = manager.clear_uploaded_indexes()
-    seeded_results_after = manager.get_retriever().retrieve("seed-token-clear-check-55", top_k=3)
+    seeded_results_after = manager.get_retriever().retrieve(
+        "seed-token-clear-check-55", top_k=3
+    )
 
     assert deleted_files >= 0
     assert manager.get_active_source() == "seeded"
@@ -361,7 +389,9 @@ def test_runtime_chunk_strategy_update_changes_chunk_count(tmp_path: Path) -> No
     assert large_chunk_count < small_chunk_count
 
 
-def test_uploaded_manifest_allows_loading_persisted_uploaded_indexes_without_rebuild(tmp_path: Path) -> None:
+def test_uploaded_manifest_allows_loading_persisted_uploaded_indexes_without_rebuild(
+    tmp_path: Path,
+) -> None:
     provider_first = _CountingEmbeddingProvider(dimension=8)
     manager_first = RuntimeIndexManager(
         corpus_dir=tmp_path / "corpus",
@@ -370,10 +400,14 @@ def test_uploaded_manifest_allows_loading_persisted_uploaded_indexes_without_reb
     )
 
     uploaded = tmp_path / "manifest-doc.txt"
-    uploaded.write_text("manifest-match-token-6066 appears in uploaded document.", encoding="utf-8")
+    uploaded.write_text(
+        "manifest-match-token-6066 appears in uploaded document.", encoding="utf-8"
+    )
     doc_id = build_doc_id(uploaded)
 
-    first_count = manager_first.activate_from_uploaded_files([uploaded], active_document_ids={doc_id})
+    first_count = manager_first.activate_from_uploaded_files(
+        [uploaded], active_document_ids={doc_id}
+    )
     assert first_count > 0
     manifest_path = tmp_path / "indexes" / "uploaded_index_manifest.json"
     assert manifest_path.exists()
@@ -384,17 +418,23 @@ def test_uploaded_manifest_allows_loading_persisted_uploaded_indexes_without_reb
         index_dir=tmp_path / "indexes",
         embedding_provider=provider_second,
     )
-    loaded_count = manager_second.activate_from_uploaded_files([uploaded], active_document_ids={doc_id})
+    loaded_count = manager_second.activate_from_uploaded_files(
+        [uploaded], active_document_ids={doc_id}
+    )
 
     assert loaded_count == first_count
     assert manager_second.get_active_source() == "uploaded"
     assert manager_second.get_active_uploaded_document_ids() == {doc_id}
-    results = manager_second.get_retriever().retrieve("manifest-match-token-6066", top_k=3)
+    results = manager_second.get_retriever().retrieve(
+        "manifest-match-token-6066", top_k=3
+    )
     assert results
     assert all(item.doc_id == doc_id for item in results)
 
 
-def test_uploaded_manifest_mismatch_triggers_rebuild_from_ready_documents(tmp_path: Path) -> None:
+def test_uploaded_manifest_mismatch_triggers_rebuild_from_ready_documents(
+    tmp_path: Path,
+) -> None:
     provider_first = _CountingEmbeddingProvider(dimension=8)
     manager_first = RuntimeIndexManager(
         corpus_dir=tmp_path / "corpus",
@@ -405,12 +445,19 @@ def test_uploaded_manifest_mismatch_triggers_rebuild_from_ready_documents(tmp_pa
     uploaded = tmp_path / "manifest-mismatch.txt"
     uploaded.write_text("manifest-mismatch-token-8282", encoding="utf-8")
     doc_id = build_doc_id(uploaded)
-    assert manager_first.activate_from_uploaded_files([uploaded], active_document_ids={doc_id}) > 0
+    assert (
+        manager_first.activate_from_uploaded_files(
+            [uploaded], active_document_ids={doc_id}
+        )
+        > 0
+    )
 
     manifest_path = tmp_path / "indexes" / "uploaded_index_manifest.json"
     payload = json.loads(manifest_path.read_text(encoding="utf-8"))
     payload["fingerprint"] = "tampered-fingerprint"
-    manifest_path.write_text(json.dumps(payload, ensure_ascii=True, indent=2), encoding="utf-8")
+    manifest_path.write_text(
+        json.dumps(payload, ensure_ascii=True, indent=2), encoding="utf-8"
+    )
 
     provider_second = _CountingEmbeddingProvider(dimension=8)
     manager_second = RuntimeIndexManager(
@@ -418,7 +465,9 @@ def test_uploaded_manifest_mismatch_triggers_rebuild_from_ready_documents(tmp_pa
         index_dir=tmp_path / "indexes",
         embedding_provider=provider_second,
     )
-    rebuilt_count = manager_second.activate_from_uploaded_files([uploaded], active_document_ids={doc_id})
+    rebuilt_count = manager_second.activate_from_uploaded_files(
+        [uploaded], active_document_ids={doc_id}
+    )
 
     assert rebuilt_count > 0
     assert provider_second.document_inputs
@@ -426,7 +475,9 @@ def test_uploaded_manifest_mismatch_triggers_rebuild_from_ready_documents(tmp_pa
     assert manifest_after["fingerprint"] != "tampered-fingerprint"
 
 
-def test_get_retriever_accepts_query_filters_and_exposes_filter_debug(tmp_path: Path) -> None:
+def test_get_retriever_accepts_query_filters_and_exposes_filter_debug(
+    tmp_path: Path,
+) -> None:
     manager = RuntimeIndexManager(
         corpus_dir=tmp_path / "corpus",
         index_dir=tmp_path / "indexes",
@@ -443,7 +494,9 @@ def test_get_retriever_accepts_query_filters_and_exposes_filter_debug(tmp_path: 
     assert debug["candidate_count_after_filter"] == 0
 
 
-def test_runtime_query_filter_include_ocr_false_excludes_ocr_chunks(tmp_path: Path) -> None:
+def test_runtime_query_filter_include_ocr_false_excludes_ocr_chunks(
+    tmp_path: Path,
+) -> None:
     manager = RuntimeIndexManager(
         corpus_dir=tmp_path / "corpus",
         index_dir=tmp_path / "indexes",
@@ -493,10 +546,14 @@ def test_runtime_query_filter_include_ocr_false_excludes_ocr_chunks(tmp_path: Pa
     assert filtered_results
     assert all(not bool(item.metadata.get("ocr")) for item in filtered_results)
     assert debug["applied_filters"] == {"include_ocr": False}
-    assert debug["candidate_count_before_filter"] >= debug["candidate_count_after_filter"]
+    assert (
+        debug["candidate_count_before_filter"] >= debug["candidate_count_after_filter"]
+    )
 
 
-def test_filename_filter_uses_result_source_when_filename_metadata_missing(tmp_path: Path) -> None:
+def test_filename_filter_uses_result_source_when_filename_metadata_missing(
+    tmp_path: Path,
+) -> None:
     manager = RuntimeIndexManager(
         corpus_dir=tmp_path / "corpus",
         index_dir=tmp_path / "indexes",

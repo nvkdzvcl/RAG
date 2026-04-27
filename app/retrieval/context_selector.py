@@ -50,7 +50,9 @@ class ContextSelector:
         self.max_chars = max_chars
         self.min_useful_chars = max(1, min_useful_chars)
 
-    def select(self, docs: list[RetrievalResult], top_k: int | None = None) -> list[RetrievalResult]:
+    def select(
+        self, docs: list[RetrievalResult], top_k: int | None = None
+    ) -> list[RetrievalResult]:
         limit = top_k if top_k is not None else self.max_chunks
         if limit <= 0:
             return []
@@ -66,7 +68,10 @@ class ContextSelector:
             candidate_chars = len(doc.content)
 
             # --- chunk fits entirely ---
-            if self.max_chars is None or (total_chars + candidate_chars) <= self.max_chars:
+            if (
+                self.max_chars is None
+                or (total_chars + candidate_chars) <= self.max_chars
+            ):
                 selected.append(doc)
                 seen_ids.add(doc.chunk_id)
                 total_chars += candidate_chars

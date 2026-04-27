@@ -22,8 +22,14 @@ def test_extract_trace_fields_and_metrics() -> None:
             "step": "context_select",
             "count": 2,
             "docs": [
-                {"chunk_id": "c2", "content": "Self-RAG supports retrieval and critique loops."},
-                {"chunk_id": "c1", "content": "Advanced mode can retry when evidence is weak."},
+                {
+                    "chunk_id": "c2",
+                    "content": "Self-RAG supports retrieval and critique loops.",
+                },
+                {
+                    "chunk_id": "c1",
+                    "content": "Advanced mode can retry when evidence is weak.",
+                },
             ],
         },
     ]

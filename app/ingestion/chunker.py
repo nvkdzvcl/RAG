@@ -33,7 +33,9 @@ class Chunker:
         return f"{doc_id}_chunk_{chunk_index:04d}_{digest}"
 
     def _token_spans(self, text: str) -> list[tuple[int, int]]:
-        return [(match.start(), match.end()) for match in self._token_pattern.finditer(text)]
+        return [
+            (match.start(), match.end()) for match in self._token_pattern.finditer(text)
+        ]
 
     def _slice_by_token_window(
         self,
@@ -58,7 +60,9 @@ class Chunker:
         chunk_id = self.generate_chunk_id(doc.doc_id, chunk_index, content)
         metadata = dict(doc.metadata)
         fallback_file_name = Path(doc.source).name
-        file_extension = str(metadata.get("file_extension") or Path(doc.source).suffix.lower())
+        file_extension = str(
+            metadata.get("file_extension") or Path(doc.source).suffix.lower()
+        )
         file_type = str(metadata.get("file_type") or file_extension.lstrip("."))
         source_block_type = str(metadata.get("block_type") or doc.block_type)
         metadata.update(
@@ -67,8 +71,16 @@ class Chunker:
                 "token_start": token_start,
                 "token_end": token_end,
                 "doc_id": doc.doc_id,
-                "file_name": str(metadata.get("file_name") or metadata.get("filename") or fallback_file_name),
-                "filename": str(metadata.get("filename") or metadata.get("file_name") or fallback_file_name),
+                "file_name": str(
+                    metadata.get("file_name")
+                    or metadata.get("filename")
+                    or fallback_file_name
+                ),
+                "filename": str(
+                    metadata.get("filename")
+                    or metadata.get("file_name")
+                    or fallback_file_name
+                ),
                 "file_extension": file_extension,
                 "file_type": file_type,
                 "page": doc.page,
@@ -91,7 +103,9 @@ class Chunker:
             metadata=metadata,
         )
 
-    def _chunk_text_content(self, doc: LoadedDocument, chunk_index_start: int) -> list[DocumentChunk]:
+    def _chunk_text_content(
+        self, doc: LoadedDocument, chunk_index_start: int
+    ) -> list[DocumentChunk]:
         paragraphs = split_paragraphs(doc.content)
         if not paragraphs:
             paragraphs = [doc.content]

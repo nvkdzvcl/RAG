@@ -51,7 +51,9 @@ class _StubCrossEncoderReranker:
         self.batch_size = batch_size
         self.name = "stub-cross-encoder"
 
-    def rerank(self, query: str, docs: list[RetrievalResult], top_k: int | None = None) -> list[RetrievalResult]:
+    def rerank(
+        self, query: str, docs: list[RetrievalResult], top_k: int | None = None
+    ) -> list[RetrievalResult]:
         _ = query
         _ = top_k
         return list(docs)

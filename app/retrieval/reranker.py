@@ -18,7 +18,9 @@ class BaseReranker(ABC):
     name: str
 
     @abstractmethod
-    def rerank(self, query: str, docs: list[RetrievalResult], top_k: int | None = None) -> list[RetrievalResult]:
+    def rerank(
+        self, query: str, docs: list[RetrievalResult], top_k: int | None = None
+    ) -> list[RetrievalResult]:
         """Return reranked docs with updated scores."""
 
 
@@ -46,7 +48,9 @@ class ScoreOnlyReranker(BaseReranker):
             }
         )
 
-    def rerank(self, query: str, docs: list[RetrievalResult], top_k: int | None = None) -> list[RetrievalResult]:
+    def rerank(
+        self, query: str, docs: list[RetrievalResult], top_k: int | None = None
+    ) -> list[RetrievalResult]:
         _ = query
         if not docs:
             return []
@@ -101,7 +105,9 @@ class CrossEncoderReranker(BaseReranker):
     def _load_model(*, model_name: str, device: str) -> _CrossEncoderLike:
         try:
             from sentence_transformers import CrossEncoder
-        except ModuleNotFoundError as exc:  # pragma: no cover - covered via factory fallback tests.
+        except (
+            ModuleNotFoundError
+        ) as exc:  # pragma: no cover - covered via factory fallback tests.
             raise RuntimeError(
                 "sentence-transformers is not installed. Install dependencies or use score-only reranking."
             ) from exc
@@ -125,7 +131,9 @@ class CrossEncoderReranker(BaseReranker):
             normalized.append(0.0)
         return normalized
 
-    def rerank(self, query: str, docs: list[RetrievalResult], top_k: int | None = None) -> list[RetrievalResult]:
+    def rerank(
+        self, query: str, docs: list[RetrievalResult], top_k: int | None = None
+    ) -> list[RetrievalResult]:
         if not docs:
             return []
         limit = len(docs) if top_k is None else max(0, top_k)
@@ -152,7 +160,9 @@ class CrossEncoderReranker(BaseReranker):
 
         scored: list[tuple[float, RetrievalResult]] = []
         for doc, rerank_score in zip(candidates, scores):
-            updated = ScoreOnlyReranker._to_reranked(doc, rerank_score=float(rerank_score))
+            updated = ScoreOnlyReranker._to_reranked(
+                doc, rerank_score=float(rerank_score)
+            )
             scored.append((float(rerank_score), updated))
 
         scored.sort(key=lambda row: row[0], reverse=True)

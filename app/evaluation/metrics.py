@@ -121,7 +121,9 @@ def extract_trace_fields(trace: list[dict]) -> TraceExtraction:
     )
 
 
-def _match_gold_source(gold: str, citation_tokens: set[str], citation_compound: list[str]) -> bool:
+def _match_gold_source(
+    gold: str, citation_tokens: set[str], citation_compound: list[str]
+) -> bool:
     normalized_gold = gold.strip().lower()
     if not normalized_gold:
         return False
@@ -130,7 +132,9 @@ def _match_gold_source(gold: str, citation_tokens: set[str], citation_compound: 
     return any(normalized_gold in item for item in citation_compound)
 
 
-def cited_gold_source_overlap(citations: list[Citation], gold_sources: Iterable[str]) -> float | None:
+def cited_gold_source_overlap(
+    citations: list[Citation], gold_sources: Iterable[str]
+) -> float | None:
     """Compute overlap between citations and expected sources."""
     expected = [source for source in gold_sources if source and source.strip()]
     if not expected:
@@ -149,7 +153,11 @@ def cited_gold_source_overlap(citations: list[Citation], gold_sources: Iterable[
         citation_compound.append(f"{citation.source}#{citation.chunk_id}".lower())
         citation_compound.append(f"{citation.doc_id}#{citation.chunk_id}".lower())
 
-    matched = sum(1 for source in expected if _match_gold_source(source, citation_tokens, citation_compound))
+    matched = sum(
+        1
+        for source in expected
+        if _match_gold_source(source, citation_tokens, citation_compound)
+    )
     return matched / len(expected)
 
 
@@ -207,9 +215,13 @@ def compute_metrics(
             if answer_terms
             else 0.0
         )
-        groundedness_proxy_note = "Proxy only: lexical overlap between answer and selected context."
+        groundedness_proxy_note = (
+            "Proxy only: lexical overlap between answer and selected context."
+        )
     else:
-        groundedness_proxy_note = "Proxy unavailable: selected context text not present in trace."
+        groundedness_proxy_note = (
+            "Proxy unavailable: selected context text not present in trace."
+        )
 
     return EvalMetrics(
         citation_count=len(citations),

@@ -20,7 +20,9 @@ from app.services.runtime import get_document_service
 router = APIRouter(prefix="/documents", tags=["documents"])
 
 
-@router.post("/upload", response_model=DocumentResponse, status_code=status.HTTP_201_CREATED)
+@router.post(
+    "/upload", response_model=DocumentResponse, status_code=status.HTTP_201_CREATED
+)
 async def upload_document(
     file: UploadFile = File(...),
     document_service: DocumentService = Depends(get_document_service),
@@ -29,7 +31,9 @@ async def upload_document(
     try:
         return await asyncio.to_thread(document_service.upload_document, file)
     except ValueError as exc:
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)
+        ) from exc
 
 
 @router.post("", response_model=DocumentResponse, status_code=status.HTTP_201_CREATED)
@@ -42,7 +46,9 @@ async def upload_document_compat(
 
 
 @router.get("", response_model=DocumentListResponse)
-async def list_documents(document_service: DocumentService = Depends(get_document_service)) -> DocumentListResponse:
+async def list_documents(
+    document_service: DocumentService = Depends(get_document_service),
+) -> DocumentListResponse:
     """List uploaded documents and their processing status."""
     return await asyncio.to_thread(document_service.list_documents)
 
@@ -56,7 +62,9 @@ async def reindex_documents(
     try:
         return await asyncio.to_thread(document_service.update_chunk_settings, payload)
     except ValueError as exc:
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)
+        ) from exc
 
 
 @router.get("/{document_id}/status", response_model=DocumentResponse)
@@ -66,9 +74,13 @@ async def get_document_status(
 ) -> DocumentResponse:
     """Return processing status for one document."""
     try:
-        return await asyncio.to_thread(document_service.get_document_status, document_id)
+        return await asyncio.to_thread(
+            document_service.get_document_status, document_id
+        )
     except KeyError as exc:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)) from exc
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)
+        ) from exc
 
 
 @router.get("/{document_id}", response_model=DocumentResponse)
@@ -77,7 +89,9 @@ async def get_document_status_compat(
     document_service: DocumentService = Depends(get_document_service),
 ) -> DocumentResponse:
     """Backward-compatible status route."""
-    return await get_document_status(document_id=document_id, document_service=document_service)
+    return await get_document_status(
+        document_id=document_id, document_service=document_service
+    )
 
 
 @router.delete("", response_model=DeleteAllDocumentsResponse)
@@ -97,4 +111,6 @@ async def delete_document(
     try:
         return await asyncio.to_thread(document_service.delete_document, document_id)
     except KeyError as exc:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)) from exc
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)
+        ) from exc

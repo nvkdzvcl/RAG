@@ -10,7 +10,12 @@ from typing import Any, Protocol
 from app.evaluation.dataset import load_eval_dataset
 from app.evaluation.metrics import compute_metrics, extract_trace_fields
 from app.evaluation.reporting import build_comparative_summary, write_report_artifacts
-from app.evaluation.schemas import CompareEvalOutput, EvalExample, EvalReport, ModeEvalOutput
+from app.evaluation.schemas import (
+    CompareEvalOutput,
+    EvalExample,
+    EvalReport,
+    ModeEvalOutput,
+)
 from app.schemas.api import CompareQueryResponse, QueryResponse, validate_query_response
 from app.schemas.common import Citation, Mode
 from app.workflows.runner import WorkflowRunner
@@ -45,7 +50,9 @@ class StubPredictor:
         return {
             "mode": "standard",
             "answer": f"Stub standard answer for: {query}",
-            "citations": [{"chunk_id": "stub_c1", "doc_id": "stub_d1", "source": self._source}],
+            "citations": [
+                {"chunk_id": "stub_c1", "doc_id": "stub_d1", "source": self._source}
+            ],
             "confidence": 0.55,
             "status": "answered",
             "stop_reason": "stub_generated",
@@ -80,14 +87,20 @@ class StubPredictor:
         return {
             "mode": "advanced",
             "answer": f"Stub advanced answer for: {query}",
-            "citations": [{"chunk_id": "stub_c1", "doc_id": "stub_d1", "source": self._source}],
+            "citations": [
+                {"chunk_id": "stub_c1", "doc_id": "stub_d1", "source": self._source}
+            ],
             "confidence": 0.72,
             "status": "answered",
             "stop_reason": "critique_pass",
             "latency_ms": 24,
             "loop_count": retry_loop,
             "trace": [
-                {"step": "retrieval_gate", "need_retrieval": True, "reason": "stub_default"},
+                {
+                    "step": "retrieval_gate",
+                    "need_retrieval": True,
+                    "reason": "stub_default",
+                },
                 {
                     "step": "loop",
                     "loop": retry_loop,
@@ -125,7 +138,8 @@ class StubPredictor:
                 "comparison": {
                     "confidence_delta": advanced["confidence"] - standard["confidence"],
                     "latency_delta_ms": advanced["latency_ms"] - standard["latency_ms"],
-                    "citation_delta": len(advanced["citations"]) - len(standard["citations"]),
+                    "citation_delta": len(advanced["citations"])
+                    - len(standard["citations"]),
                     "note": "stub compare",
                 },
             }
@@ -201,7 +215,9 @@ def _collect_mode_eval_output(
     )
 
 
-def _error_mode_output(example: EvalExample, mode: Mode, error: str, run_source: str = "direct") -> ModeEvalOutput:
+def _error_mode_output(
+    example: EvalExample, mode: Mode, error: str, run_source: str = "direct"
+) -> ModeEvalOutput:
     trace_fields = extract_trace_fields([])
     metrics = compute_metrics(
         expected_behavior=example.expected_behavior,
@@ -296,7 +312,9 @@ class EvaluationRunner:
                             )
                         )
                     elif mode in {Mode.STANDARD, Mode.ADVANCED}:
-                        mode_outputs.append(_error_mode_output(example, mode, error=str(exc)))
+                        mode_outputs.append(
+                            _error_mode_output(example, mode, error=str(exc))
+                        )
                     continue
 
                 if mode in {Mode.STANDARD, Mode.ADVANCED}:
@@ -356,7 +374,9 @@ def _parse_modes(raw_modes: list[str]) -> list[Mode]:
 
 def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     """Parse CLI options for evaluation runs."""
-    parser = argparse.ArgumentParser(description="Run practical evaluation for Self-RAG modes.")
+    parser = argparse.ArgumentParser(
+        description="Run practical evaluation for Self-RAG modes."
+    )
     parser.add_argument(
         "--dataset",
         type=Path,

@@ -41,8 +41,12 @@ class WorkflowRunner:
             standard_workflow=self._standard,
             advanced_workflow=self._advanced,
         )
-        configured_mode = str(getattr(settings, "retrieval_mode", "preset")).strip().lower()
-        configured_top_k = int(getattr(settings, "retrieval_top_k", self._standard.get_retrieval_top_k()))
+        configured_mode = (
+            str(getattr(settings, "retrieval_mode", "preset")).strip().lower()
+        )
+        configured_top_k = int(
+            getattr(settings, "retrieval_top_k", self._standard.get_retrieval_top_k())
+        )
         if configured_mode == "custom":
             self.selected_retrieval_mode: RetrievalMode = "custom"
             self.retrieval_mode: RetrievalConfigMode = "custom"
@@ -188,7 +192,9 @@ class WorkflowRunner:
             )
         )
 
-    def update_retrieval_settings(self, payload: RetrievalSettingsRequest) -> RetrievalSettingsResponse:
+    def update_retrieval_settings(
+        self, payload: RetrievalSettingsRequest
+    ) -> RetrievalSettingsResponse:
         """Apply retrieval mode/top_k to active workflows without rebuilding indexes."""
         if payload.mode == "custom":
             if payload.top_k is None:

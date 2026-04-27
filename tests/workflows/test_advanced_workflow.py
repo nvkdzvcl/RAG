@@ -78,7 +78,9 @@ def test_abstain_behavior() -> None:
 def test_advanced_mode_run_path() -> None:
     runner = WorkflowRunner()
 
-    response = runner.run(query="How does advanced mode improve reliability?", mode=Mode.ADVANCED)
+    response = runner.run(
+        query="How does advanced mode improve reliability?", mode=Mode.ADVANCED
+    )
     parsed = validate_query_response(response.model_dump())
 
     assert isinstance(parsed, AdvancedQueryResponse)
@@ -254,10 +256,16 @@ def test_advanced_marks_hallucination_when_answer_outside_context() -> None:
     assert response.citations
     assert response.hallucination_detected is False
     assert response.grounded_score > 0.0
-    assert response.stop_reason in {"weak_evidence_cautious", "refined_with_context", "hallucination_refined"}
+    assert response.stop_reason in {
+        "weak_evidence_cautious",
+        "refined_with_context",
+        "hallucination_refined",
+    }
 
 
-def test_advanced_hallucination_guard_refines_once_when_grounded_answer_available() -> None:
+def test_advanced_hallucination_guard_refines_once_when_grounded_answer_available() -> (
+    None
+):
     class _FakeRetriever:
         def retrieve(self, query: str, top_k: int = 5) -> list[RetrievalResult]:
             _ = query
@@ -317,7 +325,9 @@ def test_advanced_hallucination_guard_refines_once_when_grounded_answer_availabl
     assert response.grounded_score > 0
 
 
-def test_advanced_recovers_from_model_insufficient_when_relevant_context_exists() -> None:
+def test_advanced_recovers_from_model_insufficient_when_relevant_context_exists() -> (
+    None
+):
     class _FakeRetriever:
         def retrieve(self, query: str, top_k: int = 5) -> list[RetrievalResult]:
             _ = query
@@ -373,7 +383,9 @@ def test_advanced_recovers_from_model_insufficient_when_relevant_context_exists(
 
     assert response.status != "insufficient_evidence"
     assert response.citations
-    assert any(citation.doc_id == "adv_doc_recover_001" for citation in response.citations)
+    assert any(
+        citation.doc_id == "adv_doc_recover_001" for citation in response.citations
+    )
 
 
 def test_advanced_returns_insufficient_when_no_relevant_context_exists() -> None:
@@ -462,7 +474,12 @@ def test_advanced_weak_evidence_returns_cautious_answer_not_empty() -> None:
     assert response.status != "insufficient_evidence"
     assert response.answer.strip()
     assert response.citations
-    assert response.stop_reason in {"weak_evidence_cautious", "hallucination_refined", "refined_with_context", "critique_pass"}
+    assert response.stop_reason in {
+        "weak_evidence_cautious",
+        "hallucination_refined",
+        "refined_with_context",
+        "critique_pass",
+    }
 
 
 def test_advanced_preserves_citations_after_refine() -> None:
@@ -502,8 +519,7 @@ def test_advanced_preserves_citations_after_refine() -> None:
 
     llm = StubLLMClient(
         responder=lambda prompt, system, model=None: (
-            '{"answer":"tokenrefineabc.",'
-            '"confidence":0.7,"status":"answered"}'
+            '{"answer":"tokenrefineabc.","confidence":0.7,"status":"answered"}'
         )
     )
     standard = StandardWorkflow(
@@ -521,4 +537,6 @@ def test_advanced_preserves_citations_after_refine() -> None:
 
     assert response.status in {"answered", "partial"}
     assert response.citations
-    assert any(citation.doc_id == "adv_doc_refine_001" for citation in response.citations)
+    assert any(
+        citation.doc_id == "adv_doc_refine_001" for citation in response.citations
+    )

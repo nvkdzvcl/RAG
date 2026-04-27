@@ -22,7 +22,9 @@ def load_eval_dataset(path: Path) -> list[EvalExample]:
             payload = json.loads(line)
             try:
                 examples.append(EvalExample.model_validate(payload))
-            except Exception as exc:  # pragma: no cover - exercised via tests for invalid paths
+            except (
+                Exception
+            ) as exc:  # pragma: no cover - exercised via tests for invalid paths
                 raise ValueError(f"Invalid dataset row {line_no}: {exc}") from exc
 
     if not examples:

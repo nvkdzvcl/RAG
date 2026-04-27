@@ -5,12 +5,23 @@ from pathlib import Path
 
 import pytest
 
-from app.evaluation.reporting import build_comparative_summary, report_to_markdown, write_report_artifacts
-from app.evaluation.schemas import ComparativeSummary, EvalMetrics, EvalReport, ModeEvalOutput
+from app.evaluation.reporting import (
+    build_comparative_summary,
+    report_to_markdown,
+    write_report_artifacts,
+)
+from app.evaluation.schemas import (
+    ComparativeSummary,
+    EvalMetrics,
+    EvalReport,
+    ModeEvalOutput,
+)
 from app.schemas.common import Mode
 
 
-def _build_mode_output(example_id: str, mode: Mode, latency_ms: int, confidence: float, retry: bool) -> ModeEvalOutput:
+def _build_mode_output(
+    example_id: str, mode: Mode, latency_ms: int, confidence: float, retry: bool
+) -> ModeEvalOutput:
     return ModeEvalOutput(
         example_id=example_id,
         mode=mode,
@@ -50,8 +61,12 @@ def _build_mode_output(example_id: str, mode: Mode, latency_ms: int, confidence:
 
 def test_build_comparative_summary_and_markdown() -> None:
     mode_outputs = [
-        _build_mode_output("e1", Mode.STANDARD, latency_ms=100, confidence=0.5, retry=False),
-        _build_mode_output("e1", Mode.ADVANCED, latency_ms=180, confidence=0.7, retry=True),
+        _build_mode_output(
+            "e1", Mode.STANDARD, latency_ms=100, confidence=0.5, retry=False
+        ),
+        _build_mode_output(
+            "e1", Mode.ADVANCED, latency_ms=180, confidence=0.7, retry=True
+        ),
     ]
     summary = build_comparative_summary(mode_outputs, compare_outputs=[])
 

@@ -36,7 +36,7 @@ _STRICT_GROUNDED_REWRITE_PROMPT_FALLBACK = (
     "ONLY use facts present in selected_context.\\n"
     "Do NOT use external knowledge.\\n"
     "If the context does not support the answer, return exactly: "
-    "\"Không đủ thông tin từ tài liệu để trả lời\"\\n"
+    '"Không đủ thông tin từ tài liệu để trả lời"\\n'
     "Return in $response_language_name only.\\n"
     "Return strict JSON only with key: refined_answer.\\n"
     "question: $question\\n"
@@ -63,7 +63,9 @@ class AnswerRefiner:
         self.memory_window = max(0, int(getattr(settings, "memory_window", 3)))
         self.max_tokens = max(1, int(getattr(settings, "llm_max_tokens", 2048)))
         resolved_prompt_dir = prompt_dir or settings.prompt_dir
-        self.prompt_repository = prompt_repository or PromptRepository(resolved_prompt_dir)
+        self.prompt_repository = prompt_repository or PromptRepository(
+            resolved_prompt_dir
+        )
 
     def _heuristic_refine(
         self,
@@ -77,7 +79,11 @@ class AnswerRefiner:
         refined = draft_answer.strip()
 
         if critique.missing_aspects:
-            refined += "\\n\\nAdditional coverage: " + ", ".join(critique.missing_aspects[:3]) + "."
+            refined += (
+                "\\n\\nAdditional coverage: "
+                + ", ".join(critique.missing_aspects[:3])
+                + "."
+            )
 
         if context:
             lead_source = context[0]
@@ -88,7 +94,9 @@ class AnswerRefiner:
 
         if response_language == "vi":
             refined = refined.replace("Additional coverage:", "Bổ sung nội dung:")
-            refined = refined.replace("Evidence note: supported by", "Ghi chú bằng chứng: được hỗ trợ bởi")
+            refined = refined.replace(
+                "Evidence note: supported by", "Ghi chú bằng chứng: được hỗ trợ bởi"
+            )
 
         return refined
 

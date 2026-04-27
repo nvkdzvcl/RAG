@@ -134,7 +134,9 @@ class BM25Index:
                 document_frequency[term] += 1
 
         total_length = sum(self._doc_lengths)
-        self._avg_doc_len = total_length / len(self._doc_lengths) if self._doc_lengths else 0.0
+        self._avg_doc_len = (
+            total_length / len(self._doc_lengths) if self._doc_lengths else 0.0
+        )
 
         doc_count = len(self._chunks)
         self._idf = {}
@@ -156,9 +158,13 @@ class BM25Index:
     @classmethod
     def from_dict(cls, payload: dict[str, Any]) -> "BM25Index":
         index = cls(k1=float(payload.get("k1", 1.5)), b=float(payload.get("b", 0.75)))
-        index._chunks = [DocumentChunk.model_validate(item) for item in payload.get("chunks", [])]
+        index._chunks = [
+            DocumentChunk.model_validate(item) for item in payload.get("chunks", [])
+        ]
         index._term_freqs = [dict(freq) for freq in payload.get("term_freqs", [])]
         index._doc_lengths = [int(length) for length in payload.get("doc_lengths", [])]
-        index._idf = {str(key): float(value) for key, value in payload.get("idf", {}).items()}
+        index._idf = {
+            str(key): float(value) for key, value in payload.get("idf", {}).items()
+        }
         index._avg_doc_len = float(payload.get("avg_doc_len", 0.0))
         return index

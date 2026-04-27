@@ -13,7 +13,11 @@ from app.core.prompting import PromptRepository
 from app.generation.llm_client import LLMClient, complete_with_model
 from app.schemas.retrieval import RetrievalResult
 from app.schemas.workflow import CritiqueResult
-from app.workflows.shared import build_chat_history_context, build_language_system_prompt, response_language_name
+from app.workflows.shared import (
+    build_chat_history_context,
+    build_language_system_prompt,
+    response_language_name,
+)
 
 _CRITIQUE_PROMPT_FALLBACK = (
     "Critique the draft answer against selected context.\\n"
@@ -59,10 +63,16 @@ class HeuristicCritic:
         self.memory_window = max(0, int(getattr(settings, "memory_window", 3)))
         self.max_tokens = max(1, int(getattr(settings, "llm_critique_max_tokens", 384)))
         resolved_prompt_dir = prompt_dir or settings.prompt_dir
-        self.prompt_repository = prompt_repository or PromptRepository(resolved_prompt_dir)
+        self.prompt_repository = prompt_repository or PromptRepository(
+            resolved_prompt_dir
+        )
 
     def _terms(self, text: str) -> set[str]:
-        return {token for token in self.token_pattern.findall(text.lower()) if len(token) > 2}
+        return {
+            token
+            for token in self.token_pattern.findall(text.lower())
+            if len(token) > 2
+        }
 
     @staticmethod
     def _overlap_ratio(base_terms: set[str], support_terms: set[str]) -> float:
@@ -147,9 +157,9 @@ class HeuristicCritic:
         has_conflict = False
         if len({item.doc_id for item in context}) > 1:
             context_lower = context_text.lower()
-            has_conflict = ("however" in context_lower and "therefore" in context_lower) or (
-                "conflict" in context_lower
-            )
+            has_conflict = (
+                "however" in context_lower and "therefore" in context_lower
+            ) or ("conflict" in context_lower)
 
         should_retry_retrieval = (
             force_retry
@@ -185,7 +195,9 @@ class HeuristicCritic:
             note = "hallucination: Draft contains claims not well supported by selected context."
         elif should_retry_retrieval:
             confidence = 0.35
-            note = "no_evidence: Relevant support not found; retry retrieval recommended."
+            note = (
+                "no_evidence: Relevant support not found; retry retrieval recommended."
+            )
         else:
             confidence = 0.2
             note = "no_evidence: Evidence insufficient and no additional retries available."
@@ -260,9 +272,14 @@ class HeuristicCritic:
 
         result_payload = {
             "grounded": self._to_bool(payload.get("grounded"), fallback.grounded),
-            "enough_evidence": self._to_bool(payload.get("enough_evidence"), fallback.enough_evidence),
-            "has_conflict": self._to_bool(payload.get("has_conflict"), fallback.has_conflict),
-            "missing_aspects": self._to_list_of_strings(payload.get("missing_aspects")) or fallback.missing_aspects,
+            "enough_evidence": self._to_bool(
+                payload.get("enough_evidence"), fallback.enough_evidence
+            ),
+            "has_conflict": self._to_bool(
+                payload.get("has_conflict"), fallback.has_conflict
+            ),
+            "missing_aspects": self._to_list_of_strings(payload.get("missing_aspects"))
+            or fallback.missing_aspects,
             "should_retry_retrieval": self._to_bool(
                 payload.get("should_retry_retrieval"),
                 fallback.should_retry_retrieval,
@@ -271,8 +288,11 @@ class HeuristicCritic:
                 payload.get("should_refine_answer"),
                 fallback.should_refine_answer,
             ),
-            "better_queries": self._to_list_of_strings(payload.get("better_queries")) or fallback.better_queries,
-            "confidence": self._to_float(payload.get("confidence"), fallback.confidence),
+            "better_queries": self._to_list_of_strings(payload.get("better_queries"))
+            or fallback.better_queries,
+            "confidence": self._to_float(
+                payload.get("confidence"), fallback.confidence
+            ),
             "note": str(payload.get("note") or fallback.note),
         }
 

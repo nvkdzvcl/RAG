@@ -44,7 +44,9 @@ class Generator(Protocol):
 class Critic(Protocol):
     """Critic contract."""
 
-    async def critique_async(self, query: str, draft_answer: str, context: list[dict]) -> dict: ...
+    async def critique_async(
+        self, query: str, draft_answer: str, context: list[dict]
+    ) -> dict: ...
 
     def critique(self, query: str, draft_answer: str, context: list[dict]) -> dict: ...
 

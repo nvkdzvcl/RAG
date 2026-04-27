@@ -15,7 +15,9 @@ try:
     from docx.oxml.table import CT_Tbl
     from docx.table import Table
     from docx.text.paragraph import Paragraph
-except ModuleNotFoundError:  # pragma: no cover - dependency validation tested elsewhere.
+except (
+    ModuleNotFoundError
+):  # pragma: no cover - dependency validation tested elsewhere.
     Document = None  # type: ignore[assignment]
     DocxDocument = object  # type: ignore[assignment,misc]
     CT_P = object  # type: ignore[assignment,misc]

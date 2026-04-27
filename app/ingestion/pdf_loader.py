@@ -5,13 +5,19 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any
 
-from app.ingestion.base_loader import BaseLoader, blocks_to_loaded_documents, build_doc_id
+from app.ingestion.base_loader import (
+    BaseLoader,
+    blocks_to_loaded_documents,
+    build_doc_id,
+)
 from app.ingestion.parsers import PDFParser
 from app.schemas.ingestion import DocumentBlock, LoadedDocument
 
 try:
     from pypdf import PdfReader
-except ModuleNotFoundError:  # pragma: no cover - exercised only when dependency is missing.
+except (
+    ModuleNotFoundError
+):  # pragma: no cover - exercised only when dependency is missing.
     PdfReader = None  # type: ignore[assignment]
 
 

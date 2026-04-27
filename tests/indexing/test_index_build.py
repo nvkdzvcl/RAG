@@ -4,7 +4,12 @@ from pathlib import Path
 
 import pytest
 
-from app.indexing import HashEmbeddingProvider, InMemoryVectorIndex, IndexBuilder, LocalIndexStore
+from app.indexing import (
+    HashEmbeddingProvider,
+    InMemoryVectorIndex,
+    IndexBuilder,
+    LocalIndexStore,
+)
 from app.ingestion.chunker import Chunker
 from app.ingestion.cleaner import TextCleaner
 from app.schemas.ingestion import DocumentChunk, LoadedDocument

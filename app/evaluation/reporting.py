@@ -26,7 +26,11 @@ def _flatten_outputs_for_mode_summary(
 ) -> list[ModeEvalOutput]:
     flattened: list[ModeEvalOutput] = list(mode_outputs)
 
-    mode_ids = {(item.example_id, item.mode.value) for item in flattened if item.run_source == "direct"}
+    mode_ids = {
+        (item.example_id, item.mode.value)
+        for item in flattened
+        if item.run_source == "direct"
+    }
     for compare in compare_outputs:
         std_id = (compare.standard.example_id, compare.standard.mode.value)
         adv_id = (compare.advanced.example_id, compare.advanced.mode.value)
@@ -67,8 +71,14 @@ def build_comparative_summary(
         return sum(1 for row in rows if predicate(row)) / len(rows)
 
     abstain_rate_by_mode = {
-        "standard": _rate(standard_rows, lambda row: row.status in {"insufficient_evidence", "abstained"}),
-        "advanced": _rate(advanced_rows, lambda row: row.status in {"insufficient_evidence", "abstained"}),
+        "standard": _rate(
+            standard_rows,
+            lambda row: row.status in {"insufficient_evidence", "abstained"},
+        ),
+        "advanced": _rate(
+            advanced_rows,
+            lambda row: row.status in {"insufficient_evidence", "abstained"},
+        ),
     }
     citation_rate_by_mode = {
         "standard": _rate(standard_rows, lambda row: row.metrics.has_citations),
@@ -85,8 +95,12 @@ def build_comparative_summary(
         categories = sorted({item.category for item in rows})
         for category in categories:
             subset = [item for item in rows if item.category == category]
-            latencies = [float(item.latency_ms) for item in subset if item.latency_ms is not None]
-            confidences = [float(item.confidence) for item in subset if item.confidence is not None]
+            latencies = [
+                float(item.latency_ms) for item in subset if item.latency_ms is not None
+            ]
+            confidences = [
+                float(item.confidence) for item in subset if item.confidence is not None
+            ]
             category_rows.append(
                 CategorySummary(
                     mode=mode,
@@ -95,7 +109,12 @@ def build_comparative_summary(
                     avg_latency_ms=_avg(latencies),
                     avg_confidence=_avg(confidences),
                     citation_rate=_rate(subset, lambda row: row.metrics.has_citations),
-                    abstain_rate=_rate(subset, lambda row: row.status in {"insufficient_evidence", "abstained"}),
+                    abstain_rate=_rate(
+                        subset,
+                        lambda row: (
+                            row.status in {"insufficient_evidence", "abstained"}
+                        ),
+                    ),
                     retry_rate=_rate(subset, lambda row: row.metrics.retry_used),
                 )
             )
@@ -238,5 +257,7 @@ def write_report_artifacts(report: EvalReport, output_dir: Path) -> EvalReport:
             }
         }
     )
-    results_json.write_text(json.dumps(updated.model_dump(mode="json"), indent=2), encoding="utf-8")
+    results_json.write_text(
+        json.dumps(updated.model_dump(mode="json"), indent=2), encoding="utf-8"
+    )
     return updated

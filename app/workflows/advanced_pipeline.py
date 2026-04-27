@@ -9,7 +9,11 @@ from typing import Any, Protocol, TYPE_CHECKING
 from app.schemas.api import AdvancedQueryResponse
 from app.schemas.common import Citation
 from app.schemas.workflow import CritiqueResult, WorkflowState
-from app.workflows.shared import assess_grounding, is_language_mismatch, localized_insufficient_evidence
+from app.workflows.shared import (
+    assess_grounding,
+    is_language_mismatch,
+    localized_insufficient_evidence,
+)
 from app.workflows.streaming import StreamEventHandler
 from app.workflows.standard import StandardPipelineResult
 
@@ -110,10 +114,12 @@ class RetrievalGateStage(BasePipelineStage):
         )
 
         if not need_retrieval:
-            answer, confidence, status, stop_reason = workflow._direct_answer_without_retrieval(
-                state.normalized_query,
-                model=context.model,
-                response_language=context.resolved_language,
+            answer, confidence, status, stop_reason = (
+                workflow._direct_answer_without_retrieval(
+                    state.normalized_query,
+                    model=context.model,
+                    response_language=context.resolved_language,
+                )
             )
             context.terminal_response = workflow._build_response(
                 answer=answer,
@@ -187,7 +193,9 @@ class CritiqueLoopStage(BasePipelineStage):
 
             state.retrieved_docs = [item.model_dump() for item in pipeline.retrieved]
             state.reranked_docs = [item.model_dump() for item in pipeline.reranked]
-            state.selected_context = [item.model_dump() for item in pipeline.selected_context]
+            state.selected_context = [
+                item.model_dump() for item in pipeline.selected_context
+            ]
             state.draft_answer = pipeline.generated.answer
 
             critique_result = await workflow.critic.critique_async(
@@ -211,7 +219,9 @@ class CritiqueLoopStage(BasePipelineStage):
                     "chunk_size": workflow.standard_workflow.chunk_size,
                     "chunk_overlap": workflow.standard_workflow.chunk_overlap,
                     "retrieved_count": len(pipeline.retrieved),
-                    "applied_filters": pipeline.retrieval_debug.get("applied_filters", {}),
+                    "applied_filters": pipeline.retrieval_debug.get(
+                        "applied_filters", {}
+                    ),
                     "candidate_count_before_filter": pipeline.retrieval_debug.get(
                         "candidate_count_before_filter",
                         len(pipeline.retrieved),
@@ -225,7 +235,8 @@ class CritiqueLoopStage(BasePipelineStage):
                         {
                             "chunk_id": item.chunk_id,
                             "doc_id": item.doc_id,
-                            "file_name": item.metadata.get("file_name") or item.metadata.get("filename"),
+                            "file_name": item.metadata.get("file_name")
+                            or item.metadata.get("filename"),
                             "file_type": item.metadata.get("file_type"),
                             "uploaded_at": item.metadata.get("uploaded_at"),
                             "created_at": item.metadata.get("created_at"),
@@ -245,7 +256,8 @@ class CritiqueLoopStage(BasePipelineStage):
                         {
                             "chunk_id": item.chunk_id,
                             "doc_id": item.doc_id,
-                            "file_name": item.metadata.get("file_name") or item.metadata.get("filename"),
+                            "file_name": item.metadata.get("file_name")
+                            or item.metadata.get("filename"),
                             "file_type": item.metadata.get("file_type"),
                             "uploaded_at": item.metadata.get("uploaded_at"),
                             "created_at": item.metadata.get("created_at"),
@@ -340,7 +352,9 @@ class RefineStage(BasePipelineStage):
         model: str | None,
         response_language: str,
     ) -> str:
-        async_refine_strict = getattr(workflow.refiner, "refine_strict_grounded_async", None)
+        async_refine_strict = getattr(
+            workflow.refiner, "refine_strict_grounded_async", None
+        )
         if callable(async_refine_strict):
             return await async_refine_strict(
                 query=query,
@@ -376,7 +390,9 @@ class RefineStage(BasePipelineStage):
         final_status = pipeline.generated.status
         stop_reason = "critique_pass"
 
-        context_texts = [item.content for item in pipeline.selected_context if item.content.strip()]
+        context_texts = [
+            item.content for item in pipeline.selected_context if item.content.strip()
+        ]
         has_context = bool(context_texts)
         critique_category = workflow._critique_category(critique_result.note)
         has_relevant_context = has_context and critique_category != "no_evidence"
@@ -396,15 +412,23 @@ class RefineStage(BasePipelineStage):
             final_citations = []
             final_status = "insufficient_evidence"
             stop_reason = "no_relevant_context"
-        elif critique_result.should_retry_retrieval and state.loop_count >= workflow.max_loops:
+        elif (
+            critique_result.should_retry_retrieval
+            and state.loop_count >= workflow.max_loops
+        ):
             stop_reason = "max_loop_reached"
 
         needs_refine_with_context = (
             critique_result.should_refine_answer
             or final_status == "insufficient_evidence"
-            or critique_category in {"weak_evidence", "incomplete_answer", "hallucination"}
+            or critique_category
+            in {"weak_evidence", "incomplete_answer", "hallucination"}
         )
-        if needs_refine_with_context and has_relevant_context and final_status != "insufficient_evidence":
+        if (
+            needs_refine_with_context
+            and has_relevant_context
+            and final_status != "insufficient_evidence"
+        ):
             final_answer = await self._refine_with_compat(
                 workflow,
                 query=state.normalized_query,
@@ -451,9 +475,13 @@ class RefineStage(BasePipelineStage):
 
         if critique_result.has_conflict and final_status != "insufficient_evidence":
             if context.resolved_language == "vi":
-                final_answer = final_answer + "\n\nPhát hiện khả năng xung đột giữa các nguồn."
+                final_answer = (
+                    final_answer + "\n\nPhát hiện khả năng xung đột giữa các nguồn."
+                )
             else:
-                final_answer = final_answer + "\n\nPotential conflict detected in sources."
+                final_answer = (
+                    final_answer + "\n\nPotential conflict detected in sources."
+                )
             stop_reason = "conflict_detected"
 
         context.final_answer = final_answer
@@ -487,17 +515,23 @@ class LanguageGuardStage(BasePipelineStage):
         final_status = context.final_status
         stop_reason = context.stop_reason
 
-        language_mismatch = is_language_mismatch(final_answer, context.resolved_language)
+        language_mismatch = is_language_mismatch(
+            final_answer, context.resolved_language
+        )
         if language_mismatch and final_status != "insufficient_evidence":
-            rewritten = await context.workflow.standard_workflow._rewrite_answer_language(
-                query=state.normalized_query,
-                answer=final_answer,
-                response_language=context.resolved_language,
-                model=context.model,
+            rewritten = (
+                await context.workflow.standard_workflow._rewrite_answer_language(
+                    query=state.normalized_query,
+                    answer=final_answer,
+                    response_language=context.resolved_language,
+                    model=context.model,
+                )
             )
             if rewritten:
                 final_answer = rewritten
-                language_mismatch = is_language_mismatch(final_answer, context.resolved_language)
+                language_mismatch = is_language_mismatch(
+                    final_answer, context.resolved_language
+                )
                 if not language_mismatch and stop_reason == "critique_pass":
                     stop_reason = "language_refined"
 
@@ -534,12 +568,16 @@ class HallucinationGuardStage(BasePipelineStage):
         grounding_reason = grounding.grounding_reason
         hallucination_detected = grounding.hallucination_detected
 
-        if context.has_relevant_context and context.final_status != "insufficient_evidence":
+        if (
+            context.has_relevant_context
+            and context.final_status != "insufficient_evidence"
+        ):
             if grounded_score >= workflow.STRONG_GROUNDED_THRESHOLD:
                 context.final_status = "answered"
-            elif (
-                grounded_score >= workflow.VERY_LOW_GROUNDED_THRESHOLD
-                or (citation_count > 0 and context.has_context and not hallucination_detected)
+            elif grounded_score >= workflow.VERY_LOW_GROUNDED_THRESHOLD or (
+                citation_count > 0
+                and context.has_context
+                and not hallucination_detected
             ):
                 context.final_status = "partial"
             else:
@@ -556,14 +594,16 @@ class HallucinationGuardStage(BasePipelineStage):
         prior_stop_reason = context.stop_reason
 
         if hallucination_detected and context.final_status != "insufficient_evidence":
-            refined_grounded_answer = await RefineStage._refine_strict_grounded_with_compat(
-                workflow,
-                query=state.normalized_query,
-                draft_answer=context.final_answer,
-                context_docs=pipeline.selected_context,
-                chat_history=context.normalized_history,
-                model=context.model,
-                response_language=context.resolved_language,
+            refined_grounded_answer = (
+                await RefineStage._refine_strict_grounded_with_compat(
+                    workflow,
+                    query=state.normalized_query,
+                    draft_answer=context.final_answer,
+                    context_docs=pipeline.selected_context,
+                    chat_history=context.normalized_history,
+                    model=context.model,
+                    response_language=context.resolved_language,
+                )
             )
             refined_answer_text = refined_grounded_answer.strip()
             refined_is_insufficient = refined_answer_text == context.insufficient_answer
@@ -572,7 +612,9 @@ class HallucinationGuardStage(BasePipelineStage):
                 context.context_texts,
                 citation_count=citation_count,
                 has_selected_context=bool(pipeline.selected_context),
-                status="insufficient_evidence" if refined_is_insufficient else context.final_status,
+                status="insufficient_evidence"
+                if refined_is_insufficient
+                else context.final_status,
             )
             refined_score = refined_grounding.grounded_score
             refined_reason = refined_grounding.grounding_reason
@@ -588,7 +630,11 @@ class HallucinationGuardStage(BasePipelineStage):
                 }
             )
 
-            if refined_answer_text and not refined_is_insufficient and not refined_hallucination:
+            if (
+                refined_answer_text
+                and not refined_is_insufficient
+                and not refined_hallucination
+            ):
                 context.final_answer = refined_answer_text
                 grounded_score = refined_score
                 grounding_reason = refined_reason
@@ -639,9 +685,15 @@ class HallucinationGuardStage(BasePipelineStage):
                     citation_count = 0
                     if prior_stop_reason != "max_loop_reached":
                         context.stop_reason = "hallucination_fallback_insufficient"
-            context.language_mismatch = is_language_mismatch(context.final_answer, context.resolved_language)
+            context.language_mismatch = is_language_mismatch(
+                context.final_answer, context.resolved_language
+            )
 
-        if context.has_relevant_context and context.final_status != "insufficient_evidence" and not context.final_citations:
+        if (
+            context.has_relevant_context
+            and context.final_status != "insufficient_evidence"
+            and not context.final_citations
+        ):
             context.final_citations = context.context_citations
         citation_count = len(context.final_citations)
 

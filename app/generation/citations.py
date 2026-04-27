@@ -16,7 +16,9 @@ class CitationBuilder:
             return normalized
         return normalized[: max_chars - 3].rstrip() + "..."
 
-    def build(self, docs: list[RetrievalResult], max_citations: int = 5) -> list[Citation]:
+    def build(
+        self, docs: list[RetrievalResult], max_citations: int = 5
+    ) -> list[Citation]:
         if max_citations <= 0:
             return []
 
@@ -42,11 +44,21 @@ class CitationBuilder:
                     page=doc.page,
                     filename=filename,
                     file_name=filename,
-                    file_type=str(doc.metadata.get("file_type")) if doc.metadata.get("file_type") else None,
-                    uploaded_at=str(doc.metadata.get("uploaded_at")) if doc.metadata.get("uploaded_at") else None,
-                    created_at=str(doc.metadata.get("created_at")) if doc.metadata.get("created_at") else None,
-                    block_type=str(doc.metadata.get("block_type")) if doc.metadata.get("block_type") else None,
-                    ocr=bool(doc.metadata.get("ocr")) if "ocr" in doc.metadata else None,
+                    file_type=str(doc.metadata.get("file_type"))
+                    if doc.metadata.get("file_type")
+                    else None,
+                    uploaded_at=str(doc.metadata.get("uploaded_at"))
+                    if doc.metadata.get("uploaded_at")
+                    else None,
+                    created_at=str(doc.metadata.get("created_at"))
+                    if doc.metadata.get("created_at")
+                    else None,
+                    block_type=str(doc.metadata.get("block_type"))
+                    if doc.metadata.get("block_type")
+                    else None,
+                    ocr=bool(doc.metadata.get("ocr"))
+                    if "ocr" in doc.metadata
+                    else None,
                     text=doc.content,
                     content=doc.content,
                     snippet=self._snippet(doc.content),

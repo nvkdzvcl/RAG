@@ -5,7 +5,11 @@ def test_import_app_modules() -> None:
     from app.main import create_app  # noqa: F401
     from app.api.router import api_router  # noqa: F401
     from app.core.config import get_settings  # noqa: F401
-    from app.generation import BaselineGenerator, CitationBuilder, StructuredOutputParser  # noqa: F401
+    from app.generation import (
+        BaselineGenerator,
+        CitationBuilder,
+        StructuredOutputParser,
+    )  # noqa: F401
     from app.indexing import (  # noqa: F401
         BM25Index,
         BaseEmbeddingProvider,
@@ -22,7 +26,13 @@ def test_import_app_modules() -> None:
         SparseRetriever,
     )
     from app.services import QueryService  # noqa: F401
-    from app.schemas import GeneratedAnswer, LoadedDocument, QueryRequest, RetrievalResult, WorkflowState  # noqa: F401
+    from app.schemas import (
+        GeneratedAnswer,
+        LoadedDocument,
+        QueryRequest,
+        RetrievalResult,
+        WorkflowState,
+    )  # noqa: F401
     from app.workflows.advanced import AdvancedWorkflow  # noqa: F401
     from app.workflows.compare import CompareWorkflow  # noqa: F401
     from app.workflows.critique import HeuristicCritic  # noqa: F401

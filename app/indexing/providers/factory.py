@@ -6,7 +6,9 @@ import logging
 
 from app.indexing.embeddings import BaseEmbeddingProvider
 from app.indexing.providers.hash_embedding import HashEmbeddingProvider
-from app.indexing.providers.sentence_transformer_embedding import SentenceTransformerEmbeddingProvider
+from app.indexing.providers.sentence_transformer_embedding import (
+    SentenceTransformerEmbeddingProvider,
+)
 
 logger = logging.getLogger(__name__)
 

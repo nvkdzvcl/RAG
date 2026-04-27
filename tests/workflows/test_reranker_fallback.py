@@ -65,7 +65,9 @@ def test_standard_workflow_uses_create_reranker_from_settings(monkeypatch) -> No
 
     captured: dict[str, object] = {}
 
-    def _fake_create_reranker(*, provider_name: str, model: str, device: str, batch_size: int):
+    def _fake_create_reranker(
+        *, provider_name: str, model: str, device: str, batch_size: int
+    ):
         captured.update(
             {
                 "provider_name": provider_name,
@@ -97,7 +99,9 @@ def test_advanced_workflow_reuses_standard_workflow_configured_reranker() -> Non
             super().__init__()
             self.called = 0
 
-        def rerank(self, query: str, docs: list[RetrievalResult], top_k: int | None = None) -> list[RetrievalResult]:
+        def rerank(
+            self, query: str, docs: list[RetrievalResult], top_k: int | None = None
+        ) -> list[RetrievalResult]:
             self.called += 1
             return super().rerank(query, docs, top_k=top_k)
 
@@ -125,7 +129,9 @@ def test_advanced_workflow_reuses_standard_workflow_configured_reranker() -> Non
             return "seeded"
 
     spy_reranker = _SpyReranker()
-    standard = StandardWorkflow(index_manager=_FakeIndexManager(), reranker=spy_reranker)
+    standard = StandardWorkflow(
+        index_manager=_FakeIndexManager(), reranker=spy_reranker
+    )
     advanced = AdvancedWorkflow(standard_workflow=standard, max_loops=1)
 
     response = advanced.run("How does advanced mode improve reliability?")

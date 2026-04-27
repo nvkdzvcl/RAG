@@ -42,7 +42,9 @@ def _mock_predictor(query: str, mode: Mode) -> dict[str, Any]:
         return {
             "mode": "standard",
             "answer": f"Standard answer: {query}",
-            "citations": [{"chunk_id": "c1", "doc_id": "d1", "source": "docs/MODES.md"}],
+            "citations": [
+                {"chunk_id": "c1", "doc_id": "d1", "source": "docs/MODES.md"}
+            ],
             "confidence": 0.55,
             "status": "answered",
             "stop_reason": "generated",
@@ -62,8 +64,16 @@ def _mock_predictor(query: str, mode: Mode) -> dict[str, Any]:
                     "count": 2,
                     "chunk_ids": ["c1", "c2"],
                     "docs": [
-                        {"chunk_id": "c1", "doc_id": "d1", "content": "Advanced mode has retry steps."},
-                        {"chunk_id": "c2", "doc_id": "d2", "content": "Standard mode is faster."},
+                        {
+                            "chunk_id": "c1",
+                            "doc_id": "d1",
+                            "content": "Advanced mode has retry steps.",
+                        },
+                        {
+                            "chunk_id": "c2",
+                            "doc_id": "d2",
+                            "content": "Standard mode is faster.",
+                        },
                     ],
                 },
             ],
@@ -72,14 +82,20 @@ def _mock_predictor(query: str, mode: Mode) -> dict[str, Any]:
         return {
             "mode": "advanced",
             "answer": f"Advanced answer: {query}",
-            "citations": [{"chunk_id": "c1", "doc_id": "d1", "source": "docs/MODES.md"}],
+            "citations": [
+                {"chunk_id": "c1", "doc_id": "d1", "source": "docs/MODES.md"}
+            ],
             "confidence": 0.77,
             "status": "answered",
             "stop_reason": "critique_pass",
             "latency_ms": 180,
             "loop_count": 2 if "force retry" in query else 1,
             "trace": [
-                {"step": "retrieval_gate", "need_retrieval": True, "reason": "default_retrieval"},
+                {
+                    "step": "retrieval_gate",
+                    "need_retrieval": True,
+                    "reason": "default_retrieval",
+                },
                 {
                     "step": "loop",
                     "loop": 1,
@@ -92,7 +108,11 @@ def _mock_predictor(query: str, mode: Mode) -> dict[str, Any]:
                     ],
                     "selected_count": 1,
                     "selected_context_docs": [
-                        {"chunk_id": "c1", "doc_id": "d1", "content": "Retry helps reliability."},
+                        {
+                            "chunk_id": "c1",
+                            "doc_id": "d1",
+                            "content": "Retry helps reliability.",
+                        },
                     ],
                 },
             ],
@@ -136,7 +156,9 @@ def test_evaluation_runner_with_mocked_workflows(tmp_path: Path) -> None:
     assert Path(report.artifacts["report_md"]).exists()
     assert Path(report.artifacts["summary_csv"]).exists()
 
-    first_standard = next(item for item in report.mode_outputs if item.mode == Mode.STANDARD)
+    first_standard = next(
+        item for item in report.mode_outputs if item.mode == Mode.STANDARD
+    )
     assert "c1" in first_standard.retrieved_chunk_ids
     assert first_standard.rerank_scores["c1"] == 0.88
 

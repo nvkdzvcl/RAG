@@ -23,7 +23,9 @@ def _format_sse(event: str, payload: dict[str, Any]) -> str:
 
 
 @router.post("", response_model=QueryResponse)
-async def query(payload: QueryRequest, query_service: QueryService = Depends(get_query_service)) -> QueryResponse:
+async def query(
+    payload: QueryRequest, query_service: QueryService = Depends(get_query_service)
+) -> QueryResponse:
     """Execute selected workflow mode for a user query."""
     try:
         return await query_service.run_request_async(payload)

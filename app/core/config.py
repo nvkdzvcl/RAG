@@ -9,7 +9,9 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 class Settings(BaseSettings):
     """Runtime configuration for backend services."""
 
-    model_config = SettingsConfigDict(env_file=".env", env_file_encoding="utf-8", extra="ignore")
+    model_config = SettingsConfigDict(
+        env_file=".env", env_file_encoding="utf-8", extra="ignore"
+    )
 
     app_name: str = "Self-RAG"
     app_version: str = "0.1.0"
@@ -31,14 +33,20 @@ class Settings(BaseSettings):
     chunk_overlap: int = Field(default=100, alias="CHUNK_OVERLAP")
     retrieval_mode: str = Field(default="preset", alias="RETRIEVAL_MODE")
     retrieval_top_k: int = Field(default=8, alias="RETRIEVAL_TOP_K")
-    embedding_provider: str = Field(default="sentence_transformers", alias="EMBEDDING_PROVIDER")
-    embedding_model: str = Field(default="intfloat/multilingual-e5-base", alias="EMBEDDING_MODEL")
+    embedding_provider: str = Field(
+        default="sentence_transformers", alias="EMBEDDING_PROVIDER"
+    )
+    embedding_model: str = Field(
+        default="intfloat/multilingual-e5-base", alias="EMBEDDING_MODEL"
+    )
     embedding_device: str = Field(default="cpu", alias="EMBEDDING_DEVICE")
     embedding_batch_size: int = Field(default=16, alias="EMBEDDING_BATCH_SIZE")
     embedding_normalize: bool = Field(default=True, alias="EMBEDDING_NORMALIZE")
     embedding_hash_dimension: int = Field(default=64, alias="EMBEDDING_HASH_DIMENSION")
     reranker_provider: str = Field(default="cross_encoder", alias="RERANKER_PROVIDER")
-    reranker_model: str = Field(default="BAAI/bge-reranker-v2-m3", alias="RERANKER_MODEL")
+    reranker_model: str = Field(
+        default="BAAI/bge-reranker-v2-m3", alias="RERANKER_MODEL"
+    )
     reranker_device: str = Field(default="cpu", alias="RERANKER_DEVICE")
     reranker_batch_size: int = Field(default=8, alias="RERANKER_BATCH_SIZE")
     reranker_top_n: int = Field(default=6, alias="RERANKER_TOP_N")
@@ -48,7 +56,9 @@ class Settings(BaseSettings):
     ocr_min_text_chars: int = Field(default=100, alias="OCR_MIN_TEXT_CHARS")
     ocr_render_dpi: int = Field(default=216, alias="OCR_RENDER_DPI")
     tesseract_cmd: str = Field(default="", alias="TESSERACT_CMD")
-    ocr_confidence_threshold: float = Field(default=40.0, alias="OCR_CONFIDENCE_THRESHOLD")
+    ocr_confidence_threshold: float = Field(
+        default=40.0, alias="OCR_CONFIDENCE_THRESHOLD"
+    )
 
     llm_provider: str = Field(default="stub", alias="LLM_PROVIDER")
     llm_model: str = Field(default="qwen2.5:3b", alias="LLM_MODEL")
