@@ -1,5 +1,6 @@
 """Retrieval baseline tests."""
 
+import logging
 import threading
 import time
 from typing import Literal
@@ -99,10 +100,11 @@ def _retrieval_result(
     *,
     score: float,
     score_type: Literal["dense", "sparse", "hybrid", "rerank"],
+    doc_id: str | None = None,
 ) -> RetrievalResult:
     return RetrievalResult(
         chunk_id=chunk_id,
-        doc_id=f"doc_{chunk_id}",
+        doc_id=doc_id or f"doc_{chunk_id}",
         source=f"memory://{chunk_id}",
         content=f"content-{chunk_id}",
         score=score,
@@ -194,6 +196,32 @@ def test_reciprocal_rank_fusion_combines_dense_and_sparse_rankings() -> None:
     assert [item.rank for item in fused] == [1, 2, 3, 4]
 
 
+def test_reciprocal_rank_fusion_deduplicates_documents_across_retrievers() -> None:
+    dense = [
+        _retrieval_result("a_chunk_1", score=0.99, score_type="dense", doc_id="doc_a"),
+        _retrieval_result("b_chunk_1", score=0.95, score_type="dense", doc_id="doc_b"),
+        _retrieval_result("a_chunk_2", score=0.90, score_type="dense", doc_id="doc_a"),
+    ]
+    sparse = [
+        _retrieval_result("c_chunk_1", score=8.2, score_type="sparse", doc_id="doc_c"),
+        _retrieval_result("a_chunk_3", score=8.0, score_type="sparse", doc_id="doc_a"),
+        _retrieval_result("b_chunk_2", score=7.8, score_type="sparse", doc_id="doc_b"),
+    ]
+
+    fused = reciprocal_rank_fusion(
+        dense,
+        sparse,
+        top_k=3,
+        config=FusionConfig(rrf_k=0, dense_weight=1.0, sparse_weight=1.0),
+    )
+
+    assert [item.doc_id for item in fused] == ["doc_a", "doc_c", "doc_b"]
+    assert len({item.doc_id for item in fused}) == len(fused)
+    assert fused[0].chunk_id == "a_chunk_1"
+    assert fused[0].dense_score == pytest.approx(0.99)
+    assert fused[0].sparse_score == pytest.approx(8.0)
+
+
 def test_hybrid_retriever_runs_dense_and_sparse_then_returns_top_k_rrf() -> None:
     class _FakeRetriever:
         def __init__(self, results: list[RetrievalResult]) -> None:
@@ -233,6 +261,39 @@ def test_hybrid_retriever_runs_dense_and_sparse_then_returns_top_k_rrf() -> None
     assert results[0].chunk_id == "shared"
     assert {item.chunk_id for item in results}.issubset({"dense_only", "shared", "sparse_only"})
     assert any(item.chunk_id in {"dense_only", "sparse_only"} for item in results[1:])
+
+
+def test_hybrid_retriever_logs_dense_sparse_and_merged_debug_views(caplog: pytest.LogCaptureFixture) -> None:
+    class _FakeRetriever:
+        def __init__(self, results: list[RetrievalResult]) -> None:
+            self._results = list(results)
+
+        def retrieve(self, query: str, top_k: int = 5) -> list[RetrievalResult]:
+            _ = query
+            return list(self._results)[:top_k]
+
+    dense = _FakeRetriever(
+        [
+            _retrieval_result("dense_1", score=0.93, score_type="dense"),
+            _retrieval_result("dense_2", score=0.88, score_type="dense"),
+        ]
+    )
+    sparse = _FakeRetriever(
+        [
+            _retrieval_result("sparse_1", score=7.2, score_type="sparse"),
+            _retrieval_result("sparse_2", score=6.9, score_type="sparse"),
+        ]
+    )
+    hybrid = HybridRetriever(dense, sparse)  # type: ignore[arg-type]
+    caplog.set_level(logging.DEBUG, logger="app.retrieval.hybrid")
+
+    results = hybrid.retrieve("debug query", top_k=2)
+
+    assert len(results) == 2
+    messages = [record.getMessage() for record in caplog.records if record.name == "app.retrieval.hybrid"]
+    assert any("Hybrid dense results" in message for message in messages)
+    assert any("Hybrid bm25 results" in message for message in messages)
+    assert any("Hybrid merged results" in message for message in messages)
 
 
 def test_hybrid_retriever_runs_dense_and_sparse_concurrently() -> None:
