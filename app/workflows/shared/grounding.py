@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import math
 import os
 import re
 import threading
@@ -10,6 +9,7 @@ from dataclasses import dataclass
 from typing import Any, Protocol
 
 from app.core.math_utils import cosine_similarity
+from app.workflows.shared.language import _VI_COMMON_WORDS, _EN_COMMON_WORDS
 
 # ---------------------------------------------------------------------------
 # Internal text-processing patterns (shared with language module via re-import)
@@ -92,12 +92,7 @@ _SEMANTIC_ENCODER_INITIALIZED = False
 _SEMANTIC_ENCODER_LOCK = threading.Lock()
 
 
-# ---------------------------------------------------------------------------
-# Stop-word sets (imported from language for DRY, but kept inline for
-# grounding-specific keyword filtering).
-# ---------------------------------------------------------------------------
 
-from app.workflows.shared.language import _VI_COMMON_WORDS, _EN_COMMON_WORDS  # noqa: E402
 
 
 _GENERIC_PHRASES = (
