@@ -2,23 +2,20 @@
 
 from __future__ import annotations
 
-import re
 from collections import Counter
 
-from app.indexing.bm25_index import BM25Index
+from app.indexing.bm25_index import BM25Index, tokenize_bm25
 from app.schemas.retrieval import RetrievalResult
 
 
 class SparseRetriever:
     """BM25-based sparse retriever."""
 
-    token_pattern = re.compile(r"\w+")
-
     def __init__(self, bm25_index: BM25Index) -> None:
         self.bm25_index = bm25_index
 
     def _tokenize(self, text: str) -> list[str]:
-        return self.token_pattern.findall(text.lower())
+        return tokenize_bm25(text)
 
     def _score_doc(self, query_terms: list[str], doc_idx: int) -> float:
         tf = self.bm25_index.term_freqs[doc_idx]
