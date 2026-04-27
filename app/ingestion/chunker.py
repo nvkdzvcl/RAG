@@ -15,7 +15,12 @@ class Chunker:
 
     _token_pattern = re.compile(r"\S+")
 
-    def __init__(self, chunk_size: int = 320, chunk_overlap: int = 40) -> None:
+    def __init__(
+        self,
+        chunk_size: int = 320,
+        chunk_overlap: int = 40,
+        include_heading_context: bool = True,
+    ) -> None:
         if chunk_size <= 0:
             raise ValueError("chunk_size must be positive")
         if chunk_overlap < 0:
@@ -25,6 +30,7 @@ class Chunker:
 
         self.chunk_size = chunk_size
         self.chunk_overlap = chunk_overlap
+        self.include_heading_context = include_heading_context
 
     @staticmethod
     def generate_chunk_id(doc_id: str, chunk_index: int, content: str) -> str:
@@ -48,6 +54,28 @@ class Chunker:
         end_char = token_spans[end_token - 1][1]
         return text[start_char:end_char].strip()
 
+    def _build_heading_prefix(self, doc: LoadedDocument) -> str:
+        if not self.include_heading_context:
+            return ""
+
+        title = (doc.title or "").strip()
+        section = (doc.section or "").strip()
+
+        if len(title) > 100:
+            title = title[:97] + "..."
+        if len(section) > 100:
+            section = section[:97] + "..."
+
+        parts = []
+        if title:
+            parts.append(f"Title: {title}")
+        if section and section != title:
+            parts.append(f"Section: {section}")
+
+        if parts:
+            return f"[{' | '.join(parts)}]\n"
+        return ""
+
     def _make_chunk(
         self,
         doc: LoadedDocument,
@@ -56,8 +84,15 @@ class Chunker:
         content: str,
         token_start: int | None,
         token_end: int | None,
+        heading_prefix: str = "",
     ) -> DocumentChunk:
-        chunk_id = self.generate_chunk_id(doc.doc_id, chunk_index, content)
+        final_content = content
+        injected = False
+        if heading_prefix and not content.startswith(heading_prefix):
+            final_content = f"{heading_prefix}\n{content}".strip()
+            injected = True
+
+        chunk_id = self.generate_chunk_id(doc.doc_id, chunk_index, final_content)
         metadata = dict(doc.metadata)
         fallback_file_name = Path(doc.source).name
         file_extension = str(
@@ -84,10 +119,10 @@ class Chunker:
                 "file_extension": file_extension,
                 "file_type": file_type,
                 "page": doc.page,
-                # Preserve parser-level block subtype (for example `ocr_text`) when available.
                 "block_type": source_block_type,
                 "ocr": bool(metadata.get("ocr", False)),
                 "language": doc.language,
+                "heading_context_injected": injected,
             }
         )
         return DocumentChunk(
@@ -97,7 +132,7 @@ class Chunker:
             title=doc.title,
             section=doc.section,
             page=doc.page,
-            content=content,
+            content=final_content,
             block_type=doc.block_type,
             language=doc.language,
             metadata=metadata,
@@ -106,23 +141,49 @@ class Chunker:
     def _chunk_text_content(
         self, doc: LoadedDocument, chunk_index_start: int
     ) -> list[DocumentChunk]:
+        heading_prefix = self._build_heading_prefix(doc)
+        prefix_tokens = len(self._token_spans(heading_prefix)) if heading_prefix else 0
+        effective_chunk_size = max(10, self.chunk_size - prefix_tokens)
+
         paragraphs = split_paragraphs(doc.content)
         if not paragraphs:
             paragraphs = [doc.content]
 
+        merged_paragraphs: list[str] = []
+        current_merge: list[str] = []
+        current_tokens = 0
+
+        for p in paragraphs:
+            p_text = p.strip()
+            if not p_text:
+                continue
+
+            spans = self._token_spans(p_text)
+            if not spans:
+                continue
+
+            p_len = len(spans)
+
+            if current_tokens > 0 and current_tokens + p_len > effective_chunk_size:
+                merged_paragraphs.append("\n\n".join(current_merge))
+                current_merge = []
+                current_tokens = 0
+
+            current_merge.append(p_text)
+            current_tokens += p_len
+
+        if current_merge:
+            merged_paragraphs.append("\n\n".join(current_merge))
+
         chunks: list[DocumentChunk] = []
         chunk_index = chunk_index_start
 
-        for paragraph in paragraphs:
-            paragraph_text = paragraph.strip()
-            if not paragraph_text:
-                continue
-
+        for paragraph_text in merged_paragraphs:
             token_spans = self._token_spans(paragraph_text)
             if not token_spans:
                 continue
 
-            if len(token_spans) <= self.chunk_size:
+            if len(token_spans) <= effective_chunk_size:
                 chunks.append(
                     self._make_chunk(
                         doc,
@@ -130,6 +191,7 @@ class Chunker:
                         content=paragraph_text,
                         token_start=0,
                         token_end=len(token_spans),
+                        heading_prefix=heading_prefix,
                     )
                 )
                 chunk_index += 1
@@ -137,7 +199,7 @@ class Chunker:
 
             start_token = 0
             while start_token < len(token_spans):
-                end_token = min(start_token + self.chunk_size, len(token_spans))
+                end_token = min(start_token + effective_chunk_size, len(token_spans))
                 piece = self._slice_by_token_window(
                     paragraph_text,
                     token_spans,
@@ -152,6 +214,7 @@ class Chunker:
                             content=piece,
                             token_start=start_token,
                             token_end=end_token,
+                            heading_prefix=heading_prefix,
                         )
                     )
                     chunk_index += 1
@@ -168,6 +231,7 @@ class Chunker:
             return []
 
         if doc.block_type in {"table", "image"}:
+            heading_prefix = self._build_heading_prefix(doc)
             token_count = len(self._token_spans(content))
             return [
                 self._make_chunk(
@@ -176,13 +240,63 @@ class Chunker:
                     content=content,
                     token_start=0,
                     token_end=token_count if token_count else None,
+                    heading_prefix=heading_prefix,
                 )
             ]
 
         return self._chunk_text_content(doc, 0)
 
-    def chunk_documents(self, docs: list[LoadedDocument]) -> list[DocumentChunk]:
-        chunks: list[DocumentChunk] = []
+    def _group_text_documents(self, docs: list[LoadedDocument]) -> list[LoadedDocument]:
+        if not docs:
+            return []
+
+        grouped: list[LoadedDocument] = []
+        current_group: list[LoadedDocument] = []
+
+        def flush_group():
+            if not current_group:
+                return
+            if len(current_group) == 1:
+                grouped.append(current_group[0])
+            else:
+                base_doc = current_group[0]
+                merged_content = "\n\n".join(
+                    d.content.strip() for d in current_group if d.content.strip()
+                )
+                new_doc = LoadedDocument(
+                    doc_id=base_doc.doc_id,
+                    source=base_doc.source,
+                    title=base_doc.title,
+                    section=base_doc.section,
+                    page=base_doc.page,
+                    content=merged_content,
+                    block_type="text",
+                    language=base_doc.language,
+                    metadata=dict(base_doc.metadata),
+                )
+                grouped.append(new_doc)
+            current_group.clear()
+
         for doc in docs:
+            if doc.block_type != "text":
+                flush_group()
+                grouped.append(doc)
+                continue
+
+            if current_group:
+                prev = current_group[-1]
+                if doc.doc_id != prev.doc_id or doc.section != prev.section:
+                    flush_group()
+
+            current_group.append(doc)
+
+        flush_group()
+        return grouped
+
+    def chunk_documents(self, docs: list[LoadedDocument]) -> list[DocumentChunk]:
+        grouped_docs = self._group_text_documents(docs)
+        chunks: list[DocumentChunk] = []
+        # Maintain a chunk_index across the entire processing output to prevent minor hash collisions if chunking very repetitive text
+        for doc in grouped_docs:
             chunks.extend(self.chunk_document(doc))
         return chunks
