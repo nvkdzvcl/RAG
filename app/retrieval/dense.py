@@ -73,6 +73,7 @@ class DenseRetriever:
         self.embedding_provider = embedding_provider
         self._cached_size = -1
         self._cached_dimension = -1
+        self._cached_revision = -1
         self._vector_matrix = np.empty((0, 0), dtype=np.float64)
         self._vector_norms = np.empty(0, dtype=np.float64)
 
@@ -80,6 +81,7 @@ class DenseRetriever:
         if (
             self._cached_size == self.vector_index.size
             and self._cached_dimension == self.vector_index.dimension
+            and self._cached_revision == self.vector_index.revision
         ):
             return
 
@@ -91,6 +93,7 @@ class DenseRetriever:
         self._vector_norms = np.linalg.norm(vectors, axis=1)
         self._cached_size = self.vector_index.size
         self._cached_dimension = self.vector_index.dimension
+        self._cached_revision = self.vector_index.revision
 
     def retrieve(self, query: str, top_k: int = 5) -> list[RetrievalResult]:
         if top_k <= 0:

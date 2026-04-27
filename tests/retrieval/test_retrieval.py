@@ -221,6 +221,29 @@ def test_dense_retrieval_handles_zero_norm_query_with_stable_order() -> None:
     assert all(item.score == 0.0 for item in results)
 
 
+def test_dense_retrieval_rebuild_same_shape_invalidates_cache() -> None:
+    chunks = _build_synthetic_chunks(2)
+    vector_index = InMemoryVectorIndex()
+    query_provider = _StaticEmbeddingProvider([1.0, 0.0])
+    retriever = DenseRetriever(vector_index, query_provider)
+
+    vectors_a = [
+        [1.0, 0.0],
+        [0.0, 1.0],
+    ]
+    vector_index.build(chunks, vectors_a)
+    first_results = retriever.retrieve("query ignored by static provider", top_k=1)
+    assert first_results[0].chunk_id == "chunk_0"
+
+    vectors_b = [
+        [0.0, 1.0],
+        [1.0, 0.0],
+    ]
+    vector_index.build(chunks, vectors_b)
+    second_results = retriever.retrieve("query ignored by static provider", top_k=1)
+    assert second_results[0].chunk_id == "chunk_1"
+
+
 @pytest.mark.slow
 def test_dense_vectorized_similarity_is_at_least_10x_faster_than_legacy_loop() -> None:
     rng = np.random.default_rng(123)

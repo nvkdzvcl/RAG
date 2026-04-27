@@ -32,6 +32,7 @@ class InMemoryVectorIndex(VectorIndex):
         self._chunks: list[DocumentChunk] = []
         self._vectors: list[list[float]] = []
         self._dimension: int = 0
+        self._revision: int = 0
 
     @property
     def size(self) -> int:
@@ -40,6 +41,10 @@ class InMemoryVectorIndex(VectorIndex):
     @property
     def dimension(self) -> int:
         return self._dimension
+
+    @property
+    def revision(self) -> int:
+        return self._revision
 
     @property
     def chunks(self) -> list[DocumentChunk]:
@@ -65,10 +70,12 @@ class InMemoryVectorIndex(VectorIndex):
         self._chunks = [chunk.model_copy(deep=True) for chunk in chunks]
         self._vectors = [list(vector) for vector in vectors]
         self._dimension = dimension
+        self._revision += 1
 
     def to_dict(self) -> dict[str, Any]:
         return {
             "dimension": self._dimension,
+            "revision": self._revision,
             "entries": [
                 {
                     "chunk": chunk.model_dump(),
@@ -82,6 +89,7 @@ class InMemoryVectorIndex(VectorIndex):
     def from_dict(cls, payload: dict[str, Any]) -> "InMemoryVectorIndex":
         index = cls()
         entries = payload.get("entries", [])
+        persisted_revision = payload.get("revision")
 
         chunks: list[DocumentChunk] = []
         vectors: list[list[float]] = []
@@ -91,4 +99,6 @@ class InMemoryVectorIndex(VectorIndex):
 
         if chunks:
             index.build(chunks, vectors)
+        if isinstance(persisted_revision, int) and persisted_revision >= 0:
+            index._revision = max(index._revision, persisted_revision)
         return index
