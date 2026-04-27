@@ -10,7 +10,7 @@ from pathlib import Path
 from typing import Any
 
 from app.core.async_utils import run_coro_sync
-from app.core.cache import CacheGroup, create_cache_group_from_settings
+from app.core.cache import create_cache_group_from_settings
 from app.core.config import get_settings
 from app.core.json_utils import parse_json_object
 from app.generation import BaselineGenerator, LLMClient, close_llm_client, create_llm_client_from_settings

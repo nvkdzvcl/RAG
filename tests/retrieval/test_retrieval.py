@@ -20,7 +20,8 @@ from app.retrieval import (
     SparseRetriever,
     reciprocal_rank_fusion,
 )
-from app.retrieval.dense import _cosine_similarity, _cosine_similarity_matrix, _rank_top_k_indices
+from app.core.math_utils import cosine_similarity
+from app.retrieval.dense import _cosine_similarity_matrix, _rank_top_k_indices
 from app.schemas.ingestion import DocumentChunk, LoadedDocument
 from app.schemas.retrieval import RetrievalResult
 
@@ -120,7 +121,7 @@ def _legacy_rank(
 ) -> list[tuple[float, int]]:
     scored: list[tuple[float, int]] = []
     for idx, vector in enumerate(vectors):
-        scored.append((_cosine_similarity(query_vector, vector), idx))
+        scored.append((cosine_similarity(query_vector, vector), idx))
     scored.sort(key=lambda item: item[0], reverse=True)
     return scored[:top_k]
 
