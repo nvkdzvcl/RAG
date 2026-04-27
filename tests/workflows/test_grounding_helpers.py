@@ -1,5 +1,6 @@
 """Grounding and hallucination heuristic tests."""
 
+import app.workflows.shared as shared
 from app.workflows.shared import assess_grounding
 
 
@@ -53,3 +54,39 @@ def test_zero_citation_generic_answer_gets_warning() -> None:
 
     assert assessment.hallucination_detected is True
     assert assessment.grounding_reason == "generic_answer_without_citations"
+
+
+def test_paraphrased_answer_gets_semantic_grounding_boost(monkeypatch) -> None:
+    monkeypatch.setattr(shared, "grounded_overlap_score", lambda answer, context_chunks: 0.0)
+    monkeypatch.setattr(shared, "_semantic_context_similarity", lambda answer, context_chunks: 0.86)
+    monkeypatch.setattr(shared, "_GROUNDING_SEMANTIC_WEIGHT", 0.35)
+    monkeypatch.setattr(shared, "_GROUNDING_SEMANTIC_MIN_SIMILARITY", 0.58)
+
+    assessment = assess_grounding(
+        "Nội dung được phê chuẩn bởi cơ quan quản lý cấp bộ.",
+        ["Thông tư này do Bộ trưởng Nguyễn Văn A ký ban hành."],
+        citation_count=0,
+        has_selected_context=True,
+        status="answered",
+    )
+
+    assert assessment.hallucination_detected is False
+    assert assessment.grounded_score >= 0.12
+    assert assessment.grounding_reason == "strong_grounding_no_citations"
+
+
+def test_grounding_falls_back_to_overlap_when_semantic_unavailable(monkeypatch) -> None:
+    monkeypatch.setattr(shared, "grounded_overlap_score", lambda answer, context_chunks: 0.13)
+    monkeypatch.setattr(shared, "_semantic_context_similarity", lambda answer, context_chunks: None)
+
+    assessment = assess_grounding(
+        "Self-RAG keeps answers grounded in retrieved context.",
+        ["Self-RAG uses retrieved evidence and critique to stay grounded."],
+        citation_count=0,
+        has_selected_context=True,
+        status="answered",
+    )
+
+    assert assessment.hallucination_detected is False
+    assert assessment.grounded_score == 0.13
+    assert assessment.grounding_reason == "strong_grounding_no_citations"

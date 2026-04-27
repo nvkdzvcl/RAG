@@ -2,8 +2,12 @@
 
 from __future__ import annotations
 
+import math
+import os
 import re
+import threading
 from dataclasses import dataclass
+from typing import Any, Protocol
 
 ResponseLanguage = str
 
@@ -15,6 +19,70 @@ _CJK_PATTERN = re.compile(r"[\u3400-\u4dbf\u4e00-\u9fff\uf900-\ufaff]")
 _WORD_PATTERN = re.compile(r"[A-Za-zÀ-ỹĐđ0-9']+")
 _WHITESPACE_PATTERN = re.compile(r"\s+")
 _SANITIZE_PATTERN = re.compile(r"[^A-Za-zÀ-ỹĐđ0-9\s']")
+
+
+def _env_bool(name: str, default: bool) -> bool:
+    raw = os.getenv(name)
+    if raw is None:
+        return default
+    return raw.strip().lower() in {"1", "true", "yes", "on"}
+
+
+def _env_int(name: str, default: int, *, minimum: int = 0) -> int:
+    raw = os.getenv(name)
+    if raw is None:
+        return default
+    try:
+        parsed = int(raw)
+    except (TypeError, ValueError):
+        return default
+    return max(minimum, parsed)
+
+
+def _env_float(name: str, default: float) -> float:
+    raw = os.getenv(name)
+    if raw is None:
+        return default
+    try:
+        return float(raw)
+    except (TypeError, ValueError):
+        return default
+
+
+_GROUNDING_SEMANTIC_ENABLED = _env_bool("GROUNDING_SEMANTIC_ENABLED", True)
+_GROUNDING_SEMANTIC_MODEL = (
+    os.getenv("GROUNDING_SEMANTIC_MODEL", "sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2").strip()
+    or "sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2"
+)
+_GROUNDING_SEMANTIC_DEVICE = os.getenv("GROUNDING_SEMANTIC_DEVICE", "cpu").strip() or "cpu"
+_GROUNDING_SEMANTIC_LOCAL_FILES_ONLY = _env_bool("GROUNDING_SEMANTIC_LOCAL_FILES_ONLY", False)
+_GROUNDING_SEMANTIC_MAX_CONTEXT_CHUNKS = _env_int("GROUNDING_SEMANTIC_MAX_CONTEXT_CHUNKS", 6, minimum=1)
+_GROUNDING_SEMANTIC_MIN_SIMILARITY = max(
+    0.0,
+    min(1.0, _env_float("GROUNDING_SEMANTIC_MIN_SIMILARITY", 0.58)),
+)
+_GROUNDING_SEMANTIC_WEIGHT = max(
+    0.0,
+    min(1.0, _env_float("GROUNDING_SEMANTIC_WEIGHT", 0.35)),
+)
+
+
+class _SentenceTransformerLike(Protocol):
+    def encode(
+        self,
+        sentences: list[str],
+        *,
+        batch_size: int,
+        convert_to_numpy: bool,
+        normalize_embeddings: bool,
+        show_progress_bar: bool,
+    ) -> Any:
+        """Encode sentences into vectors."""
+
+
+_SEMANTIC_ENCODER: _SentenceTransformerLike | None = None
+_SEMANTIC_ENCODER_INITIALIZED = False
+_SEMANTIC_ENCODER_LOCK = threading.Lock()
 
 _VI_COMMON_WORDS = {
     "la",
@@ -355,6 +423,109 @@ def _normalized_terms(text: str) -> set[str]:
     return _meaningful_keywords(text)
 
 
+def _load_semantic_encoder() -> _SentenceTransformerLike | None:
+    global _SEMANTIC_ENCODER_INITIALIZED, _SEMANTIC_ENCODER
+    if not _GROUNDING_SEMANTIC_ENABLED:
+        return None
+    if _SEMANTIC_ENCODER_INITIALIZED:
+        return _SEMANTIC_ENCODER
+
+    with _SEMANTIC_ENCODER_LOCK:
+        if _SEMANTIC_ENCODER_INITIALIZED:
+            return _SEMANTIC_ENCODER
+        _SEMANTIC_ENCODER_INITIALIZED = True
+        try:
+            from sentence_transformers import SentenceTransformer
+        except Exception:
+            _SEMANTIC_ENCODER = None
+            return None
+
+        try:
+            _SEMANTIC_ENCODER = SentenceTransformer(
+                _GROUNDING_SEMANTIC_MODEL,
+                device=_GROUNDING_SEMANTIC_DEVICE,
+                local_files_only=_GROUNDING_SEMANTIC_LOCAL_FILES_ONLY,
+            )
+        except TypeError:
+            try:
+                _SEMANTIC_ENCODER = SentenceTransformer(
+                    _GROUNDING_SEMANTIC_MODEL,
+                    device=_GROUNDING_SEMANTIC_DEVICE,
+                )
+            except Exception:
+                _SEMANTIC_ENCODER = None
+        except Exception:
+            _SEMANTIC_ENCODER = None
+        return _SEMANTIC_ENCODER
+
+
+def _normalize_vectors(raw_vectors: Any) -> list[list[float]]:
+    if hasattr(raw_vectors, "tolist"):
+        raw_vectors = raw_vectors.tolist()
+    if not isinstance(raw_vectors, list):
+        raw_vectors = [list(row) for row in raw_vectors]
+
+    if raw_vectors and raw_vectors[0] and isinstance(raw_vectors[0], (float, int)):
+        raw_vectors = [raw_vectors]
+
+    vectors: list[list[float]] = []
+    for row in raw_vectors:
+        if not isinstance(row, list):
+            continue
+        vectors.append([float(value) for value in row])
+    return vectors
+
+
+def _cosine_similarity(vector_a: list[float], vector_b: list[float]) -> float:
+    if not vector_a or not vector_b or len(vector_a) != len(vector_b):
+        return 0.0
+
+    dot = sum(a * b for a, b in zip(vector_a, vector_b))
+    norm_a = math.sqrt(sum(a * a for a in vector_a))
+    norm_b = math.sqrt(sum(b * b for b in vector_b))
+    if norm_a == 0.0 or norm_b == 0.0:
+        return 0.0
+    return dot / (norm_a * norm_b)
+
+
+def _semantic_context_similarity(answer: str, context_chunks: list[str]) -> float | None:
+    if not _GROUNDING_SEMANTIC_ENABLED:
+        return None
+
+    normalized_answer = answer.strip()
+    normalized_contexts = [chunk.strip() for chunk in context_chunks if chunk.strip()]
+    if not normalized_answer or not normalized_contexts:
+        return None
+
+    encoder = _load_semantic_encoder()
+    if encoder is None:
+        return None
+
+    normalized_contexts = normalized_contexts[:_GROUNDING_SEMANTIC_MAX_CONTEXT_CHUNKS]
+    texts = [normalized_answer, *normalized_contexts]
+    try:
+        raw_vectors = encoder.encode(
+            texts,
+            batch_size=min(16, len(texts)),
+            convert_to_numpy=True,
+            normalize_embeddings=True,
+            show_progress_bar=False,
+        )
+    except Exception:
+        return None
+
+    vectors = _normalize_vectors(raw_vectors)
+    if len(vectors) <= 1:
+        return None
+    answer_vector = vectors[0]
+    context_vectors = vectors[1:]
+    if not answer_vector or not context_vectors:
+        return None
+
+    best_similarity = max((_cosine_similarity(answer_vector, vector) for vector in context_vectors), default=0.0)
+    return round(max(0.0, min(1.0, best_similarity)), 4)
+
+
 def grounded_overlap_score(answer: str, context_chunks: list[str]) -> float:
     """Compute a tolerant groundedness score using keyword and char overlap."""
     answer_terms = _normalized_terms(answer)
@@ -373,6 +544,17 @@ def grounded_overlap_score(answer: str, context_chunks: list[str]) -> float:
     return round(max(0.0, min(1.0, blended)), 4)
 
 
+def grounded_score(answer: str, context_chunks: list[str]) -> float:
+    """Compute groundedness score by blending overlap and optional semantic similarity."""
+    overlap_score = grounded_overlap_score(answer, context_chunks)
+    semantic_score = _semantic_context_similarity(answer, context_chunks)
+    if semantic_score is None or semantic_score < _GROUNDING_SEMANTIC_MIN_SIMILARITY:
+        return overlap_score
+
+    blended = ((1.0 - _GROUNDING_SEMANTIC_WEIGHT) * overlap_score) + (_GROUNDING_SEMANTIC_WEIGHT * semantic_score)
+    return round(max(overlap_score, min(1.0, blended)), 4)
+
+
 def assess_grounding(
     answer: str,
     context_chunks: list[str],
@@ -385,7 +567,7 @@ def assess_grounding(
     normalized_status = (status or "").strip().lower()
     has_context = bool(context_chunks) if has_selected_context is None else bool(has_selected_context)
 
-    score = grounded_overlap_score(answer, context_chunks)
+    score = grounded_score(answer, context_chunks)
     if normalized_status == "insufficient_evidence":
         return GroundingAssessment(
             grounded_score=score,

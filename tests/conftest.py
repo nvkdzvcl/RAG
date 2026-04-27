@@ -39,6 +39,7 @@ TEST_ENV_DEFAULTS: dict[str, str] = {
     "TESSERACT_CMD": "",
     "OCR_CONFIDENCE_THRESHOLD": "40",
     "LLM_PROVIDER": "stub",
+    "GROUNDING_SEMANTIC_ENABLED": "false",
 }
 
 

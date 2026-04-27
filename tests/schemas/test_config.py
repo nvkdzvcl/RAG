@@ -52,6 +52,13 @@ def test_settings_defaults(monkeypatch) -> None:
         "LLM_CRITIQUE_MAX_TOKENS",
         "MAX_ADVANCED_LOOPS",
         "MEMORY_WINDOW",
+        "GROUNDING_SEMANTIC_ENABLED",
+        "GROUNDING_SEMANTIC_MODEL",
+        "GROUNDING_SEMANTIC_DEVICE",
+        "GROUNDING_SEMANTIC_LOCAL_FILES_ONLY",
+        "GROUNDING_SEMANTIC_MAX_CONTEXT_CHUNKS",
+        "GROUNDING_SEMANTIC_MIN_SIMILARITY",
+        "GROUNDING_SEMANTIC_WEIGHT",
     ]:
         monkeypatch.delenv(key, raising=False)
 
