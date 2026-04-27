@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import inspect
+import json
 import logging
 from collections.abc import Awaitable, Callable
 from typing import Any, Protocol
@@ -87,6 +88,7 @@ class StubLLMClient:
         max_tokens: int | None = None,
         **kwargs: Any,
     ) -> str:
+        on_delta = kwargs.pop("on_delta", None)
         candidates: dict[str, Any] = {
             "prompt": prompt,
             "system_prompt": system_prompt,
@@ -97,7 +99,10 @@ class StubLLMClient:
         }
         candidates.update(kwargs)
         selected = self._supported_kwargs(self._responder, candidates)
-        return await await_if_needed(self._responder(**selected))
+        output = await await_if_needed(self._responder(**selected))
+        if callable(on_delta) and isinstance(output, str) and output:
+            await await_if_needed(on_delta(output))
+        return output
 
 
 def _normalize_complete_args(
@@ -158,6 +163,7 @@ async def complete_with_model(
     system_prompt: str | None = None,
     model: str | None = None,
     max_tokens: int | None = None,
+    **kwargs: Any,
 ) -> str:
     """Invoke completion while safely supporting optional per-call model override."""
     payload = _normalize_complete_args(
@@ -166,6 +172,8 @@ async def complete_with_model(
         model=model,
         max_tokens=max_tokens,
     )
+    if kwargs:
+        payload.update(kwargs)
     selected = _supported_complete_kwargs(llm_client, payload)
     output = await await_if_needed(llm_client.complete(**selected))
     if not isinstance(output, str):
@@ -246,6 +254,77 @@ class OpenAICompatibleLLMClient:
 
         raise RuntimeError("Invalid response content type from OpenAI-compatible API.")
 
+    @staticmethod
+    def _extract_delta(body: dict[str, Any]) -> str:
+        choices = body.get("choices")
+        if not isinstance(choices, list) or not choices:
+            return ""
+
+        first = choices[0]
+        if not isinstance(first, dict):
+            return ""
+
+        delta = first.get("delta")
+        if not isinstance(delta, dict):
+            return ""
+
+        content = delta.get("content")
+        if isinstance(content, str):
+            return content
+
+        if isinstance(content, list):
+            parts: list[str] = []
+            for item in content:
+                if isinstance(item, dict):
+                    text_part = item.get("text")
+                    if isinstance(text_part, str):
+                        parts.append(text_part)
+            return "".join(parts)
+        return ""
+
+    async def _complete_streaming(
+        self,
+        *,
+        messages: list[dict[str, str]],
+        selected_model: str,
+        max_tokens: int,
+        on_delta: Callable[[str], Awaitable[None] | None],
+    ) -> str:
+        payload: dict[str, object] = {
+            "model": selected_model,
+            "messages": messages,
+            "temperature": self.temperature,
+            "max_tokens": max_tokens,
+            "stream": True,
+        }
+        collected: list[str] = []
+        async with self._client.stream(
+            "POST",
+            "chat/completions",
+            headers=self._build_headers(),
+            json=payload,
+        ) as response:
+            response.raise_for_status()
+            async for line in response.aiter_lines():
+                stripped = line.strip()
+                if not stripped or not stripped.startswith("data:"):
+                    continue
+                data = stripped.removeprefix("data:").strip()
+                if data == "[DONE]":
+                    break
+                try:
+                    body = json.loads(data)
+                except json.JSONDecodeError:
+                    continue
+                if not isinstance(body, dict):
+                    continue
+                delta_text = self._extract_delta(body)
+                if not delta_text:
+                    continue
+                collected.append(delta_text)
+                await await_if_needed(on_delta(delta_text))
+        return "".join(collected)
+
     async def complete(
         self,
         prompt: str,
@@ -254,18 +333,32 @@ class OpenAICompatibleLLMClient:
         max_tokens: int | None = None,
         **kwargs: Any,
     ) -> str:
-        _ = kwargs
+        on_delta = kwargs.pop("on_delta", None)
         messages: list[dict[str, str]] = []
         if system_prompt and system_prompt.strip():
             messages.append({"role": "system", "content": system_prompt.strip()})
         messages.append({"role": "user", "content": prompt})
         selected_model = model.strip() if isinstance(model, str) and model.strip() else self.model
+        resolved_max_tokens = int(max_tokens) if isinstance(max_tokens, int) and max_tokens > 0 else self.max_tokens
+
+        if callable(on_delta):
+            try:
+                streamed = await self._complete_streaming(
+                    messages=messages,
+                    selected_model=selected_model,
+                    max_tokens=resolved_max_tokens,
+                    on_delta=on_delta,
+                )
+                if streamed:
+                    return streamed
+            except Exception:
+                logger.debug("Streaming completion path failed; falling back to non-streaming completion.", exc_info=True)
 
         payload: dict[str, object] = {
             "model": selected_model,
             "messages": messages,
             "temperature": self.temperature,
-            "max_tokens": int(max_tokens) if isinstance(max_tokens, int) and max_tokens > 0 else self.max_tokens,
+            "max_tokens": resolved_max_tokens,
         }
 
         try:
@@ -278,7 +371,10 @@ class OpenAICompatibleLLMClient:
             body = response.json()
             if not isinstance(body, dict):
                 raise RuntimeError("OpenAI-compatible response is not a JSON object.")
-            return self._extract_content(body)
+            content = self._extract_content(body)
+            if callable(on_delta) and content:
+                await await_if_needed(on_delta(content))
+            return content
         except Exception as exc:
             raise RuntimeError("OpenAI-compatible completion request failed.") from exc
 
@@ -304,7 +400,6 @@ class FallbackLLMClient:
         max_tokens: int | None = None,
         **kwargs: Any,
     ) -> str:
-        _ = kwargs
         self.last_call_used_fallback = False
         try:
             return await complete_with_model(
@@ -313,6 +408,7 @@ class FallbackLLMClient:
                 system_prompt=system_prompt,
                 model=model,
                 max_tokens=max_tokens,
+                **kwargs,
             )
         except Exception as exc:
             self.last_call_used_fallback = True
@@ -326,6 +422,7 @@ class FallbackLLMClient:
                 system_prompt=system_prompt,
                 model=model,
                 max_tokens=max_tokens,
+                **kwargs,
             )
 
     async def aclose(self) -> None:

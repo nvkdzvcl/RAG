@@ -27,6 +27,7 @@ from app.workflows.query_rewrite import QueryRewriter
 from app.workflows.refine import AnswerRefiner
 from app.workflows.retrieval_gate import HeuristicRetrievalGate
 from app.workflows.shared import detect_response_language, localized_insufficient_evidence, normalize_query, trim_chat_history
+from app.workflows.streaming import StreamEventHandler
 from app.workflows.standard import StandardWorkflow
 
 
@@ -180,6 +181,8 @@ class AdvancedWorkflow:
         model: str | None = None,
         response_language: str | None = None,
         query_filters: dict[str, Any] | None = None,
+        event_handler: StreamEventHandler | None = None,
+        event_context: dict[str, Any] | None = None,
     ) -> AdvancedQueryResponse:
         start = time.perf_counter()
         normalized_query = normalize_query(query)
@@ -199,6 +202,8 @@ class AdvancedWorkflow:
             query_filters=query_filters,
             normalized_history=normalized_history,
             resolved_language=resolved_language,
+            event_handler=event_handler,
+            event_context=dict(event_context or {}),
         )
         await self._build_pipeline_executor(context).run(state)
         if context.terminal_response is not None:
@@ -230,6 +235,8 @@ class AdvancedWorkflow:
         model: str | None = None,
         response_language: str | None = None,
         query_filters: dict[str, Any] | None = None,
+        event_handler: StreamEventHandler | None = None,
+        event_context: dict[str, Any] | None = None,
     ) -> AdvancedQueryResponse:
         """Sync wrapper for CLI/tests."""
         return run_coro_sync(
@@ -239,6 +246,8 @@ class AdvancedWorkflow:
                 model=model,
                 response_language=response_language,
                 query_filters=query_filters,
+                event_handler=event_handler,
+                event_context=event_context,
             )
         )
 

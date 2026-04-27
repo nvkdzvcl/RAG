@@ -2,8 +2,10 @@
 
 from __future__ import annotations
 
+import asyncio
 from dataclasses import dataclass
 
+from app.core.async_utils import run_coro_sync
 from app.retrieval.dense import DenseRetriever
 from app.retrieval.sparse import SparseRetriever
 from app.schemas.retrieval import RetrievalResult
@@ -76,15 +78,28 @@ class HybridRetriever:
         minimum = max(1, int(self.fusion_config.min_candidates_per_retriever))
         return max(top_k, top_k * multiplier, minimum)
 
-    def retrieve(self, query: str, top_k: int = 5) -> list[RetrievalResult]:
+    async def retrieve_async(self, query: str, top_k: int = 5) -> list[RetrievalResult]:
         if top_k <= 0:
             return []
         candidate_k = self._resolve_candidate_k(top_k)
-        dense = self.dense_retriever.retrieve(query, top_k=candidate_k)
-        sparse = self.sparse_retriever.retrieve(query, top_k=candidate_k)
+        dense_task = asyncio.to_thread(
+            self.dense_retriever.retrieve,
+            query,
+            candidate_k,
+        )
+        sparse_task = asyncio.to_thread(
+            self.sparse_retriever.retrieve,
+            query,
+            candidate_k,
+        )
+        dense, sparse = await asyncio.gather(dense_task, sparse_task)
         return reciprocal_rank_fusion(
             dense,
             sparse,
             top_k=top_k,
             config=self.fusion_config,
         )
+
+    def retrieve(self, query: str, top_k: int = 5) -> list[RetrievalResult]:
+        """Sync compatibility wrapper."""
+        return run_coro_sync(self.retrieve_async(query, top_k=top_k))

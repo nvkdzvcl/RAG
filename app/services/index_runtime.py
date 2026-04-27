@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import hashlib
 import json
 import logging
@@ -211,6 +212,11 @@ class QueryMetadataFilters:
 class EmptyRetriever:
     """Fallback retriever used when no indexable chunks are available."""
 
+    async def retrieve_async(self, query: str, top_k: int = 5) -> list[RetrievalResult]:
+        _ = query
+        _ = top_k
+        return []
+
     def retrieve(self, query: str, top_k: int = 5) -> list[RetrievalResult]:
         _ = query
         _ = top_k
@@ -241,6 +247,13 @@ class _ResultFilteringRetriever:
     def get_last_filter_debug(self) -> dict[str, Any]:
         return dict(self._last_filter_debug)
 
+    @staticmethod
+    def _compute_candidate_k(top_k: int, needs_filtering: bool) -> int:
+        if not needs_filtering:
+            return top_k
+        # Ask for a wider candidate set so post-filter rows still have enough candidates.
+        return max(top_k * 8, top_k)
+
     def retrieve(self, query: str, top_k: int = 5) -> list[RetrievalResult]:
         applied_filters = self._query_filters.as_debug_payload()
         if top_k <= 0:
@@ -261,15 +274,62 @@ class _ResultFilteringRetriever:
             }
             return []
 
-        candidate_k = top_k
-        if self._allowed_doc_ids or self._query_filters.has_any_filter():
-            # Ask for a wider candidate set so post-filter rows still have enough candidates.
-            candidate_k = max(top_k * 8, top_k)
+        candidate_k = self._compute_candidate_k(
+            top_k,
+            bool(self._allowed_doc_ids or self._query_filters.has_any_filter()),
+        )
 
         results = self._retriever.retrieve(query, top_k=candidate_k)
         filtered = list(results)
         if self._allowed_doc_ids:
             # Keep stale-index safety first: only active uploaded doc IDs are allowed.
+            filtered = [item for item in filtered if item.doc_id in self._allowed_doc_ids]
+        if self._query_filters.has_any_filter():
+            filtered = [item for item in filtered if self._query_filters.matches(item)]
+
+        self._last_filter_debug = {
+            "applied_filters": applied_filters,
+            "candidate_count_before_filter": len(results),
+            "candidate_count_after_filter": len(filtered),
+        }
+        return filtered[:top_k]
+
+    async def retrieve_async(self, query: str, top_k: int = 5) -> list[RetrievalResult]:
+        applied_filters = self._query_filters.as_debug_payload()
+        if top_k <= 0:
+            self._last_filter_debug = {
+                "applied_filters": applied_filters,
+                "candidate_count_before_filter": 0,
+                "candidate_count_after_filter": 0,
+            }
+            return []
+
+        if self._query_filters.requires_uploaded_scope() and self._active_source != "uploaded":
+            self._last_filter_debug = {
+                "applied_filters": applied_filters,
+                "candidate_count_before_filter": 0,
+                "candidate_count_after_filter": 0,
+                "filtered_source": self._active_source,
+            }
+            return []
+
+        candidate_k = self._compute_candidate_k(
+            top_k,
+            bool(self._allowed_doc_ids or self._query_filters.has_any_filter()),
+        )
+
+        retrieve_async = getattr(self._retriever, "retrieve_async", None)
+        if callable(retrieve_async):
+            results = await retrieve_async(query, top_k=candidate_k)
+        else:
+            results = await asyncio.to_thread(
+                self._retriever.retrieve,
+                query,
+                candidate_k,
+            )
+
+        filtered = list(results)
+        if self._allowed_doc_ids:
             filtered = [item for item in filtered if item.doc_id in self._allowed_doc_ids]
         if self._query_filters.has_any_filter():
             filtered = [item for item in filtered if self._query_filters.matches(item)]

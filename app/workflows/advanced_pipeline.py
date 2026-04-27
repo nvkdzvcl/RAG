@@ -10,6 +10,7 @@ from app.schemas.api import AdvancedQueryResponse
 from app.schemas.common import Citation
 from app.schemas.workflow import CritiqueResult, WorkflowState
 from app.workflows.shared import assess_grounding, is_language_mismatch, localized_insufficient_evidence
+from app.workflows.streaming import StreamEventHandler
 from app.workflows.standard import StandardPipelineResult
 
 if TYPE_CHECKING:
@@ -26,6 +27,8 @@ class AdvancedPipelineContext:
     query_filters: dict[str, Any] | None
     normalized_history: list[dict[str, str]]
     resolved_language: str
+    event_handler: StreamEventHandler | None = None
+    event_context: dict[str, Any] = field(default_factory=dict)
     trace: list[dict[str, Any]] = field(default_factory=list)
 
     current_query: str = ""
@@ -169,6 +172,8 @@ class CritiqueLoopStage(BasePipelineStage):
                         if candidate not in state.rewritten_queries:
                             state.rewritten_queries.append(candidate)
 
+            loop_event_context = dict(context.event_context)
+            loop_event_context["loop"] = loop
             pipeline = await workflow.standard_workflow.run_pipeline(
                 query=current_query,
                 mode=state.mode,
@@ -176,6 +181,8 @@ class CritiqueLoopStage(BasePipelineStage):
                 response_language=context.resolved_language,
                 chat_history=context.normalized_history,
                 query_filters=context.query_filters,
+                event_handler=context.event_handler,
+                event_context=loop_event_context,
             )
 
             state.retrieved_docs = [item.model_dump() for item in pipeline.retrieved]

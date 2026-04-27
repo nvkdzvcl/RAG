@@ -126,6 +126,43 @@ def test_openai_compatible_supports_list_content_blocks() -> None:
     asyncio.run(client.aclose())
 
 
+def test_openai_compatible_streams_partial_deltas_when_callback_provided() -> None:
+    def _handler(request: httpx.Request) -> httpx.Response:
+        payload = json.loads(request.content.decode("utf-8"))
+        assert payload.get("stream") is True
+        stream_body = (
+            'data: {"choices":[{"delta":{"content":"part-1 "}}]}\n\n'
+            'data: {"choices":[{"delta":{"content":"part-2"}}]}\n\n'
+            "data: [DONE]\n\n"
+        ).encode("utf-8")
+        return httpx.Response(
+            status_code=200,
+            headers={"content-type": "text/event-stream"},
+            content=stream_body,
+        )
+
+    client = httpx.AsyncClient(
+        base_url="http://localhost:11434/v1/",
+        transport=httpx.MockTransport(_handler),
+    )
+    llm = OpenAICompatibleLLMClient(
+        model="qwen2.5:3b",
+        api_base="http://localhost:11434/v1",
+        api_key="ollama",
+        temperature=0.2,
+        max_tokens=128,
+        timeout_seconds=10,
+        client=client,
+    )
+    deltas: list[str] = []
+
+    result = asyncio.run(llm.complete("stream", on_delta=deltas.append))
+    asyncio.run(client.aclose())
+
+    assert result == "part-1 part-2"
+    assert deltas == ["part-1 ", "part-2"]
+
+
 def test_timeout_or_http_error_uses_fallback_client() -> None:
     def _timeout_handler(request: httpx.Request) -> httpx.Response:
         raise httpx.ReadTimeout("timeout", request=request)

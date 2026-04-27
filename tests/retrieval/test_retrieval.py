@@ -1,5 +1,6 @@
 """Retrieval baseline tests."""
 
+import threading
 import time
 from typing import Literal
 
@@ -232,6 +233,30 @@ def test_hybrid_retriever_runs_dense_and_sparse_then_returns_top_k_rrf() -> None
     assert results[0].chunk_id == "shared"
     assert {item.chunk_id for item in results}.issubset({"dense_only", "shared", "sparse_only"})
     assert any(item.chunk_id in {"dense_only", "sparse_only"} for item in results[1:])
+
+
+def test_hybrid_retriever_runs_dense_and_sparse_concurrently() -> None:
+    barrier = threading.Barrier(2)
+
+    class _BarrierRetriever:
+        def __init__(self, item: RetrievalResult) -> None:
+            self._item = item
+            self.calls: list[tuple[str, int]] = []
+
+        def retrieve(self, query: str, top_k: int = 5) -> list[RetrievalResult]:
+            self.calls.append((query, top_k))
+            barrier.wait(timeout=3.0)
+            return [self._item]
+
+    dense = _BarrierRetriever(_retrieval_result("dense", score=0.9, score_type="dense"))
+    sparse = _BarrierRetriever(_retrieval_result("sparse", score=6.0, score_type="sparse"))
+    hybrid = HybridRetriever(dense, sparse)  # type: ignore[arg-type]
+
+    results = hybrid.retrieve("parallel query", top_k=2)
+
+    assert len(dense.calls) == 1
+    assert len(sparse.calls) == 1
+    assert [item.chunk_id for item in results] == ["dense", "sparse"]
 
 
 def test_score_only_reranker_output_shape() -> None:

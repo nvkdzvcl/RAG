@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from collections.abc import Awaitable, Callable
 from typing import Protocol
 
 from app.schemas.common import Mode
@@ -20,6 +21,7 @@ class Generator(Protocol):
         model: str | None = None,
         response_language: str = "en",
         chat_history_context: str = "(empty)",
+        on_llm_delta: Callable[[str], Awaitable[None] | None] | None = None,
     ) -> GeneratedAnswer:
         """Generate grounded answer from query and selected context."""
 
@@ -31,5 +33,6 @@ class Generator(Protocol):
         model: str | None = None,
         response_language: str = "en",
         chat_history_context: str = "(empty)",
+        on_llm_delta: Callable[[str], Awaitable[None] | None] | None = None,
     ) -> GeneratedAnswer:
         """Generate grounded answer from query and selected context."""

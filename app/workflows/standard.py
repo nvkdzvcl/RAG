@@ -36,6 +36,7 @@ from app.workflows.shared import (
     response_language_name,
     trim_chat_history,
 )
+from app.workflows.streaming import StreamEventHandler, emit_stream_event
 
 
 logger = logging.getLogger(__name__)
@@ -212,17 +213,24 @@ class StandardWorkflow:
         response_language: str = "en",
         chat_history: list[dict[str, str]] | None = None,
         query_filters: dict[str, Any] | None = None,
+        event_handler: StreamEventHandler | None = None,
+        event_context: dict[str, Any] | None = None,
     ) -> StandardPipelineResult:
         """Run one retrieval-generation pass and return intermediate artifacts."""
         self._sync_chunk_settings_from_runtime()
+        context_payload = dict(event_context or {})
         normalized_query = normalize_query(query)
         retrieval_top_k = max(1, self.hybrid_top_k)
         retriever = self._get_retriever(query_filters=query_filters)
-        retrieved = await asyncio.to_thread(
-            retriever.retrieve,
-            normalized_query,
-            retrieval_top_k,
-        )
+        retrieve_async = getattr(retriever, "retrieve_async", None)
+        if callable(retrieve_async):
+            retrieved = await retrieve_async(normalized_query, top_k=retrieval_top_k)
+        else:
+            retrieved = await asyncio.to_thread(
+                retriever.retrieve,
+                normalized_query,
+                retrieval_top_k,
+            )
         retrieval_debug: dict[str, Any] = {}
         debug_getter = getattr(retriever, "get_last_filter_debug", None)
         if callable(debug_getter):
@@ -240,6 +248,19 @@ class StandardWorkflow:
             reranked,
             self.context_top_k,
         )
+        await emit_stream_event(
+            event_handler,
+            {
+                "type": "retrieval",
+                "mode": mode.value,
+                "query": normalized_query,
+                "retrieved_count": len(retrieved),
+                "reranked_count": len(reranked),
+                "selected_count": len(selected_context),
+                "chunk_ids": [item.chunk_id for item in selected_context],
+                **context_payload,
+            },
+        )
         if not selected_context:
             generated = GeneratedAnswer(
                 answer=localized_insufficient_evidence(response_language),
@@ -249,11 +270,43 @@ class StandardWorkflow:
                 stop_reason="no_context",
                 llm_fallback_used=False,
             )
+            await emit_stream_event(
+                event_handler,
+                {
+                    "type": "generation",
+                    "mode": mode.value,
+                    "phase": "skipped",
+                    "reason": "no_context",
+                    **context_payload,
+                },
+            )
         else:
             history_context = build_chat_history_context(
                 chat_history,
                 memory_window=self.memory_window,
             )
+            await emit_stream_event(
+                event_handler,
+                {
+                    "type": "generation",
+                    "mode": mode.value,
+                    "phase": "started",
+                    "context_count": len(selected_context),
+                    **context_payload,
+                },
+            )
+
+            async def _on_llm_delta(delta: str) -> None:
+                await emit_stream_event(
+                    event_handler,
+                    {
+                        "type": "generation_delta",
+                        "mode": mode.value,
+                        "delta": delta,
+                        **context_payload,
+                    },
+                )
+
             generated = await self.generator.generate_answer_async(
                 query=normalized_query,
                 context=selected_context,
@@ -261,6 +314,20 @@ class StandardWorkflow:
                 model=model,
                 response_language=response_language,
                 chat_history_context=history_context,
+                on_llm_delta=_on_llm_delta if event_handler is not None else None,
+            )
+            await emit_stream_event(
+                event_handler,
+                {
+                    "type": "generation",
+                    "mode": mode.value,
+                    "phase": "completed",
+                    "status": generated.status,
+                    "stop_reason": generated.stop_reason,
+                    "answer": generated.answer,
+                    "citation_count": len(generated.citations),
+                    **context_payload,
+                },
             )
 
         logger.info(
@@ -288,6 +355,8 @@ class StandardWorkflow:
         model: str | None = None,
         response_language: str | None = None,
         query_filters: dict[str, Any] | None = None,
+        event_handler: StreamEventHandler | None = None,
+        event_context: dict[str, Any] | None = None,
     ) -> StandardQueryResponse:
         start_time = time.perf_counter()
         normalized_history = trim_chat_history(
@@ -303,6 +372,8 @@ class StandardWorkflow:
             response_language=resolved_language,
             chat_history=normalized_history,
             query_filters=query_filters,
+            event_handler=event_handler,
+            event_context=event_context,
         )
         final_answer = pipeline.generated.answer
         language_mismatch = is_language_mismatch(final_answer, resolved_language)
@@ -466,6 +537,8 @@ class StandardWorkflow:
         model: str | None = None,
         response_language: str | None = None,
         query_filters: dict[str, Any] | None = None,
+        event_handler: StreamEventHandler | None = None,
+        event_context: dict[str, Any] | None = None,
     ) -> StandardQueryResponse:
         """Sync wrapper for CLI/tests."""
         return run_coro_sync(
@@ -475,6 +548,8 @@ class StandardWorkflow:
                 model=model,
                 response_language=response_language,
                 query_filters=query_filters,
+                event_handler=event_handler,
+                event_context=event_context,
             )
         )
 

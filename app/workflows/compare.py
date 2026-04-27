@@ -10,6 +10,7 @@ from app.core.async_utils import run_coro_sync
 from app.schemas.api import AdvancedQueryResponse, CompareQueryResponse, ComparisonSummary, StandardQueryResponse
 from app.workflows.advanced import AdvancedWorkflow
 from app.workflows.shared import detect_response_language
+from app.workflows.streaming import StreamEventHandler, emit_stream_event
 from app.workflows.standard import StandardWorkflow
 
 
@@ -266,16 +267,32 @@ class CompareWorkflow:
         model: str | None,
         response_language: str,
         query_filters: dict[str, Any] | None,
+        event_handler: StreamEventHandler | None = None,
+        event_context: dict[str, Any] | None = None,
     ) -> StandardQueryResponse:
         run_async = getattr(self.standard_workflow, "run_async", None)
         if callable(run_async):
-            return await run_async(
-                query=query,
-                chat_history=chat_history,
-                model=model,
-                response_language=response_language,
-                query_filters=query_filters,
-            )
+            async_kwargs: dict[str, Any] = {
+                "query": query,
+                "chat_history": chat_history,
+                "model": model,
+                "response_language": response_language,
+            }
+            if query_filters is not None:
+                async_kwargs["query_filters"] = query_filters
+            if event_handler is not None:
+                async_kwargs["event_handler"] = event_handler
+            if event_context:
+                async_kwargs["event_context"] = dict(event_context)
+            for removable in ("event_context", "event_handler", "query_filters"):
+                try:
+                    return await run_async(**async_kwargs)
+                except TypeError:
+                    if removable in async_kwargs:
+                        async_kwargs.pop(removable, None)
+                        continue
+                    raise
+            return await run_async(**async_kwargs)
         kwargs: dict[str, Any] = {
             "query": query,
             "chat_history": chat_history,
@@ -284,11 +301,20 @@ class CompareWorkflow:
         }
         if query_filters is not None:
             kwargs["query_filters"] = query_filters
-        try:
-            return await asyncio.to_thread(self.standard_workflow.run, **kwargs)
-        except TypeError:
-            kwargs.pop("query_filters", None)
-            return await asyncio.to_thread(self.standard_workflow.run, **kwargs)
+        if event_handler is not None:
+            kwargs["event_handler"] = event_handler
+        if event_context:
+            kwargs["event_context"] = dict(event_context)
+
+        for removable in ("event_context", "event_handler", "query_filters"):
+            try:
+                return await asyncio.to_thread(self.standard_workflow.run, **kwargs)
+            except TypeError:
+                if removable in kwargs:
+                    kwargs.pop(removable, None)
+                    continue
+                raise
+        return await asyncio.to_thread(self.standard_workflow.run, **kwargs)
 
     async def _run_advanced_async(
         self,
@@ -298,16 +324,32 @@ class CompareWorkflow:
         model: str | None,
         response_language: str,
         query_filters: dict[str, Any] | None,
+        event_handler: StreamEventHandler | None = None,
+        event_context: dict[str, Any] | None = None,
     ) -> AdvancedQueryResponse:
         run_async = getattr(self.advanced_workflow, "run_async", None)
         if callable(run_async):
-            return await run_async(
-                query=query,
-                chat_history=chat_history,
-                model=model,
-                response_language=response_language,
-                query_filters=query_filters,
-            )
+            async_kwargs: dict[str, Any] = {
+                "query": query,
+                "chat_history": chat_history,
+                "model": model,
+                "response_language": response_language,
+            }
+            if query_filters is not None:
+                async_kwargs["query_filters"] = query_filters
+            if event_handler is not None:
+                async_kwargs["event_handler"] = event_handler
+            if event_context:
+                async_kwargs["event_context"] = dict(event_context)
+            for removable in ("event_context", "event_handler", "query_filters"):
+                try:
+                    return await run_async(**async_kwargs)
+                except TypeError:
+                    if removable in async_kwargs:
+                        async_kwargs.pop(removable, None)
+                        continue
+                    raise
+            return await run_async(**async_kwargs)
         kwargs: dict[str, Any] = {
             "query": query,
             "chat_history": chat_history,
@@ -316,11 +358,40 @@ class CompareWorkflow:
         }
         if query_filters is not None:
             kwargs["query_filters"] = query_filters
-        try:
-            return await asyncio.to_thread(self.advanced_workflow.run, **kwargs)
-        except TypeError:
-            kwargs.pop("query_filters", None)
-            return await asyncio.to_thread(self.advanced_workflow.run, **kwargs)
+        if event_handler is not None:
+            kwargs["event_handler"] = event_handler
+        if event_context:
+            kwargs["event_context"] = dict(event_context)
+
+        for removable in ("event_context", "event_handler", "query_filters"):
+            try:
+                return await asyncio.to_thread(self.advanced_workflow.run, **kwargs)
+            except TypeError:
+                if removable in kwargs:
+                    kwargs.pop(removable, None)
+                    continue
+                raise
+        return await asyncio.to_thread(self.advanced_workflow.run, **kwargs)
+
+    @staticmethod
+    def _branch_event_handler(
+        base_handler: StreamEventHandler | None,
+        *,
+        branch: str,
+        event_context: dict[str, Any] | None = None,
+    ) -> StreamEventHandler | None:
+        if base_handler is None:
+            return None
+        context_payload = dict(event_context or {})
+
+        async def _handler(event: dict[str, Any]) -> None:
+            payload = dict(event)
+            payload.setdefault("branch", branch)
+            for key, value in context_payload.items():
+                payload.setdefault(key, value)
+            await emit_stream_event(base_handler, payload)
+
+        return _handler
 
     async def run_async(
         self,
@@ -329,9 +400,21 @@ class CompareWorkflow:
         model: str | None = None,
         response_language: str | None = None,
         query_filters: dict[str, Any] | None = None,
+        event_handler: StreamEventHandler | None = None,
+        event_context: dict[str, Any] | None = None,
     ) -> CompareQueryResponse:
         started = time.perf_counter()
         resolved_language = response_language or detect_response_language(query)
+        standard_event_handler = self._branch_event_handler(
+            event_handler,
+            branch="standard",
+            event_context=event_context,
+        )
+        advanced_event_handler = self._branch_event_handler(
+            event_handler,
+            branch="advanced",
+            event_context=event_context,
+        )
         standard, advanced = await asyncio.gather(
             self._run_standard_async(
                 query=query,
@@ -339,6 +422,8 @@ class CompareWorkflow:
                 model=model,
                 response_language=resolved_language,
                 query_filters=query_filters,
+                event_handler=standard_event_handler,
+                event_context=event_context,
             ),
             self._run_advanced_async(
                 query=query,
@@ -346,6 +431,8 @@ class CompareWorkflow:
                 model=model,
                 response_language=resolved_language,
                 query_filters=query_filters,
+                event_handler=advanced_event_handler,
+                event_context=event_context,
             ),
         )
 
@@ -371,6 +458,8 @@ class CompareWorkflow:
         model: str | None = None,
         response_language: str | None = None,
         query_filters: dict[str, Any] | None = None,
+        event_handler: StreamEventHandler | None = None,
+        event_context: dict[str, Any] | None = None,
     ) -> CompareQueryResponse:
         """Sync wrapper for CLI/tests."""
         return run_coro_sync(
@@ -380,6 +469,8 @@ class CompareWorkflow:
                 model=model,
                 response_language=response_language,
                 query_filters=query_filters,
+                event_handler=event_handler,
+                event_context=event_context,
             )
         )
 

@@ -17,6 +17,7 @@ from app.schemas.documents import (
 from app.services.index_runtime import RuntimeIndexManager
 from app.workflows.advanced import AdvancedWorkflow
 from app.workflows.compare import CompareWorkflow
+from app.workflows.streaming import StreamEventHandler
 from app.workflows.standard import StandardWorkflow
 
 logger = logging.getLogger(__name__)
@@ -66,16 +67,33 @@ class WorkflowRunner:
         model: str | None,
         response_language: str | None,
         query_filters: dict[str, Any] | None,
+        event_handler: StreamEventHandler | None,
+        event_context: dict[str, Any] | None,
     ) -> QueryResponse:
         run_async = getattr(workflow, "run_async", None)
         if callable(run_async):
-            return await run_async(
-                query=query,
-                chat_history=chat_history,
-                model=model,
-                response_language=response_language,
-                query_filters=query_filters,
-            )
+            async_kwargs: dict[str, Any] = {
+                "query": query,
+                "chat_history": chat_history,
+                "model": model,
+                "response_language": response_language,
+            }
+            if query_filters is not None:
+                async_kwargs["query_filters"] = query_filters
+            if event_handler is not None:
+                async_kwargs["event_handler"] = event_handler
+            if event_context:
+                async_kwargs["event_context"] = dict(event_context)
+
+            for removable in ("event_context", "event_handler", "query_filters"):
+                try:
+                    return await run_async(**async_kwargs)
+                except TypeError:
+                    if removable in async_kwargs:
+                        async_kwargs.pop(removable, None)
+                        continue
+                    raise
+            return await run_async(**async_kwargs)
         kwargs: dict[str, Any] = {
             "query": query,
             "chat_history": chat_history,
@@ -84,11 +102,20 @@ class WorkflowRunner:
         }
         if query_filters is not None:
             kwargs["query_filters"] = query_filters
-        try:
-            return await asyncio.to_thread(workflow.run, **kwargs)
-        except TypeError:
-            kwargs.pop("query_filters", None)
-            return await asyncio.to_thread(workflow.run, **kwargs)
+        if event_handler is not None:
+            kwargs["event_handler"] = event_handler
+        if event_context:
+            kwargs["event_context"] = dict(event_context)
+
+        for removable in ("event_context", "event_handler", "query_filters"):
+            try:
+                return await asyncio.to_thread(workflow.run, **kwargs)
+            except TypeError:
+                if removable in kwargs:
+                    kwargs.pop(removable, None)
+                    continue
+                raise
+        return await asyncio.to_thread(workflow.run, **kwargs)
 
     async def run_async(
         self,
@@ -98,6 +125,8 @@ class WorkflowRunner:
         model: str | None = None,
         response_language: str | None = None,
         query_filters: dict[str, Any] | None = None,
+        event_handler: StreamEventHandler | None = None,
+        event_context: dict[str, Any] | None = None,
     ) -> QueryResponse:
         if mode == Mode.STANDARD:
             return await self._invoke_workflow_async(
@@ -107,6 +136,8 @@ class WorkflowRunner:
                 model=model,
                 response_language=response_language,
                 query_filters=query_filters,
+                event_handler=event_handler,
+                event_context=event_context,
             )
         if mode == Mode.ADVANCED:
             return await self._invoke_workflow_async(
@@ -116,6 +147,8 @@ class WorkflowRunner:
                 model=model,
                 response_language=response_language,
                 query_filters=query_filters,
+                event_handler=event_handler,
+                event_context=event_context,
             )
         if mode == Mode.COMPARE:
             return await self._invoke_workflow_async(
@@ -125,6 +158,8 @@ class WorkflowRunner:
                 model=model,
                 response_language=response_language,
                 query_filters=query_filters,
+                event_handler=event_handler,
+                event_context=event_context,
             )
         raise NotImplementedError(f"Unsupported mode: {mode}")
 
@@ -136,6 +171,8 @@ class WorkflowRunner:
         model: str | None = None,
         response_language: str | None = None,
         query_filters: dict[str, Any] | None = None,
+        event_handler: StreamEventHandler | None = None,
+        event_context: dict[str, Any] | None = None,
     ) -> QueryResponse:
         """Sync wrapper for CLI/tests."""
         return run_coro_sync(
@@ -146,6 +183,8 @@ class WorkflowRunner:
                 model=model,
                 response_language=response_language,
                 query_filters=query_filters,
+                event_handler=event_handler,
+                event_context=event_context,
             )
         )
 

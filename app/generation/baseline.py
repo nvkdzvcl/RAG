@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import logging
 import re
+from collections.abc import Awaitable, Callable
 from pathlib import Path
 
 from app.core.async_utils import run_coro_sync
@@ -246,6 +247,7 @@ class BaselineGenerator(Generator):
         model: str | None = None,
         response_language: str = "en",
         chat_history_context: str = "(empty)",
+        on_llm_delta: Callable[[str], Awaitable[None] | None] | None = None,
     ) -> GeneratedAnswer:
         non_empty_context = [doc for doc in context if doc.content.strip()]
         if not non_empty_context:
@@ -276,6 +278,7 @@ class BaselineGenerator(Generator):
                 prompt,
                 system_prompt=build_language_system_prompt(response_language),
                 model=model,
+                on_delta=on_llm_delta,
             )
             llm_fallback_used = did_use_fallback(self.llm_client)
         except Exception as exc:
@@ -314,6 +317,7 @@ class BaselineGenerator(Generator):
         model: str | None = None,
         response_language: str = "en",
         chat_history_context: str = "(empty)",
+        on_llm_delta: Callable[[str], Awaitable[None] | None] | None = None,
     ) -> GeneratedAnswer:
         """Sync wrapper for legacy callers."""
         return run_coro_sync(
@@ -324,5 +328,6 @@ class BaselineGenerator(Generator):
                 model=model,
                 response_language=response_language,
                 chat_history_context=chat_history_context,
+                on_llm_delta=on_llm_delta,
             )
         )
