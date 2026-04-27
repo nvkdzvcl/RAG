@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import math
 import re
 from collections.abc import Iterable
 
@@ -161,6 +162,48 @@ def cited_gold_source_overlap(
     return matched / len(expected)
 
 
+def compute_retrieval_metrics(
+    retrieved_chunk_ids: list[str], gold_sources: list[str]
+) -> tuple[bool, float, float]:
+    """Compute Hit@K, MRR@K, and nDCG@K against gold sources."""
+    expected = [source for source in gold_sources if source and source.strip()]
+    if not expected or not retrieved_chunk_ids:
+        return False, 0.0, 0.0
+
+    hit = False
+    mrr = 0.0
+    dcg = 0.0
+
+    for i, chunk_id in enumerate(retrieved_chunk_ids):
+        # Extract base doc_id if chunk_id is standard deterministic format
+        doc_id = chunk_id.split("_chunk_")[0] if "_chunk_" in chunk_id else ""
+
+        citation_tokens = {chunk_id.lower(), doc_id.lower()}
+        citation_compound = [f"{doc_id}#{chunk_id}".lower()]
+
+        is_relevant = any(
+            _match_gold_source(gold, citation_tokens, citation_compound)
+            for gold in expected
+        )
+
+        if is_relevant:
+            hit = True
+            if mrr == 0.0:
+                mrr = 1.0 / (i + 1)
+            dcg += 1.0 / math.log2(i + 2)
+
+    if not hit:
+        return False, 0.0, 0.0
+
+    idcg = 0.0
+    num_expected = min(len(expected), len(retrieved_chunk_ids))
+    for i in range(num_expected):
+        idcg += 1.0 / math.log2(i + 2)
+
+    ndcg = dcg / idcg if idcg > 0 else 0.0
+    return hit, mrr, ndcg
+
+
 def compute_metrics(
     *,
     expected_behavior: EvalExpectedBehavior,
@@ -204,6 +247,10 @@ def compute_metrics(
         answer_contains_reference_keywords = bool(ref_terms.intersection(answer_terms))
 
     gold_overlap = cited_gold_source_overlap(citations, gold_sources)
+    
+    hit, mrr, ndcg = compute_retrieval_metrics(
+        trace_fields.retrieved_chunk_ids, gold_sources
+    )
 
     groundedness_proxy: float | None = None
     groundedness_proxy_note: str | None = None
@@ -235,6 +282,9 @@ def compute_metrics(
         selected_context_count=trace_fields.selected_context_count,
         chunk_size=trace_fields.chunk_size,
         chunk_overlap=trace_fields.chunk_overlap,
+        retrieval_hit=hit,
+        retrieval_mrr=mrr,
+        retrieval_ndcg=ndcg,
         answer_non_empty=answer_non_empty,
         answer_contains_reference_keywords=answer_contains_reference_keywords,
         cited_gold_source_overlap=gold_overlap,

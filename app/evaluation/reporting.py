@@ -116,6 +116,9 @@ def build_comparative_summary(
                         ),
                     ),
                     retry_rate=_rate(subset, lambda row: row.metrics.retry_used),
+                    hit_rate=_rate(subset, lambda row: row.metrics.retrieval_hit),
+                    avg_mrr=sum(r.metrics.retrieval_mrr for r in subset) / len(subset) if subset else 0.0,
+                    avg_ndcg=sum(r.metrics.retrieval_ndcg for r in subset) / len(subset) if subset else 0.0,
                 )
             )
 
@@ -124,6 +127,9 @@ def build_comparative_summary(
         avg_latency_delta_ms=_avg(latency_deltas),
         avg_confidence_delta=_avg(confidence_deltas),
         advanced_retry_rate=advanced_retry_rate,
+        hit_rate=_rate(flattened, lambda row: row.metrics.retrieval_hit),
+        avg_mrr=sum(row.metrics.retrieval_mrr for row in flattened) / len(flattened) if flattened else 0.0,
+        avg_ndcg=sum(row.metrics.retrieval_ndcg for row in flattened) / len(flattened) if flattened else 0.0,
         abstain_rate_by_mode=abstain_rate_by_mode,
         citation_rate_by_mode=citation_rate_by_mode,
         per_category=category_rows,
@@ -149,6 +155,12 @@ def report_to_markdown(report: EvalReport) -> str:
         f"- Avg confidence delta (advanced - standard): `{summary.avg_confidence_delta}`",
         f"- Advanced retry rate: `{summary.advanced_retry_rate:.3f}`",
         "",
+        "## Retrieval Effectiveness (All Modes)",
+        "",
+        f"- Hit Rate: `{summary.hit_rate:.3f}`",
+        f"- Avg MRR: `{summary.avg_mrr:.3f}`",
+        f"- Avg nDCG: `{summary.avg_ndcg:.3f}`",
+        "",
         "## Rates",
         "",
         f"- Abstain rate (standard): `{summary.abstain_rate_by_mode.get('standard', 0.0):.3f}`",
@@ -158,8 +170,8 @@ def report_to_markdown(report: EvalReport) -> str:
         "",
         "## Per-Category Summary",
         "",
-        "| mode | category | count | avg_latency_ms | avg_confidence | citation_rate | abstain_rate | retry_rate |",
-        "| --- | --- | ---: | ---: | ---: | ---: | ---: | ---: |",
+        "| mode | category | count | avg_latency_ms | avg_confidence | citation_rate | abstain_rate | retry_rate | hit_rate | avg_mrr | avg_ndcg |",
+        "| --- | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |",
     ]
 
     for row in summary.per_category:
@@ -167,7 +179,8 @@ def report_to_markdown(report: EvalReport) -> str:
             "| "
             f"{row.mode.value} | {row.category} | {row.count} | "
             f"{row.avg_latency_ms} | {row.avg_confidence} | "
-            f"{row.citation_rate:.3f} | {row.abstain_rate:.3f} | {row.retry_rate:.3f} |"
+            f"{row.citation_rate:.3f} | {row.abstain_rate:.3f} | {row.retry_rate:.3f} | "
+            f"{row.hit_rate:.3f} | {row.avg_mrr:.3f} | {row.avg_ndcg:.3f} |"
         )
 
     lines.extend(
@@ -208,6 +221,9 @@ def write_csv_summary(path: Path, mode_outputs: list[ModeEvalOutput]) -> None:
                 "answer_contains_reference_keywords",
                 "cited_gold_source_overlap",
                 "groundedness_proxy",
+                "retrieval_hit",
+                "retrieval_mrr",
+                "retrieval_ndcg",
             ]
         )
         for item in mode_outputs:
@@ -233,6 +249,9 @@ def write_csv_summary(path: Path, mode_outputs: list[ModeEvalOutput]) -> None:
                     item.metrics.answer_contains_reference_keywords,
                     item.metrics.cited_gold_source_overlap,
                     item.metrics.groundedness_proxy,
+                    item.metrics.retrieval_hit,
+                    item.metrics.retrieval_mrr,
+                    item.metrics.retrieval_ndcg,
                 ]
             )
 

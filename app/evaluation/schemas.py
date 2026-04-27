@@ -59,6 +59,10 @@ class EvalMetrics(BaseModel):
     chunk_size: int | None = None
     chunk_overlap: int | None = None
 
+    retrieval_hit: bool = False
+    retrieval_mrr: float = 0.0
+    retrieval_ndcg: float = 0.0
+
     answer_non_empty: bool
     answer_contains_reference_keywords: bool | None = None
     cited_gold_source_overlap: float | None = None
@@ -116,6 +120,9 @@ class CategorySummary(BaseModel):
     citation_rate: float
     abstain_rate: float
     retry_rate: float
+    hit_rate: float = 0.0
+    avg_mrr: float = 0.0
+    avg_ndcg: float = 0.0
 
 
 class ComparativeSummary(BaseModel):
@@ -125,6 +132,9 @@ class ComparativeSummary(BaseModel):
     avg_latency_delta_ms: float | None = None
     avg_confidence_delta: float | None = None
     advanced_retry_rate: float
+    hit_rate: float = 0.0
+    avg_mrr: float = 0.0
+    avg_ndcg: float = 0.0
     abstain_rate_by_mode: dict[str, float] = Field(default_factory=dict)
     citation_rate_by_mode: dict[str, float] = Field(default_factory=dict)
     per_category: list[CategorySummary] = Field(default_factory=list)
