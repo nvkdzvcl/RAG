@@ -2,7 +2,7 @@
 
 from functools import lru_cache
 
-from pydantic import Field
+from pydantic import Field, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -43,12 +43,14 @@ class Settings(BaseSettings):
     embedding_batch_size: int = Field(default=16, alias="EMBEDDING_BATCH_SIZE")
     embedding_normalize: bool = Field(default=True, alias="EMBEDDING_NORMALIZE")
     embedding_hash_dimension: int = Field(default=64, alias="EMBEDDING_HASH_DIMENSION")
+    reranker_enabled: bool = Field(default=True, alias="RERANKER_ENABLED")
     reranker_provider: str = Field(default="cross_encoder", alias="RERANKER_PROVIDER")
     reranker_model: str = Field(
         default="BAAI/bge-reranker-v2-m3", alias="RERANKER_MODEL"
     )
     reranker_device: str = Field(default="cpu", alias="RERANKER_DEVICE")
     reranker_batch_size: int = Field(default=8, alias="RERANKER_BATCH_SIZE")
+    reranker_top_k: int = Field(default=6, alias="RERANKER_TOP_K")
     reranker_top_n: int = Field(default=6, alias="RERANKER_TOP_N")
 
     ocr_enabled: bool = Field(default=False, alias="OCR_ENABLED")
@@ -78,6 +80,23 @@ class Settings(BaseSettings):
     cache_embedding_maxsize: int = Field(default=256, alias="CACHE_EMBEDDING_MAXSIZE")
     cache_retrieval_maxsize: int = Field(default=128, alias="CACHE_RETRIEVAL_MAXSIZE")
     cache_llm_maxsize: int = Field(default=64, alias="CACHE_LLM_MAXSIZE")
+
+    @model_validator(mode="after")
+    def _sync_reranker_top_k_legacy_alias(self) -> "Settings":
+        """Keep `RERANKER_TOP_K` and legacy `RERANKER_TOP_N` in sync."""
+        fields_set = self.model_fields_set
+        has_top_k = "reranker_top_k" in fields_set
+        has_top_n = "reranker_top_n" in fields_set
+
+        if has_top_k and not has_top_n:
+            self.reranker_top_n = int(self.reranker_top_k)
+        elif has_top_n and not has_top_k:
+            self.reranker_top_k = int(self.reranker_top_n)
+        elif has_top_k and has_top_n:
+            # Prefer the new top_k field when both env vars are explicitly set.
+            self.reranker_top_n = int(self.reranker_top_k)
+
+        return self
 
 
 @lru_cache(maxsize=1)

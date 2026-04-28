@@ -2,9 +2,14 @@
 
 from __future__ import annotations
 
+import logging
 from typing import Any
 
-from app.retrieval import CrossEncoderReranker, ScoreOnlyReranker, create_reranker
+from app.retrieval import (
+    CrossEncoderReranker,
+    PassThroughReranker,
+    create_reranker,
+)
 from app.schemas.retrieval import RetrievalResult
 
 
@@ -97,6 +102,38 @@ def _sample_docs() -> list[RetrievalResult]:
     ]
 
 
+def _sample_docs_non_monotonic_scores() -> list[RetrievalResult]:
+    return [
+        RetrievalResult(
+            chunk_id="c_low",
+            doc_id="d_low",
+            source="s_low",
+            content="first low score",
+            score=0.1,
+            score_type="hybrid",
+            rank=1,
+        ),
+        RetrievalResult(
+            chunk_id="c_high",
+            doc_id="d_high",
+            source="s_high",
+            content="second high score",
+            score=0.9,
+            score_type="hybrid",
+            rank=2,
+        ),
+        RetrievalResult(
+            chunk_id="c_mid",
+            doc_id="d_mid",
+            source="s_mid",
+            content="third mid score",
+            score=0.5,
+            score_type="hybrid",
+            rank=3,
+        ),
+    ]
+
+
 def test_cross_encoder_reranker_changes_order_when_scores_differ() -> None:
     model = _FakeCrossEncoderModel(scores=[0.2, 0.95, 0.1])
     reranker = CrossEncoderReranker(
@@ -131,7 +168,19 @@ def test_cross_encoder_only_reranks_top_k_candidates() -> None:
     assert reranked[0].chunk_id == "c2"
 
 
-def test_score_only_reranker_fallback_factory(monkeypatch) -> None:
+def test_pass_through_reranker_preserves_original_order_when_disabled() -> None:
+    reranker = PassThroughReranker(reason="disabled")
+    docs = _sample_docs_non_monotonic_scores()
+
+    reranked = reranker.rerank("query", docs, top_k=3)
+
+    assert [item.chunk_id for item in reranked] == ["c_low", "c_high", "c_mid"]
+    assert reranked[0].metadata["rerank_fallback_reason"] == "disabled"
+
+
+def test_create_reranker_load_failure_falls_back_to_pass_through(
+    monkeypatch,
+) -> None:
     class _BrokenCrossEncoderReranker:
         def __init__(self, **_: object) -> None:
             raise RuntimeError("cross encoder unavailable")
@@ -148,7 +197,35 @@ def test_score_only_reranker_fallback_factory(monkeypatch) -> None:
         batch_size=8,
     )
 
-    assert isinstance(reranker, ScoreOnlyReranker)
+    assert isinstance(reranker, PassThroughReranker)
+    reranked = reranker.rerank("query", _sample_docs_non_monotonic_scores(), top_k=3)
+    assert [item.chunk_id for item in reranked] == ["c_low", "c_high", "c_mid"]
+
+
+def test_create_reranker_logs_load_failure_reason(
+    monkeypatch, caplog
+) -> None:
+    class _BrokenCrossEncoderReranker:
+        def __init__(self, **_: object) -> None:
+            raise RuntimeError("cross encoder unavailable")
+
+    monkeypatch.setattr(
+        "app.retrieval.reranker.CrossEncoderReranker",
+        _BrokenCrossEncoderReranker,
+    )
+
+    with caplog.at_level(logging.WARNING):
+        _ = create_reranker(
+            provider_name="cross_encoder",
+            model="broken-model",
+            device="cpu",
+            batch_size=8,
+        )
+
+    assert any(
+        "Falling back to pass-through retrieval order" in message
+        for message in caplog.messages
+    )
 
 
 def test_create_reranker_selects_cross_encoder_when_configured(monkeypatch) -> None:
@@ -170,7 +247,7 @@ def test_create_reranker_selects_cross_encoder_when_configured(monkeypatch) -> N
     assert reranker.batch_size == 6
 
 
-def test_cross_encoder_runtime_failure_falls_back_to_score_only() -> None:
+def test_cross_encoder_runtime_failure_falls_back_to_pass_through_order() -> None:
     reranker = CrossEncoderReranker(
         model_name="BAAI/bge-reranker-v2-m3",
         device="cpu",
@@ -178,7 +255,8 @@ def test_cross_encoder_runtime_failure_falls_back_to_score_only() -> None:
         model=_BrokenPredictCrossEncoderModel(),
     )
 
-    reranked = reranker.rerank("query", _sample_docs(), top_k=3)
+    reranked = reranker.rerank("query", _sample_docs_non_monotonic_scores(), top_k=3)
 
-    assert [item.chunk_id for item in reranked] == ["c1", "c2", "c3"]
+    assert [item.chunk_id for item in reranked] == ["c_low", "c_high", "c_mid"]
     assert reranked[0].metadata["pre_rerank_score_type"] == "hybrid"
+    assert reranked[0].metadata["rerank_fallback_reason"] == "runtime_failure"

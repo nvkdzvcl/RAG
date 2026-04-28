@@ -30,7 +30,9 @@ SLOW_NODEIDS: set[str] = {
 TEST_ENV_DEFAULTS: dict[str, str] = {
     "EMBEDDING_PROVIDER": "hash",
     "EMBEDDING_HASH_DIMENSION": "64",
+    "RERANKER_ENABLED": "true",
     "RERANKER_PROVIDER": "score_only",
+    "RERANKER_TOP_K": "6",
     "RERANKER_TOP_N": "6",
     "OCR_ENABLED": "false",
     "OCR_LANGUAGE": "vie+eng",

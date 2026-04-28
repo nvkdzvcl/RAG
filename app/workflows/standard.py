@@ -34,6 +34,7 @@ from app.retrieval import (
     ContextSelector,
     DenseRetriever,
     HybridRetriever,
+    PassThroughReranker,
     SparseRetriever,
     create_reranker,
 )
@@ -110,10 +111,19 @@ class StandardWorkflow:
         )
         self.hybrid_top_k = max(1, int(configured_top_k))
         configured_rerank = (
-            rerank_top_k if rerank_top_k is not None else int(settings.reranker_top_n)
+            rerank_top_k
+            if rerank_top_k is not None
+            else int(
+                getattr(
+                    settings,
+                    "reranker_top_k",
+                    getattr(settings, "reranker_top_n", 6),
+                )
+            )
         )
         self.configured_rerank_top_n = max(1, int(configured_rerank))
         self.rerank_top_k = min(self.configured_rerank_top_n, self.hybrid_top_k)
+        self.reranker_enabled = bool(getattr(settings, "reranker_enabled", True))
         self.context_top_k = context_top_k
         self.chunk_size = (
             chunk_size
@@ -161,12 +171,23 @@ class StandardWorkflow:
                 retrieval_cache=self.caches.retrieval,
             )
 
-        self.reranker = reranker or create_reranker(
-            provider_name=settings.reranker_provider,
-            model=settings.reranker_model,
-            device=settings.reranker_device,
-            batch_size=settings.reranker_batch_size,
-        )
+        if reranker is not None:
+            self.reranker = reranker
+        elif not self.reranker_enabled:
+            logger.info(
+                (
+                    "Reranker disabled by configuration (RERANKER_ENABLED=false). "
+                    "Using pass-through retrieval order."
+                )
+            )
+            self.reranker = PassThroughReranker(reason="disabled")
+        else:
+            self.reranker = create_reranker(
+                provider_name=settings.reranker_provider,
+                model=settings.reranker_model,
+                device=settings.reranker_device,
+                batch_size=settings.reranker_batch_size,
+            )
         self.context_selector = ContextSelector(
             max_chunks=context_top_k, max_chars=context_max_chars
         )

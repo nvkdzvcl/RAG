@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from app.schemas.common import Mode
 from app.schemas.retrieval import RetrievalResult
-from app.retrieval import ScoreOnlyReranker
+from app.retrieval import PassThroughReranker, ScoreOnlyReranker
 from app.workflows.advanced import AdvancedWorkflow
 from app.workflows.runner import WorkflowRunner
 from app.workflows.standard import StandardWorkflow
@@ -91,6 +91,51 @@ def test_standard_workflow_uses_create_reranker_from_settings(monkeypatch) -> No
         "device": "cpu",
         "batch_size": 3,
     }
+
+
+def test_standard_workflow_skips_reranker_when_disabled(monkeypatch) -> None:
+    class _Settings:
+        corpus_dir = "docs"
+        index_dir = "data/indexes"
+        reranker_enabled = False
+        reranker_provider = "cross_encoder"
+        reranker_model = "stub-model"
+        reranker_device = "cpu"
+        reranker_batch_size = 3
+        reranker_top_n = 2
+        prompt_dir = "prompts"
+        llm_provider = "stub"
+        llm_model = "qwen2.5:3b"
+        llm_api_base = "http://localhost:11434/v1"
+        llm_api_key = "ollama"
+        llm_temperature = 0.2
+        llm_max_tokens = 256
+        llm_timeout_seconds = 5
+
+    class _FakeRetriever:
+        def retrieve(self, query: str, top_k: int = 5) -> list[RetrievalResult]:
+            _ = query
+            _ = top_k
+            return []
+
+    class _FakeIndexManager:
+        def get_retriever(self) -> _FakeRetriever:
+            return _FakeRetriever()
+
+        def get_active_source(self) -> str:
+            return "seeded"
+
+    monkeypatch.setattr("app.workflows.standard.get_settings", lambda: _Settings())
+    monkeypatch.setattr(
+        "app.workflows.standard.create_reranker",
+        lambda **_: (_ for _ in ()).throw(AssertionError("should not be called")),
+    )
+
+    workflow = StandardWorkflow(index_manager=_FakeIndexManager())
+    response = workflow.run(query="test", chat_history=None)
+
+    assert response.mode == "standard"
+    assert isinstance(workflow.reranker, PassThroughReranker)
 
 
 def test_advanced_workflow_reuses_standard_workflow_configured_reranker() -> None:

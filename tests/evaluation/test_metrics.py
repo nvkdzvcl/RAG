@@ -1,6 +1,10 @@
 import math
 
-from app.evaluation.metrics import compute_retrieval_metrics, extract_trace_fields
+from app.evaluation.metrics import (
+    compute_metrics,
+    compute_retrieval_metrics,
+    extract_trace_fields,
+)
 from app.evaluation.schemas import RetrievedSourceTrace
 
 
@@ -450,3 +454,96 @@ def test_extract_trace_fields_collects_retrieved_source_metadata() -> None:
     assert first.source == "docs/guide.md"
     assert first.title == "Guide"
     assert first.section == "Intro"
+
+
+def test_extract_trace_fields_builds_retrieval_rankings_by_mode() -> None:
+    trace = [
+        {
+            "step": "retrieve",
+            "count": 2,
+            "chunk_ids": ["c1", "c2"],
+            "docs": [
+                {
+                    "chunk_id": "c1",
+                    "doc_id": "d1",
+                    "source": "docs/a.md",
+                    "dense_score": 0.1,
+                    "sparse_score": 0.9,
+                },
+                {
+                    "chunk_id": "c2",
+                    "doc_id": "d2",
+                    "source": "docs/b.md",
+                    "dense_score": 0.8,
+                    "sparse_score": 0.2,
+                },
+            ],
+        },
+        {
+            "step": "rerank",
+            "count": 2,
+            "docs": [
+                {"chunk_id": "c2", "doc_id": "d2", "source": "docs/b.md"},
+                {"chunk_id": "c1", "doc_id": "d1", "source": "docs/a.md"},
+            ],
+        },
+    ]
+    extracted = extract_trace_fields(trace)
+
+    assert extracted.retrieval_rankings["hybrid"] == ["c1", "c2"]
+    assert extracted.retrieval_rankings["dense"] == ["c2", "c1"]
+    assert extracted.retrieval_rankings["bm25"] == ["c1", "c2"]
+    assert extracted.retrieval_rankings["hybrid_rerank"] == ["c2", "c1"]
+
+
+def test_compute_metrics_includes_hybrid_rerank_mode_metrics() -> None:
+    trace = [
+        {
+            "step": "retrieve",
+            "count": 2,
+            "chunk_ids": ["c1", "c2"],
+            "docs": [
+                {
+                    "chunk_id": "c1",
+                    "doc_id": "d1",
+                    "source": "docs/a.md",
+                    "dense_score": 0.2,
+                    "sparse_score": 0.7,
+                },
+                {
+                    "chunk_id": "c2",
+                    "doc_id": "d2",
+                    "source": "docs/b.md",
+                    "dense_score": 0.9,
+                    "sparse_score": 0.3,
+                },
+            ],
+        },
+        {
+            "step": "rerank",
+            "count": 2,
+            "docs": [
+                {"chunk_id": "c2", "doc_id": "d2", "source": "docs/b.md"},
+                {"chunk_id": "c1", "doc_id": "d1", "source": "docs/a.md"},
+            ],
+        },
+    ]
+    trace_fields = extract_trace_fields(trace)
+    metrics = compute_metrics(
+        expected_behavior="answer",
+        answer="answer",
+        citations=[],
+        confidence=0.5,
+        grounded_score=None,
+        status="answered",
+        loop_count=1,
+        stop_reason="ok",
+        latency_ms=10,
+        trace_fields=trace_fields,
+        reference_answer=None,
+        gold_sources=["chunk_id=c2"],
+    )
+
+    assert "hybrid_rerank" in metrics.retrieval_by_mode
+    assert metrics.retrieval_by_mode["hybrid_rerank"].hit is True
+    assert metrics.retrieval_by_mode["hybrid_rerank"].mrr == 1.0

@@ -29,10 +29,12 @@ def test_settings_defaults(monkeypatch) -> None:
         "EMBEDDING_BATCH_SIZE",
         "EMBEDDING_NORMALIZE",
         "EMBEDDING_HASH_DIMENSION",
+        "RERANKER_ENABLED",
         "RERANKER_PROVIDER",
         "RERANKER_MODEL",
         "RERANKER_DEVICE",
         "RERANKER_BATCH_SIZE",
+        "RERANKER_TOP_K",
         "RERANKER_TOP_N",
         "OCR_ENABLED",
         "OCR_LANGUAGE",
@@ -75,10 +77,12 @@ def test_settings_defaults(monkeypatch) -> None:
     assert settings.embedding_device == "cpu"
     assert settings.embedding_batch_size == 16
     assert settings.embedding_normalize is True
+    assert settings.reranker_enabled is True
     assert settings.reranker_provider == "cross_encoder"
     assert settings.reranker_model == "BAAI/bge-reranker-v2-m3"
     assert settings.reranker_device == "cpu"
     assert settings.reranker_batch_size == 8
+    assert settings.reranker_top_k == 6
     assert settings.reranker_top_n == 6
     assert settings.ocr_enabled is False
     assert settings.ocr_language == "vie+eng"
@@ -160,3 +164,17 @@ def test_critique_schema() -> None:
         note="ok",
     )
     assert critique.grounded is True
+
+
+def test_settings_supports_reranker_top_k_and_legacy_top_n(monkeypatch) -> None:
+    monkeypatch.setenv("RERANKER_TOP_K", "9")
+    monkeypatch.delenv("RERANKER_TOP_N", raising=False)
+    settings_top_k = Settings(_env_file=None)
+    assert settings_top_k.reranker_top_k == 9
+    assert settings_top_k.reranker_top_n == 9
+
+    monkeypatch.delenv("RERANKER_TOP_K", raising=False)
+    monkeypatch.setenv("RERANKER_TOP_N", "7")
+    settings_top_n = Settings(_env_file=None)
+    assert settings_top_n.reranker_top_k == 7
+    assert settings_top_n.reranker_top_n == 7

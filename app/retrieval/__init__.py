@@ -6,6 +6,7 @@ from app.retrieval.hybrid import FusionConfig, HybridRetriever, reciprocal_rank_
 from app.retrieval.reranker import (
     BaseReranker,
     CrossEncoderReranker,
+    PassThroughReranker,
     ScoreOnlyReranker,
     create_reranker,
 )
@@ -18,6 +19,7 @@ __all__ = [
     "DenseRetriever",
     "FusionConfig",
     "HybridRetriever",
+    "PassThroughReranker",
     "ScoreOnlyReranker",
     "SparseRetriever",
     "create_reranker",

@@ -12,6 +12,7 @@ from app.evaluation.schemas import (
     CompareEvalOutput,
     EvalReport,
     ModeEvalOutput,
+    RetrievalModeSummary,
 )
 from app.schemas.common import Mode
 
@@ -85,6 +86,35 @@ def build_comparative_summary(
         "advanced": _rate(advanced_rows, lambda row: row.metrics.has_citations),
     }
     advanced_retry_rate = _rate(advanced_rows, lambda row: row.metrics.retry_used)
+    retrieval_by_mode: dict[str, RetrievalModeSummary] = {}
+    for retrieval_mode in ("dense", "bm25", "hybrid", "hybrid_rerank"):
+        rows_with_mode = [
+            row
+            for row in flattened
+            if retrieval_mode in row.metrics.retrieval_by_mode
+        ]
+        if not rows_with_mode:
+            continue
+
+        hit_count = sum(
+            1
+            for row in rows_with_mode
+            if row.metrics.retrieval_by_mode[retrieval_mode].hit
+        )
+        retrieval_by_mode[retrieval_mode] = RetrievalModeSummary(
+            count=len(rows_with_mode),
+            hit_rate=hit_count / len(rows_with_mode),
+            avg_mrr=sum(
+                row.metrics.retrieval_by_mode[retrieval_mode].mrr
+                for row in rows_with_mode
+            )
+            / len(rows_with_mode),
+            avg_ndcg=sum(
+                row.metrics.retrieval_by_mode[retrieval_mode].ndcg
+                for row in rows_with_mode
+            )
+            / len(rows_with_mode),
+        )
 
     category_rows: list[CategorySummary] = []
     rows_by_mode = {
@@ -140,6 +170,7 @@ def build_comparative_summary(
         else 0.0,
         abstain_rate_by_mode=abstain_rate_by_mode,
         citation_rate_by_mode=citation_rate_by_mode,
+        retrieval_by_mode=retrieval_by_mode,
         per_category=category_rows,
     )
 
@@ -169,18 +200,39 @@ def report_to_markdown(report: EvalReport) -> str:
         f"- Avg MRR: `{summary.avg_mrr:.3f}`",
         f"- Avg nDCG: `{summary.avg_ndcg:.3f}`",
         "",
-        "## Rates",
+        "## Retrieval Mode Breakdown",
         "",
-        f"- Abstain rate (standard): `{summary.abstain_rate_by_mode.get('standard', 0.0):.3f}`",
-        f"- Abstain rate (advanced): `{summary.abstain_rate_by_mode.get('advanced', 0.0):.3f}`",
-        f"- Citation rate (standard): `{summary.citation_rate_by_mode.get('standard', 0.0):.3f}`",
-        f"- Citation rate (advanced): `{summary.citation_rate_by_mode.get('advanced', 0.0):.3f}`",
-        "",
-        "## Per-Category Summary",
-        "",
-        "| mode | category | count | avg_latency_ms | avg_confidence | citation_rate | abstain_rate | retry_rate | hit_rate | avg_mrr | avg_ndcg |",
-        "| --- | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |",
+        "| retrieval_mode | count | hit_rate | avg_mrr | avg_ndcg |",
+        "| --- | ---: | ---: | ---: | ---: |",
     ]
+
+    if summary.retrieval_by_mode:
+        for mode_name in ("dense", "bm25", "hybrid", "hybrid_rerank"):
+            mode_metrics = summary.retrieval_by_mode.get(mode_name)
+            if mode_metrics is None:
+                continue
+            lines.append(
+                "| "
+                f"{mode_name} | {mode_metrics.count} | {mode_metrics.hit_rate:.3f} | "
+                f"{mode_metrics.avg_mrr:.3f} | {mode_metrics.avg_ndcg:.3f} |"
+            )
+
+    lines.extend(
+        [
+            "",
+            "## Rates",
+            "",
+            f"- Abstain rate (standard): `{summary.abstain_rate_by_mode.get('standard', 0.0):.3f}`",
+            f"- Abstain rate (advanced): `{summary.abstain_rate_by_mode.get('advanced', 0.0):.3f}`",
+            f"- Citation rate (standard): `{summary.citation_rate_by_mode.get('standard', 0.0):.3f}`",
+            f"- Citation rate (advanced): `{summary.citation_rate_by_mode.get('advanced', 0.0):.3f}`",
+            "",
+            "## Per-Category Summary",
+            "",
+            "| mode | category | count | avg_latency_ms | avg_confidence | citation_rate | abstain_rate | retry_rate | hit_rate | avg_mrr | avg_ndcg |",
+            "| --- | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |",
+        ]
+    )
 
     for row in summary.per_category:
         lines.append(
@@ -232,9 +284,25 @@ def write_csv_summary(path: Path, mode_outputs: list[ModeEvalOutput]) -> None:
                 "retrieval_hit",
                 "retrieval_mrr",
                 "retrieval_ndcg",
+                "dense_hit",
+                "dense_mrr",
+                "dense_ndcg",
+                "bm25_hit",
+                "bm25_mrr",
+                "bm25_ndcg",
+                "hybrid_hit",
+                "hybrid_mrr",
+                "hybrid_ndcg",
+                "hybrid_rerank_hit",
+                "hybrid_rerank_mrr",
+                "hybrid_rerank_ndcg",
             ]
         )
         for item in mode_outputs:
+            dense = item.metrics.retrieval_by_mode.get("dense")
+            bm25 = item.metrics.retrieval_by_mode.get("bm25")
+            hybrid = item.metrics.retrieval_by_mode.get("hybrid")
+            hybrid_rerank = item.metrics.retrieval_by_mode.get("hybrid_rerank")
             writer.writerow(
                 [
                     item.example_id,
@@ -260,6 +328,18 @@ def write_csv_summary(path: Path, mode_outputs: list[ModeEvalOutput]) -> None:
                     item.metrics.retrieval_hit,
                     item.metrics.retrieval_mrr,
                     item.metrics.retrieval_ndcg,
+                    dense.hit if dense is not None else None,
+                    dense.mrr if dense is not None else None,
+                    dense.ndcg if dense is not None else None,
+                    bm25.hit if bm25 is not None else None,
+                    bm25.mrr if bm25 is not None else None,
+                    bm25.ndcg if bm25 is not None else None,
+                    hybrid.hit if hybrid is not None else None,
+                    hybrid.mrr if hybrid is not None else None,
+                    hybrid.ndcg if hybrid is not None else None,
+                    hybrid_rerank.hit if hybrid_rerank is not None else None,
+                    hybrid_rerank.mrr if hybrid_rerank is not None else None,
+                    hybrid_rerank.ndcg if hybrid_rerank is not None else None,
                 ]
             )
 

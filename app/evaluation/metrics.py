@@ -10,6 +10,7 @@ from collections.abc import Iterable
 from app.evaluation.schemas import (
     EvalExpectedBehavior,
     EvalMetrics,
+    RetrievalModeMetrics,
     RetrievedSourceTrace,
     TraceExtraction,
 )
@@ -28,6 +29,7 @@ _GOLD_FIELD_ALIASES = {
     "title": "title",
     "section": "section",
 }
+_RETRIEVAL_EVAL_MODES = ("dense", "bm25", "hybrid", "hybrid_rerank")
 
 
 def _safe_normalize(value: str | None, *, is_path: bool = False) -> str:
@@ -240,6 +242,14 @@ def _source_fingerprint(
     )
 
 
+def _source_dedupe_key(source: RetrievedSourceTrace) -> str:
+    chunk_id = _normalize_text(source.chunk_id)
+    if chunk_id:
+        return f"chunk:{chunk_id}"
+    fingerprint = _source_fingerprint(source)
+    return "meta:" + "|".join(fingerprint)
+
+
 def _to_retrieved_source(doc: dict) -> RetrievedSourceTrace | None:
     chunk_id = doc.get("chunk_id") if isinstance(doc.get("chunk_id"), str) else None
     doc_id = doc.get("doc_id") if isinstance(doc.get("doc_id"), str) else None
@@ -264,6 +274,50 @@ def _to_retrieved_source(doc: dict) -> RetrievedSourceTrace | None:
     if not any(_source_fingerprint(candidate)):
         return None
     return candidate
+
+
+def _ordered_sources_from_docs(docs: list[dict]) -> list[RetrievedSourceTrace]:
+    ordered: list[RetrievedSourceTrace] = []
+    seen: set[str] = set()
+    for doc in docs:
+        source = _to_retrieved_source(doc)
+        if source is None:
+            continue
+        key = _source_dedupe_key(source)
+        if key in seen:
+            continue
+        seen.add(key)
+        ordered.append(source)
+    return ordered
+
+
+def _ordered_chunk_ids(sources: list[RetrievedSourceTrace]) -> list[str]:
+    chunk_ids: list[str] = []
+    seen: set[str] = set()
+    for source in sources:
+        chunk_id = source.chunk_id if isinstance(source.chunk_id, str) else ""
+        normalized = _normalize_text(chunk_id)
+        if not normalized or normalized in seen:
+            continue
+        seen.add(normalized)
+        chunk_ids.append(chunk_id)
+    return chunk_ids
+
+
+def _sorted_sources_by_score(
+    docs: list[dict], score_field: str
+) -> list[RetrievedSourceTrace]:
+    scored: list[tuple[float, int, RetrievedSourceTrace]] = []
+    for index, doc in enumerate(docs):
+        score = doc.get(score_field)
+        if not isinstance(score, (int, float)):
+            continue
+        source = _to_retrieved_source(doc)
+        if source is None:
+            continue
+        scored.append((float(score), index, source))
+    scored.sort(key=lambda row: (-row[0], row[1]))
+    return _ordered_sources_from_docs([row[2].model_dump() for row in scored])
 
 
 def _parse_gold_source_fields(gold: str) -> dict[str, str]:
@@ -433,6 +487,8 @@ def extract_trace_fields(trace: list[dict]) -> TraceExtraction:
     """Extract retrieval/rerank details from workflow traces."""
     retrieved_chunk_ids: list[str] = []
     retrieved_sources: list[RetrievedSourceTrace] = []
+    retrieval_rankings: dict[str, list[str]] = {}
+    retrieval_sources_by_mode: dict[str, list[RetrievedSourceTrace]] = {}
     rerank_scores: dict[str, float] = {}
     retrieved_count = 0
     selected_count = 0
@@ -440,6 +496,9 @@ def extract_trace_fields(trace: list[dict]) -> TraceExtraction:
     chunk_size: int | None = None
     chunk_overlap: int | None = None
     source_fingerprints: set[tuple[str, str, str, str, str, str]] = set()
+    latest_retrieve_docs: list[dict] = []
+    latest_hybrid_sources: list[RetrievedSourceTrace] = []
+    latest_hybrid_rerank_sources: list[RetrievedSourceTrace] = []
 
     def _push_chunk_id(chunk_id: str) -> None:
         if chunk_id and chunk_id not in retrieved_chunk_ids:
@@ -470,6 +529,10 @@ def extract_trace_fields(trace: list[dict]) -> TraceExtraction:
                         _push_chunk_id(value)
             docs = step.get("docs", [])
             if isinstance(docs, list):
+                latest_retrieve_docs = [doc for doc in docs if isinstance(doc, dict)]
+                ordered_sources = _ordered_sources_from_docs(latest_retrieve_docs)
+                if ordered_sources:
+                    latest_hybrid_sources = ordered_sources
                 for doc in docs:
                     if isinstance(doc, dict):
                         _push_source_doc(doc)
@@ -486,6 +549,10 @@ def extract_trace_fields(trace: list[dict]) -> TraceExtraction:
         if step_name == "rerank":
             docs = step.get("docs", [])
             if isinstance(docs, list):
+                rerank_docs = [doc for doc in docs if isinstance(doc, dict)]
+                ordered_rerank_sources = _ordered_sources_from_docs(rerank_docs)
+                if ordered_rerank_sources:
+                    latest_hybrid_rerank_sources = ordered_rerank_sources
                 for doc in docs:
                     if not isinstance(doc, dict):
                         continue
@@ -525,12 +592,22 @@ def extract_trace_fields(trace: list[dict]) -> TraceExtraction:
 
             retrieved_docs = step.get("retrieved_docs", [])
             if isinstance(retrieved_docs, list):
+                latest_retrieve_docs = [
+                    doc for doc in retrieved_docs if isinstance(doc, dict)
+                ]
+                ordered_sources = _ordered_sources_from_docs(latest_retrieve_docs)
+                if ordered_sources:
+                    latest_hybrid_sources = ordered_sources
                 for doc in retrieved_docs:
                     if isinstance(doc, dict):
                         _push_source_doc(doc)
 
             reranked_docs = step.get("reranked_docs", [])
             if isinstance(reranked_docs, list):
+                rerank_docs = [doc for doc in reranked_docs if isinstance(doc, dict)]
+                ordered_rerank_sources = _ordered_sources_from_docs(rerank_docs)
+                if ordered_rerank_sources:
+                    latest_hybrid_rerank_sources = ordered_rerank_sources
                 for doc in reranked_docs:
                     if not isinstance(doc, dict):
                         continue
@@ -553,9 +630,47 @@ def extract_trace_fields(trace: list[dict]) -> TraceExtraction:
     if retrieved_count == 0 and retrieved_chunk_ids:
         retrieved_count = len(retrieved_chunk_ids)
 
+    if not latest_hybrid_sources:
+        latest_hybrid_sources = []
+        source_by_chunk_id: dict[str, RetrievedSourceTrace] = {}
+        for source in retrieved_sources:
+            chunk_id = _normalize_text(source.chunk_id)
+            if chunk_id and chunk_id not in source_by_chunk_id:
+                source_by_chunk_id[chunk_id] = source
+        seen_chunk_ids: set[str] = set()
+        for chunk_id in retrieved_chunk_ids:
+            normalized_chunk_id = _normalize_text(chunk_id)
+            if not normalized_chunk_id or normalized_chunk_id in seen_chunk_ids:
+                continue
+            seen_chunk_ids.add(normalized_chunk_id)
+            if normalized_chunk_id in source_by_chunk_id:
+                latest_hybrid_sources.append(source_by_chunk_id[normalized_chunk_id])
+        if not latest_hybrid_sources:
+            latest_hybrid_sources = list(retrieved_sources)
+
+    dense_sources = _sorted_sources_by_score(latest_retrieve_docs, "dense_score")
+    bm25_sources = _sorted_sources_by_score(latest_retrieve_docs, "sparse_score")
+
+    if dense_sources:
+        retrieval_sources_by_mode["dense"] = dense_sources
+        retrieval_rankings["dense"] = _ordered_chunk_ids(dense_sources)
+    if bm25_sources:
+        retrieval_sources_by_mode["bm25"] = bm25_sources
+        retrieval_rankings["bm25"] = _ordered_chunk_ids(bm25_sources)
+    if latest_hybrid_sources:
+        retrieval_sources_by_mode["hybrid"] = latest_hybrid_sources
+        retrieval_rankings["hybrid"] = _ordered_chunk_ids(latest_hybrid_sources)
+    if latest_hybrid_rerank_sources:
+        retrieval_sources_by_mode["hybrid_rerank"] = latest_hybrid_rerank_sources
+        retrieval_rankings["hybrid_rerank"] = _ordered_chunk_ids(
+            latest_hybrid_rerank_sources
+        )
+
     return TraceExtraction(
         retrieved_chunk_ids=retrieved_chunk_ids,
         retrieved_sources=retrieved_sources,
+        retrieval_rankings=retrieval_rankings,
+        retrieval_sources_by_mode=retrieval_sources_by_mode,
         rerank_scores=rerank_scores,
         retrieved_count=retrieved_count,
         selected_context_count=selected_count,
@@ -725,11 +840,37 @@ def compute_metrics(
 
     gold_overlap = cited_gold_source_overlap(citations, gold_sources)
 
-    hit, mrr, ndcg = compute_retrieval_metrics(
-        trace_fields.retrieved_chunk_ids,
-        gold_sources,
-        trace_fields.retrieved_sources,
+    retrieval_by_mode: dict[str, RetrievalModeMetrics] = {}
+    for retrieval_mode in _RETRIEVAL_EVAL_MODES:
+        ranked_chunk_ids = trace_fields.retrieval_rankings.get(retrieval_mode, [])
+        ranked_sources = trace_fields.retrieval_sources_by_mode.get(retrieval_mode, [])
+
+        if retrieval_mode == "hybrid" and not ranked_chunk_ids and not ranked_sources:
+            ranked_chunk_ids = trace_fields.retrieved_chunk_ids
+            ranked_sources = trace_fields.retrieved_sources
+
+        mode_hit, mode_mrr, mode_ndcg = compute_retrieval_metrics(
+            ranked_chunk_ids,
+            gold_sources,
+            ranked_sources,
+        )
+        retrieval_by_mode[retrieval_mode] = RetrievalModeMetrics(
+            hit=mode_hit,
+            mrr=mode_mrr,
+            ndcg=mode_ndcg,
+        )
+
+    has_hybrid_rerank = bool(
+        trace_fields.retrieval_rankings.get("hybrid_rerank")
+        or trace_fields.retrieval_sources_by_mode.get("hybrid_rerank")
     )
+    if has_hybrid_rerank:
+        selected_metrics = retrieval_by_mode["hybrid_rerank"]
+    else:
+        selected_metrics = retrieval_by_mode["hybrid"]
+    hit = selected_metrics.hit
+    mrr = selected_metrics.mrr
+    ndcg = selected_metrics.ndcg
 
     groundedness_proxy: float | None = None
     groundedness_proxy_note: str | None = None
@@ -764,6 +905,7 @@ def compute_metrics(
         retrieval_hit=hit,
         retrieval_mrr=mrr,
         retrieval_ndcg=ndcg,
+        retrieval_by_mode=retrieval_by_mode,
         answer_non_empty=answer_non_empty,
         answer_contains_reference_keywords=answer_contains_reference_keywords,
         cited_gold_source_overlap=gold_overlap,

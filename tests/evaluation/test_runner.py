@@ -163,6 +163,7 @@ def test_evaluation_runner_with_mocked_workflows(tmp_path: Path) -> None:
     assert first_standard.retrieved_sources
     assert first_standard.retrieved_sources[0].chunk_id == "c1"
     assert first_standard.rerank_scores["c1"] == 0.88
+    assert "hybrid_rerank" in first_standard.metrics.retrieval_by_mode
 
 
 def test_stub_predictor_runs_without_workflow_stack(tmp_path: Path) -> None:
