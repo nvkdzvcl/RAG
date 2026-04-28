@@ -142,6 +142,136 @@ def test_compute_retrieval_metrics_matches_section_when_structured() -> None:
     assert math.isclose(ndcg, 1.0)
 
 
+def test_compute_retrieval_metrics_title_section_ambiguous_does_not_match() -> None:
+    hit, mrr, ndcg = compute_retrieval_metrics(
+        ["doca_chunk_0001_hash", "docb_chunk_0001_hash"],
+        ["title=Modes Guide|section=Advanced Mode"],
+        [
+            RetrievedSourceTrace(
+                chunk_id="doca_chunk_0001_hash",
+                doc_id="doca",
+                source="docs/a.md",
+                title="modes guide",
+                section="advanced mode",
+            ),
+            RetrievedSourceTrace(
+                chunk_id="docb_chunk_0001_hash",
+                doc_id="docb",
+                source="docs/b.md",
+                title="modes guide",
+                section="advanced mode",
+            ),
+        ],
+    )
+    assert hit is False
+    assert math.isclose(mrr, 0.0)
+    assert math.isclose(ndcg, 0.0)
+
+
+def test_compute_retrieval_metrics_title_section_unique_matches() -> None:
+    hit, mrr, ndcg = compute_retrieval_metrics(
+        ["doca_chunk_0001_hash", "docb_chunk_0001_hash"],
+        ["title=Modes Guide|section=Advanced Mode"],
+        [
+            RetrievedSourceTrace(
+                chunk_id="doca_chunk_0001_hash",
+                doc_id="doca",
+                source="docs/a.md",
+                title="modes guide",
+                section="overview",
+            ),
+            RetrievedSourceTrace(
+                chunk_id="docb_chunk_0001_hash",
+                doc_id="docb",
+                source="docs/b.md",
+                title="modes guide",
+                section="advanced mode",
+            ),
+        ],
+    )
+    assert hit is True
+    assert math.isclose(mrr, 1.0 / 2)
+    assert math.isclose(ndcg, 1.0 / math.log2(3))
+
+
+def test_compute_retrieval_metrics_source_match_overrides_weak_ambiguity() -> None:
+    hit, mrr, ndcg = compute_retrieval_metrics(
+        ["doca_chunk_0001_hash", "docb_chunk_0001_hash"],
+        ["source=docs/a.md,title=Modes Guide,section=Advanced Mode"],
+        [
+            RetrievedSourceTrace(
+                chunk_id="doca_chunk_0001_hash",
+                doc_id="doca",
+                source="docs/a.md",
+                title="modes guide",
+                section="advanced mode",
+            ),
+            RetrievedSourceTrace(
+                chunk_id="docb_chunk_0001_hash",
+                doc_id="docb",
+                source="docs/b.md",
+                title="modes guide",
+                section="advanced mode",
+            ),
+        ],
+    )
+    assert hit is True
+    assert math.isclose(mrr, 1.0)
+    assert math.isclose(ndcg, 1.0)
+
+
+def test_compute_retrieval_metrics_chunk_id_match_overrides_weak_ambiguity() -> None:
+    hit, mrr, ndcg = compute_retrieval_metrics(
+        ["doca_chunk_0001_hash", "docb_chunk_0001_hash"],
+        ["chunk_id=docb_chunk_0001_hash,title=Modes Guide,section=Advanced Mode"],
+        [
+            RetrievedSourceTrace(
+                chunk_id="doca_chunk_0001_hash",
+                doc_id="doca",
+                source="docs/a.md",
+                title="modes guide",
+                section="advanced mode",
+            ),
+            RetrievedSourceTrace(
+                chunk_id="docb_chunk_0001_hash",
+                doc_id="docb",
+                source="docs/b.md",
+                title="modes guide",
+                section="advanced mode",
+            ),
+        ],
+    )
+    assert hit is True
+    assert math.isclose(mrr, 1.0 / 2)
+    assert math.isclose(ndcg, 1.0 / math.log2(3))
+
+
+def test_compute_retrieval_metrics_doc_id_match_overrides_weak_ambiguity() -> None:
+    hit, mrr, ndcg = compute_retrieval_metrics(
+        ["doca_chunk_0001_hash", "docb_chunk_0001_hash"],
+        ["doc_id=docb,title=Modes Guide,section=Advanced Mode"],
+        [
+            RetrievedSourceTrace(
+                chunk_id="doca_chunk_0001_hash",
+                doc_id="doca",
+                source="docs/a.md",
+                title="modes guide",
+                section="advanced mode",
+            ),
+            RetrievedSourceTrace(
+                chunk_id="docb_chunk_0001_hash",
+                doc_id="docb",
+                source="docs/b.md",
+                title="modes guide",
+                section="advanced mode",
+            ),
+        ],
+    )
+    assert hit is True
+    assert math.isclose(mrr, 1.0 / 2)
+    assert math.isclose(ndcg, 1.0 / math.log2(3))
+
+
 def test_compute_retrieval_metrics_matches_source_basename_path() -> None:
     hit, mrr, ndcg = compute_retrieval_metrics(
         ["docpdf_chunk_0001_hash"],
@@ -252,7 +382,9 @@ def test_compute_retrieval_metrics_keeps_legacy_fallback_string_match() -> None:
     assert math.isclose(ndcg, 1.0)
 
 
-def test_compute_retrieval_metrics_rechunk_stability_with_same_source_metadata() -> None:
+def test_compute_retrieval_metrics_rechunk_stability_with_same_source_metadata() -> (
+    None
+):
     hit, mrr, ndcg = compute_retrieval_metrics(
         ["docguide_chunk_0042_newhash"],
         ["docs/guide.md"],
@@ -271,7 +403,9 @@ def test_compute_retrieval_metrics_rechunk_stability_with_same_source_metadata()
     assert math.isclose(ndcg, 1.0)
 
 
-def test_compute_retrieval_metrics_similar_title_section_different_source_no_match() -> None:
+def test_compute_retrieval_metrics_similar_title_section_different_source_no_match() -> (
+    None
+):
     hit, mrr, ndcg = compute_retrieval_metrics(
         ["docwrong_chunk_0001_hash"],
         ["source=docs/correct.md,title=guide,section=intro"],

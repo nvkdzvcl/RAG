@@ -181,9 +181,7 @@ def _match_path_value(
     return _path_basename_is_unambiguous(expected_base, candidates)
 
 
-def _is_title_unambiguous(
-    title: str, candidates: list[RetrievedSourceTrace]
-) -> bool:
+def _is_title_unambiguous(title: str, candidates: list[RetrievedSourceTrace]) -> bool:
     expected = _normalize_text(title)
     if not expected:
         return False
@@ -205,6 +203,22 @@ def _is_section_unambiguous(
     return matches == 1
 
 
+def _is_title_section_unambiguous(
+    title: str, section: str, candidates: list[RetrievedSourceTrace]
+) -> bool:
+    expected_title = _normalize_text(title)
+    expected_section = _normalize_text(section)
+    if not expected_title or not expected_section:
+        return False
+    matches = sum(
+        1
+        for candidate in candidates
+        if _candidate_title(candidate) == expected_title
+        and _candidate_section(candidate) == expected_section
+    )
+    return matches == 1
+
+
 def _derive_doc_id_from_chunk_id(chunk_id: str | None) -> str | None:
     if not isinstance(chunk_id, str) or not chunk_id:
         return None
@@ -213,7 +227,9 @@ def _derive_doc_id_from_chunk_id(chunk_id: str | None) -> str | None:
     return chunk_id.split("_chunk_", 1)[0]
 
 
-def _source_fingerprint(source: RetrievedSourceTrace) -> tuple[str, str, str, str, str, str]:
+def _source_fingerprint(
+    source: RetrievedSourceTrace,
+) -> tuple[str, str, str, str, str, str]:
     return (
         _normalize_text(source.chunk_id),
         _normalize_text(source.doc_id),
@@ -317,19 +333,18 @@ def _match_structured_gold_source(
         return (
             _candidate_title(candidate) == _normalize_text(title_value)
             and _candidate_section(candidate) == _normalize_text(section_value)
+            and _is_title_section_unambiguous(title_value, section_value, candidates)
         )
 
     # 5) title-only / section-only if unambiguous
     if title_value:
-        return (
-            _candidate_title(candidate) == _normalize_text(title_value)
-            and _is_title_unambiguous(title_value, candidates)
-        )
+        return _candidate_title(candidate) == _normalize_text(
+            title_value
+        ) and _is_title_unambiguous(title_value, candidates)
     if section_value:
-        return (
-            _candidate_section(candidate) == _normalize_text(section_value)
-            and _is_section_unambiguous(section_value, candidates)
-        )
+        return _candidate_section(candidate) == _normalize_text(
+            section_value
+        ) and _is_section_unambiguous(section_value, candidates)
 
     return False
 
@@ -391,18 +406,17 @@ def _match_legacy_gold_source(
             if (
                 _candidate_title(candidate) == left
                 and _candidate_section(candidate) == right
+                and _is_title_section_unambiguous(left, right, candidates)
             ):
                 return True
 
     # 5) title-only / section-only if unambiguous
-    if (
-        _candidate_title(candidate) == normalized_gold
-        and _is_title_unambiguous(normalized_gold, candidates)
+    if _candidate_title(candidate) == normalized_gold and _is_title_unambiguous(
+        normalized_gold, candidates
     ):
         return True
-    if (
-        _candidate_section(candidate) == normalized_gold
-        and _is_section_unambiguous(normalized_gold, candidates)
+    if _candidate_section(candidate) == normalized_gold and _is_section_unambiguous(
+        normalized_gold, candidates
     ):
         return True
 
@@ -588,7 +602,9 @@ def cited_gold_source_overlap(
         )
 
     matched = sum(
-        1 for source in expected if any(
+        1
+        for source in expected
+        if any(
             _match_gold_source(source, citation, citation_sources)
             for citation in citation_sources
         )
