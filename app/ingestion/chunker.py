@@ -14,6 +14,7 @@ class Chunker:
     """Split structured documents into token-aware chunks."""
 
     _token_pattern = re.compile(r"\S+")
+    _prefix_value_max_chars = 96
 
     def __init__(
         self,
@@ -61,10 +62,10 @@ class Chunker:
         title = (doc.title or "").strip()
         section = (doc.section or "").strip()
 
-        if len(title) > 100:
-            title = title[:97] + "..."
-        if len(section) > 100:
-            section = section[:97] + "..."
+        if len(title) > self._prefix_value_max_chars:
+            title = title[: self._prefix_value_max_chars - 3].rstrip() + "..."
+        if len(section) > self._prefix_value_max_chars:
+            section = section[: self._prefix_value_max_chars - 3].rstrip() + "..."
 
         parts = []
         if title:
@@ -73,8 +74,89 @@ class Chunker:
             parts.append(f"Section: {section}")
 
         if parts:
-            return f"[{' | '.join(parts)}]\n"
+            return f"[{' | '.join(parts)}]"
         return ""
+
+    def _enforce_chunk_budget(
+        self, *, content: str, heading_prefix: str
+    ) -> tuple[str, bool]:
+        """Enforce chunk_size after heading prefix injection where possible."""
+        if not heading_prefix:
+            return content, False
+
+        prefix_tokens = len(self._token_spans(heading_prefix))
+        if prefix_tokens > self.chunk_size:
+            # Explicitly allowed to exceed when prefix itself is larger than chunk_size.
+            return f"{heading_prefix}\n{content}".strip(), True
+
+        raw_tokens = self._token_spans(content)
+        available_tokens = max(0, self.chunk_size - prefix_tokens)
+        if len(raw_tokens) > available_tokens:
+            if available_tokens == 0:
+                return heading_prefix, True
+            content = self._slice_by_token_window(
+                content,
+                raw_tokens,
+                0,
+                available_tokens,
+            )
+
+        return f"{heading_prefix}\n{content}".strip(), True
+
+    def _merge_short_paragraphs(
+        self, paragraphs: list[str], effective_chunk_size: int
+    ) -> list[str]:
+        """Merge sequential short paragraphs to avoid tiny isolated chunks."""
+        normalized = [
+            paragraph.strip() for paragraph in paragraphs if paragraph.strip()
+        ]
+        if not normalized:
+            return []
+
+        paragraph_units: list[tuple[str, int]] = []
+        for paragraph in normalized:
+            token_count = len(self._token_spans(paragraph))
+            if token_count > 0:
+                paragraph_units.append((paragraph, token_count))
+        if not paragraph_units:
+            return []
+
+        merged_units: list[tuple[str, int]] = []
+        current_parts: list[str] = []
+        current_tokens = 0
+
+        for paragraph, token_count in paragraph_units:
+            if not current_parts:
+                current_parts = [paragraph]
+                current_tokens = token_count
+                continue
+
+            if current_tokens + token_count <= effective_chunk_size:
+                current_parts.append(paragraph)
+                current_tokens += token_count
+                continue
+
+            merged_units.append(("\n\n".join(current_parts), current_tokens))
+            current_parts = [paragraph]
+            current_tokens = token_count
+
+        if current_parts:
+            merged_units.append(("\n\n".join(current_parts), current_tokens))
+
+        min_tokens = max(1, min(16, effective_chunk_size // 4))
+        stabilized: list[tuple[str, int]] = []
+        for text, token_count in merged_units:
+            if (
+                stabilized
+                and token_count < min_tokens
+                and stabilized[-1][1] + token_count <= effective_chunk_size
+            ):
+                prev_text, prev_tokens = stabilized[-1]
+                stabilized[-1] = (f"{prev_text}\n\n{text}", prev_tokens + token_count)
+                continue
+            stabilized.append((text, token_count))
+
+        return [text for text, _ in stabilized]
 
     def _make_chunk(
         self,
@@ -89,8 +171,10 @@ class Chunker:
         final_content = content
         injected = False
         if heading_prefix and not content.startswith(heading_prefix):
-            final_content = f"{heading_prefix}\n{content}".strip()
-            injected = True
+            final_content, injected = self._enforce_chunk_budget(
+                content=content,
+                heading_prefix=heading_prefix,
+            )
 
         chunk_id = self.generate_chunk_id(doc.doc_id, chunk_index, final_content)
         metadata = dict(doc.metadata)
@@ -143,37 +227,19 @@ class Chunker:
     ) -> list[DocumentChunk]:
         heading_prefix = self._build_heading_prefix(doc)
         prefix_tokens = len(self._token_spans(heading_prefix)) if heading_prefix else 0
-        effective_chunk_size = max(10, self.chunk_size - prefix_tokens)
+        effective_chunk_size = (
+            max(1, self.chunk_size - prefix_tokens)
+            if prefix_tokens < self.chunk_size
+            else 1
+        )
 
         paragraphs = split_paragraphs(doc.content)
         if not paragraphs:
             paragraphs = [doc.content]
 
-        merged_paragraphs: list[str] = []
-        current_merge: list[str] = []
-        current_tokens = 0
-
-        for p in paragraphs:
-            p_text = p.strip()
-            if not p_text:
-                continue
-
-            spans = self._token_spans(p_text)
-            if not spans:
-                continue
-
-            p_len = len(spans)
-
-            if current_tokens > 0 and current_tokens + p_len > effective_chunk_size:
-                merged_paragraphs.append("\n\n".join(current_merge))
-                current_merge = []
-                current_tokens = 0
-
-            current_merge.append(p_text)
-            current_tokens += p_len
-
-        if current_merge:
-            merged_paragraphs.append("\n\n".join(current_merge))
+        merged_paragraphs = self._merge_short_paragraphs(
+            paragraphs, effective_chunk_size
+        )
 
         chunks: list[DocumentChunk] = []
         chunk_index = chunk_index_start
@@ -263,6 +329,15 @@ class Chunker:
                 merged_content = "\n\n".join(
                     d.content.strip() for d in current_group if d.content.strip()
                 )
+                merged_metadata = dict(base_doc.metadata)
+                for member in current_group[1:]:
+                    for key, value in member.metadata.items():
+                        if key not in merged_metadata:
+                            merged_metadata[key] = value
+                if any(
+                    bool(member.metadata.get("is_heading")) for member in current_group
+                ):
+                    merged_metadata["is_heading"] = True
                 new_doc = LoadedDocument(
                     doc_id=base_doc.doc_id,
                     source=base_doc.source,
@@ -272,10 +347,22 @@ class Chunker:
                     content=merged_content,
                     block_type="text",
                     language=base_doc.language,
-                    metadata=dict(base_doc.metadata),
+                    metadata=merged_metadata,
                 )
                 grouped.append(new_doc)
             current_group.clear()
+
+        def can_group(prev: LoadedDocument, current: LoadedDocument) -> bool:
+            if prev.doc_id != current.doc_id:
+                return False
+            if prev.section == current.section:
+                return True
+            prev_is_heading = bool(prev.metadata.get("is_heading"))
+            prev_section = (prev.section or "").strip()
+            current_section = (current.section or "").strip()
+            if prev_is_heading and (not prev_section or not current_section):
+                return True
+            return False
 
         for doc in docs:
             if doc.block_type != "text":
@@ -285,7 +372,7 @@ class Chunker:
 
             if current_group:
                 prev = current_group[-1]
-                if doc.doc_id != prev.doc_id or doc.section != prev.section:
+                if not can_group(prev, doc):
                     flush_group()
 
             current_group.append(doc)
