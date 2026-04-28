@@ -7,10 +7,12 @@ from typing import Any
 from app.evaluation.schemas import RetrievedSourceTrace
 from app.evaluation.metrics import compute_retrieval_metrics
 from app.indexing.bm25_index import BM25Index
-from app.indexing.persistence import InMemoryVectorIndex
+from app.indexing.vector_index import InMemoryVectorIndex
 from app.indexing.providers.hash_embedding import HashEmbeddingProvider
+from app.retrieval.dense import DenseRetriever
+from app.retrieval.sparse import SparseRetriever
 from app.retrieval.hybrid import HybridRetriever
-from app.schemas.indexing import DocumentChunk
+from app.schemas.ingestion import DocumentChunk
 
 
 def run_benchmark() -> dict[str, Any]:
@@ -22,14 +24,20 @@ def run_benchmark() -> dict[str, Any]:
     corpus = [DocumentChunk(**item) for item in data["corpus"]]
 
     provider = HashEmbeddingProvider()
-    vector_index = InMemoryVectorIndex(embedding_provider=provider)
+    vector_index = InMemoryVectorIndex()
     bm25_index = BM25Index()
 
-    vector_index.add_chunks(corpus)
-    bm25_index.add_chunks(corpus)
+    vector_index.build(corpus)
+    bm25_index.build(corpus)
+
+    dense_retriever = DenseRetriever(
+        vector_index=vector_index, embedding_provider=provider
+    )
+    sparse_retriever = SparseRetriever(sparse_index=bm25_index)
 
     retriever = HybridRetriever(
-        dense_index=vector_index, sparse_index=bm25_index, top_k=3, alpha=0.5
+        dense_retriever=dense_retriever,
+        sparse_retriever=sparse_retriever,
     )
 
     results = []
@@ -41,7 +49,7 @@ def run_benchmark() -> dict[str, Any]:
         query = item["query"]
         gold = item["gold_sources"]
 
-        scored_chunks = retriever.retrieve(query)
+        scored_chunks = retriever.retrieve(query, top_k=3)
         retrieved_ids = []
         retrieved_sources = []
         for sc in scored_chunks:
