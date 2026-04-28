@@ -9,9 +9,10 @@ import time
 
 from app.core.async_utils import run_coro_sync
 from app.core.cache import QueryCache, make_cache_key
+from app.core.timing import normalize_timing_payload
 from app.retrieval.dense import DenseRetriever
 from app.retrieval.sparse import SparseRetriever
-from app.schemas.retrieval import RetrievalResult
+from app.schemas.retrieval import RetrievalBatch, RetrievalResult
 
 logger = logging.getLogger(__name__)
 
@@ -172,7 +173,12 @@ class HybridRetriever:
         }
 
     def get_last_timing(self) -> dict[str, int]:
-        """Return timing for the most recent retrieval call."""
+        """Return timing for the most recent retrieval call.
+
+        This legacy diagnostic is shared by all calls on this retriever and is
+        not request-safe under concurrency. New callers should use
+        ``retrieve_with_timing``/``retrieve_with_timing_async``.
+        """
         return dict(self._last_timing)
 
     def _resolve_candidate_k(self, top_k: int) -> int:
@@ -180,15 +186,22 @@ class HybridRetriever:
         minimum = max(1, int(self.fusion_config.min_candidates_per_retriever))
         return max(top_k, top_k * multiplier, minimum)
 
-    async def retrieve_async(self, query: str, top_k: int = 5) -> list[RetrievalResult]:
+    async def retrieve_with_timing_async(
+        self, query: str, top_k: int = 5
+    ) -> RetrievalBatch:
         if top_k <= 0:
-            self._last_timing = {
+            timing = {
                 "retrieval_total_ms": 0,
                 "dense_retrieve_ms": 0,
                 "sparse_retrieve_ms": 0,
                 "hybrid_merge_ms": 0,
             }
-            return []
+            self._last_timing = timing
+            return RetrievalBatch(
+                results=[],
+                timings_ms=timing,
+                timing_breakdown_available=True,
+            )
 
         total_started = time.perf_counter()
 
@@ -198,7 +211,7 @@ class HybridRetriever:
             cache_key = make_cache_key(query, top_k)
             hit, cached = self._retrieval_cache.get(cache_key)
             if hit:
-                self._last_timing = {
+                timing = {
                     "retrieval_total_ms": int(
                         (time.perf_counter() - total_started) * 1000
                     ),
@@ -206,7 +219,12 @@ class HybridRetriever:
                     "sparse_retrieve_ms": 0,
                     "hybrid_merge_ms": 0,
                 }
-                return cached
+                self._last_timing = timing
+                return RetrievalBatch(
+                    results=cached,
+                    timings_ms=timing,
+                    timing_breakdown_available=True,
+                )
 
         candidate_k = self._resolve_candidate_k(top_k)
         dense_ms = 0
@@ -253,19 +271,31 @@ class HybridRetriever:
             top_k,
             _debug_results(merged),
         )
-        self._last_timing = {
+        timing = {
             "retrieval_total_ms": int((time.perf_counter() - total_started) * 1000),
             "dense_retrieve_ms": dense_ms,
             "sparse_retrieve_ms": sparse_ms,
             "hybrid_merge_ms": merge_ms,
         }
+        self._last_timing = normalize_timing_payload(timing)
 
         # Store in retrieval cache.
         if self._retrieval_cache is not None and cache_key is not None:
             self._retrieval_cache.put(cache_key, merged)
 
-        return merged
+        return RetrievalBatch(
+            results=merged,
+            timings_ms=self._last_timing,
+            timing_breakdown_available=True,
+        )
+
+    async def retrieve_async(self, query: str, top_k: int = 5) -> list[RetrievalResult]:
+        return (await self.retrieve_with_timing_async(query, top_k=top_k)).results
+
+    def retrieve_with_timing(self, query: str, top_k: int = 5) -> RetrievalBatch:
+        """Sync compatibility wrapper returning request-scoped timing."""
+        return run_coro_sync(self.retrieve_with_timing_async(query, top_k=top_k))
 
     def retrieve(self, query: str, top_k: int = 5) -> list[RetrievalResult]:
         """Sync compatibility wrapper."""
-        return run_coro_sync(self.retrieve_async(query, top_k=top_k))
+        return self.retrieve_with_timing(query, top_k=top_k).results

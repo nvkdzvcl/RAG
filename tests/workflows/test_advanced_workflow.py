@@ -1,8 +1,10 @@
 """Advanced workflow tests."""
 
+import asyncio
+
 from app.schemas.api import AdvancedQueryResponse, validate_query_response
 from app.schemas.common import Mode
-from app.schemas.retrieval import RetrievalResult
+from app.schemas.retrieval import RetrievalBatch, RetrievalResult
 from app.schemas.workflow import CritiqueResult
 from app.generation import StubLLMClient
 from app.retrieval import ScoreOnlyReranker
@@ -149,6 +151,187 @@ def test_advanced_workflow_trace_contains_timing_metrics() -> None:
     ):
         assert key in timing_summary
         assert isinstance(timing_summary[key], int)
+
+
+def test_advanced_workflow_records_real_stage_durations() -> None:
+    class _SlowGate:
+        async def decide_async(
+            self,
+            query: str,
+            chat_history: list[dict[str, str]] | None = None,
+            *,
+            model: str | None = None,
+            response_language: str = "en",
+        ) -> tuple[bool, str]:
+            _ = query
+            _ = chat_history
+            _ = model
+            _ = response_language
+            await asyncio.sleep(0.01)
+            return True, "slow_gate"
+
+    class _SlowCritic:
+        async def critique_async(
+            self,
+            query: str,
+            draft_answer: str,
+            context: list[RetrievalResult],
+            *,
+            loop_count: int,
+            max_loops: int,
+            chat_history: list[dict[str, str]] | None = None,
+            model: str | None = None,
+            response_language: str = "en",
+        ) -> CritiqueResult:
+            _ = query
+            _ = draft_answer
+            _ = context
+            _ = loop_count
+            _ = max_loops
+            _ = chat_history
+            _ = model
+            _ = response_language
+            await asyncio.sleep(0.01)
+            return CritiqueResult(
+                grounded=True,
+                enough_evidence=True,
+                has_conflict=False,
+                missing_aspects=["detail"],
+                should_retry_retrieval=False,
+                should_refine_answer=True,
+                better_queries=[],
+                confidence=0.77,
+                note="incomplete_answer: needs refinement",
+            )
+
+    class _SlowRefiner:
+        async def refine_async(
+            self,
+            query: str,
+            draft_answer: str,
+            critique: CritiqueResult,
+            context: list[RetrievalResult],
+            *,
+            chat_history: list[dict[str, str]] | None = None,
+            model: str | None = None,
+            response_language: str = "en",
+        ) -> str:
+            _ = query
+            _ = draft_answer
+            _ = critique
+            _ = context
+            _ = chat_history
+            _ = model
+            _ = response_language
+            await asyncio.sleep(0.01)
+            return "Advanced timing trace should include measured stage metrics."
+
+        def refine(
+            self,
+            query: str,
+            draft_answer: str,
+            critique: CritiqueResult,
+            context: list[RetrievalResult],
+            *,
+            chat_history: list[dict[str, str]] | None = None,
+            model: str | None = None,
+            response_language: str = "en",
+        ) -> str:
+            _ = query
+            _ = draft_answer
+            _ = critique
+            _ = context
+            _ = chat_history
+            _ = model
+            _ = response_language
+            return "Advanced timing trace should include measured stage metrics."
+
+        def refine_strict_grounded(
+            self,
+            *,
+            query: str,
+            draft_answer: str,
+            context: list[RetrievalResult],
+            chat_history: list[dict[str, str]] | None = None,
+            model: str | None = None,
+            response_language: str = "en",
+        ) -> str:
+            _ = query
+            _ = draft_answer
+            _ = context
+            _ = chat_history
+            _ = model
+            _ = response_language
+            return "Advanced timing trace should include measured stage metrics."
+
+    class _TimedRetriever:
+        async def retrieve_with_timing_async(
+            self, query: str, top_k: int = 5
+        ) -> RetrievalBatch:
+            _ = query
+            _ = top_k
+            await asyncio.sleep(0.01)
+            return RetrievalBatch(
+                results=[
+                    RetrievalResult(
+                        chunk_id="adv_real_timing_001",
+                        doc_id="adv_real_timing_doc_001",
+                        source="seeded://adv-real-timing",
+                        content="Advanced timing trace should include measured stage metrics.",
+                        score=0.93,
+                        score_type="hybrid",
+                        rank=1,
+                    )
+                ],
+                timings_ms={
+                    "retrieval_total_ms": 11,
+                    "dense_retrieve_ms": 4,
+                    "sparse_retrieve_ms": 5,
+                    "hybrid_merge_ms": 2,
+                },
+                timing_breakdown_available=True,
+            )
+
+        def retrieve(self, query: str, top_k: int = 5) -> list[RetrievalResult]:
+            raise AssertionError("workflow should use request-scoped timing")
+
+    class _FakeIndexManager:
+        def get_retriever(self) -> _TimedRetriever:
+            return _TimedRetriever()
+
+        def get_active_source(self) -> str:
+            return "seeded"
+
+    llm = StubLLMClient(
+        responder=lambda prompt, system, model=None: (
+            '{"answer":"Advanced timing trace should include measured stage metrics.",'
+            '"confidence":0.84,"status":"answered"}'
+        )
+    )
+    standard = StandardWorkflow(
+        index_manager=_FakeIndexManager(),
+        llm_client=llm,
+        reranker=ScoreOnlyReranker(),
+    )
+    workflow = AdvancedWorkflow(
+        standard_workflow=standard,
+        max_loops=1,
+        retrieval_gate=_SlowGate(),  # type: ignore[arg-type]
+        critic=_SlowCritic(),  # type: ignore[arg-type]
+        refiner=_SlowRefiner(),  # type: ignore[arg-type]
+    )
+
+    response = workflow.run("force retrieval measured advanced timing")
+    timing_summary = next(
+        step for step in response.trace if step.get("step") == "timing_summary"
+    )
+
+    assert timing_summary["retrieval_gate_ms"] > 0
+    assert timing_summary["standard_pipeline_ms"] > 0
+    assert timing_summary["critique_ms"] > 0
+    assert timing_summary["refine_ms"] > 0
+    assert timing_summary["refine_stage_ms"] >= timing_summary["refine_ms"]
+    assert timing_summary["query_rewrite_ms"] == 0
 
 
 def test_query_rewriter_malformed_json_falls_back_to_heuristic() -> None:

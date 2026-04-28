@@ -14,6 +14,7 @@ from threading import RLock
 from typing import Any
 
 from app.core.config import get_settings
+from app.core.timing import has_timing_breakdown, normalize_timing_payload
 from app.indexing import (
     BaseEmbeddingProvider,
     IndexBuilder,
@@ -33,7 +34,7 @@ from app.ingestion import (
 from app.retrieval import DenseRetriever, HybridRetriever, SparseRetriever
 from app.schemas.index_manifest import UploadedIndexFileEntry, UploadedIndexManifest
 from app.schemas.ingestion import DocumentChunk, LoadedDocument
-from app.schemas.retrieval import RetrievalResult
+from app.schemas.retrieval import RetrievalBatch, RetrievalResult
 
 logger = logging.getLogger(__name__)
 
@@ -239,15 +240,40 @@ class QueryMetadataFilters:
 class EmptyRetriever:
     """Fallback retriever used when no indexable chunks are available."""
 
+    @staticmethod
+    def _empty_batch() -> RetrievalBatch:
+        return RetrievalBatch(
+            results=[],
+            timings_ms={
+                "retrieval_total_ms": 0,
+                "dense_retrieve_ms": 0,
+                "sparse_retrieve_ms": 0,
+                "hybrid_merge_ms": 0,
+            },
+            timing_breakdown_available=False,
+        )
+
+    async def retrieve_with_timing_async(
+        self, query: str, top_k: int = 5
+    ) -> RetrievalBatch:
+        _ = query
+        _ = top_k
+        return self._empty_batch()
+
     async def retrieve_async(self, query: str, top_k: int = 5) -> list[RetrievalResult]:
         _ = query
         _ = top_k
-        return []
+        return self._empty_batch().results
+
+    def retrieve_with_timing(self, query: str, top_k: int = 5) -> RetrievalBatch:
+        _ = query
+        _ = top_k
+        return self._empty_batch()
 
     def retrieve(self, query: str, top_k: int = 5) -> list[RetrievalResult]:
         _ = query
         _ = top_k
-        return []
+        return self._empty_batch().results
 
 
 class _ResultFilteringRetriever:
@@ -283,6 +309,12 @@ class _ResultFilteringRetriever:
         return dict(self._last_filter_debug)
 
     def get_last_timing(self) -> dict[str, int]:
+        """Return timing for the most recent filtered retrieval call.
+
+        This legacy diagnostic is shared by all calls on this wrapper and is
+        not request-safe under concurrency. New callers should use
+        ``retrieve_with_timing``/``retrieve_with_timing_async``.
+        """
         return dict(self._last_timing_debug)
 
     @staticmethod
@@ -292,7 +324,7 @@ class _ResultFilteringRetriever:
         # Ask for a wider candidate set so post-filter rows still have enough candidates.
         return max(top_k * 8, top_k)
 
-    def retrieve(self, query: str, top_k: int = 5) -> list[RetrievalResult]:
+    def retrieve_with_timing(self, query: str, top_k: int = 5) -> RetrievalBatch:
         started = time.perf_counter()
         applied_filters = self._query_filters.as_debug_payload()
         if top_k <= 0:
@@ -309,7 +341,12 @@ class _ResultFilteringRetriever:
                 "filter_ms": 0,
                 "filter_wrapper_ms": int((time.perf_counter() - started) * 1000),
             }
-            return []
+            return RetrievalBatch(
+                results=[],
+                timings_ms=dict(self._last_timing_debug),
+                timing_breakdown_available=False,
+                filter_debug=dict(self._last_filter_debug),
+            )
 
         if (
             self._query_filters.requires_uploaded_scope()
@@ -330,18 +367,33 @@ class _ResultFilteringRetriever:
                 "filter_ms": 0,
                 "filter_wrapper_ms": int((time.perf_counter() - started) * 1000),
             }
-            return []
+            return RetrievalBatch(
+                results=[],
+                timings_ms=dict(self._last_timing_debug),
+                timing_breakdown_available=False,
+                filter_debug=dict(self._last_filter_debug),
+            )
 
         candidate_k = self._compute_candidate_k(
             top_k,
             bool(self._allowed_doc_ids or self._query_filters.has_any_filter()),
         )
 
-        results = self._retriever.retrieve(query, top_k=candidate_k)
-        timing_getter = getattr(self._retriever, "get_last_timing", None)
-        base_timing: dict[str, int] = (
-            timing_getter() if callable(timing_getter) else {}
-        )
+        timed_retrieve = getattr(self._retriever, "retrieve_with_timing", None)
+        timing_breakdown_available = False
+        if callable(timed_retrieve):
+            batch = timed_retrieve(query, top_k=candidate_k)
+            results = list(batch.results)
+            base_timing = dict(batch.timings_ms)
+            timing_breakdown_available = bool(batch.timing_breakdown_available)
+        else:
+            results = self._retriever.retrieve(query, top_k=candidate_k)
+            timing_getter = getattr(self._retriever, "get_last_timing", None)
+            raw_base_timing: dict[str, Any] = (
+                timing_getter() if callable(timing_getter) else {}
+            )
+            base_timing = normalize_timing_payload(raw_base_timing)
+            timing_breakdown_available = has_timing_breakdown(raw_base_timing)
         filter_started = time.perf_counter()
         filtered = list(results)
         if self._allowed_doc_ids:
@@ -358,17 +410,27 @@ class _ResultFilteringRetriever:
             "candidate_count_after_filter": len(filtered),
         }
         filter_ms = int((time.perf_counter() - filter_started) * 1000)
+        wrapper_ms = int((time.perf_counter() - started) * 1000)
+        timing = normalize_timing_payload(base_timing)
         self._last_timing_debug = {
-            "retrieval_total_ms": int(base_timing.get("retrieval_total_ms", 0)),
-            "dense_retrieve_ms": int(base_timing.get("dense_retrieve_ms", 0)),
-            "sparse_retrieve_ms": int(base_timing.get("sparse_retrieve_ms", 0)),
-            "hybrid_merge_ms": int(base_timing.get("hybrid_merge_ms", 0)),
+            **timing,
+            "retrieval_total_ms": wrapper_ms,
             "filter_ms": filter_ms,
-            "filter_wrapper_ms": int((time.perf_counter() - started) * 1000),
+            "filter_wrapper_ms": wrapper_ms,
         }
-        return filtered[:top_k]
+        return RetrievalBatch(
+            results=filtered[:top_k],
+            timings_ms=dict(self._last_timing_debug),
+            timing_breakdown_available=timing_breakdown_available,
+            filter_debug=dict(self._last_filter_debug),
+        )
 
-    async def retrieve_async(self, query: str, top_k: int = 5) -> list[RetrievalResult]:
+    def retrieve(self, query: str, top_k: int = 5) -> list[RetrievalResult]:
+        return self.retrieve_with_timing(query, top_k=top_k).results
+
+    async def retrieve_with_timing_async(
+        self, query: str, top_k: int = 5
+    ) -> RetrievalBatch:
         started = time.perf_counter()
         applied_filters = self._query_filters.as_debug_payload()
         if top_k <= 0:
@@ -385,7 +447,12 @@ class _ResultFilteringRetriever:
                 "filter_ms": 0,
                 "filter_wrapper_ms": int((time.perf_counter() - started) * 1000),
             }
-            return []
+            return RetrievalBatch(
+                results=[],
+                timings_ms=dict(self._last_timing_debug),
+                timing_breakdown_available=False,
+                filter_debug=dict(self._last_filter_debug),
+            )
 
         if (
             self._query_filters.requires_uploaded_scope()
@@ -405,26 +472,49 @@ class _ResultFilteringRetriever:
                 "filter_ms": 0,
                 "filter_wrapper_ms": int((time.perf_counter() - started) * 1000),
             }
-            return []
+            return RetrievalBatch(
+                results=[],
+                timings_ms=dict(self._last_timing_debug),
+                timing_breakdown_available=False,
+                filter_debug=dict(self._last_filter_debug),
+            )
 
         candidate_k = self._compute_candidate_k(
             top_k,
             bool(self._allowed_doc_ids or self._query_filters.has_any_filter()),
         )
 
-        retrieve_async = getattr(self._retriever, "retrieve_async", None)
-        if callable(retrieve_async):
-            results = await retrieve_async(query, top_k=candidate_k)
-        else:
-            results = await asyncio.to_thread(
-                self._retriever.retrieve,
-                query,
-                candidate_k,
-            )
-        timing_getter = getattr(self._retriever, "get_last_timing", None)
-        base_timing: dict[str, int] = (
-            timing_getter() if callable(timing_getter) else {}
+        timed_retrieve_async = getattr(
+            self._retriever, "retrieve_with_timing_async", None
         )
+        timed_retrieve = getattr(self._retriever, "retrieve_with_timing", None)
+        timing_breakdown_available = False
+        if callable(timed_retrieve_async):
+            batch = await timed_retrieve_async(query, top_k=candidate_k)
+            results = list(batch.results)
+            base_timing = dict(batch.timings_ms)
+            timing_breakdown_available = bool(batch.timing_breakdown_available)
+        elif callable(timed_retrieve):
+            batch = await asyncio.to_thread(timed_retrieve, query, candidate_k)
+            results = list(batch.results)
+            base_timing = dict(batch.timings_ms)
+            timing_breakdown_available = bool(batch.timing_breakdown_available)
+        else:
+            retrieve_async = getattr(self._retriever, "retrieve_async", None)
+            if callable(retrieve_async):
+                results = await retrieve_async(query, top_k=candidate_k)
+            else:
+                results = await asyncio.to_thread(
+                    self._retriever.retrieve,
+                    query,
+                    candidate_k,
+                )
+            timing_getter = getattr(self._retriever, "get_last_timing", None)
+            raw_base_timing: dict[str, Any] = (
+                timing_getter() if callable(timing_getter) else {}
+            )
+            base_timing = normalize_timing_payload(raw_base_timing)
+            timing_breakdown_available = has_timing_breakdown(raw_base_timing)
 
         filter_started = time.perf_counter()
         filtered = list(results)
@@ -441,15 +531,23 @@ class _ResultFilteringRetriever:
             "candidate_count_after_filter": len(filtered),
         }
         filter_ms = int((time.perf_counter() - filter_started) * 1000)
+        wrapper_ms = int((time.perf_counter() - started) * 1000)
+        timing = normalize_timing_payload(base_timing)
         self._last_timing_debug = {
-            "retrieval_total_ms": int(base_timing.get("retrieval_total_ms", 0)),
-            "dense_retrieve_ms": int(base_timing.get("dense_retrieve_ms", 0)),
-            "sparse_retrieve_ms": int(base_timing.get("sparse_retrieve_ms", 0)),
-            "hybrid_merge_ms": int(base_timing.get("hybrid_merge_ms", 0)),
+            **timing,
+            "retrieval_total_ms": wrapper_ms,
             "filter_ms": filter_ms,
-            "filter_wrapper_ms": int((time.perf_counter() - started) * 1000),
+            "filter_wrapper_ms": wrapper_ms,
         }
-        return filtered[:top_k]
+        return RetrievalBatch(
+            results=filtered[:top_k],
+            timings_ms=dict(self._last_timing_debug),
+            timing_breakdown_available=timing_breakdown_available,
+            filter_debug=dict(self._last_filter_debug),
+        )
+
+    async def retrieve_async(self, query: str, top_k: int = 5) -> list[RetrievalResult]:
+        return (await self.retrieve_with_timing_async(query, top_k=top_k)).results
 
 
 class RuntimeIndexManager:

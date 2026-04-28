@@ -4,12 +4,51 @@ from __future__ import annotations
 
 from contextlib import asynccontextmanager, contextmanager
 from time import perf_counter
-from typing import Iterator
+from typing import Any, Iterator, Mapping
+
+
+RETRIEVAL_TIMING_KEYS: tuple[str, ...] = (
+    "retrieval_total_ms",
+    "dense_retrieve_ms",
+    "sparse_retrieve_ms",
+    "hybrid_merge_ms",
+)
 
 
 def elapsed_ms(start: float) -> int:
     """Return elapsed milliseconds since *start* (perf_counter timestamp)."""
     return int((perf_counter() - start) * 1000)
+
+
+def coerce_ms(value: Any, default: int = 0) -> int:
+    """Coerce a timing value to non-negative milliseconds."""
+    if isinstance(value, bool):
+        return default
+    try:
+        return max(0, int(value))
+    except (TypeError, ValueError):
+        return default
+
+
+def normalize_timing_payload(
+    raw: Mapping[str, Any] | None,
+    *,
+    keys: tuple[str, ...] = RETRIEVAL_TIMING_KEYS,
+) -> dict[str, int]:
+    """Return a timing payload with all expected keys present."""
+    source = raw or {}
+    return {key: coerce_ms(source.get(key, 0)) for key in keys}
+
+
+def has_timing_breakdown(
+    raw: Mapping[str, Any] | None,
+    *,
+    keys: tuple[str, ...] = RETRIEVAL_TIMING_KEYS,
+) -> bool:
+    """Return true when every expected timing key is present."""
+    if not raw:
+        return False
+    return all(key in raw for key in keys)
 
 
 class StepTimer:

@@ -1,8 +1,11 @@
 """Tests for standard workflow end-to-end path."""
 
-from app.schemas.retrieval import RetrievalResult
+import asyncio
+
+from app.schemas.retrieval import RetrievalBatch, RetrievalResult
 from app.schemas.api import StandardQueryResponse, validate_query_response
 from app.schemas.common import Mode
+from app.retrieval import ScoreOnlyReranker
 from app.services import QueryService
 from app.workflows.runner import WorkflowRunner
 from app.workflows.standard import StandardWorkflow
@@ -41,6 +44,7 @@ def test_standard_workflow_trace_contains_timing_metrics() -> None:
 
         def get_last_timing(self) -> dict[str, int]:
             return {
+                "retrieval_total_ms": 6,
                 "dense_retrieve_ms": 3,
                 "sparse_retrieve_ms": 2,
                 "hybrid_merge_ms": 1,
@@ -65,7 +69,9 @@ def test_standard_workflow_trace_contains_timing_metrics() -> None:
             _ = model
             return '{"answer":"Timing answer.","confidence":0.8,"status":"answered"}'
 
-    workflow = StandardWorkflow(index_manager=_FakeIndexManager(), llm_client=_StubLLM())
+    workflow = StandardWorkflow(
+        index_manager=_FakeIndexManager(), llm_client=_StubLLM()
+    )
     response = workflow.run(query="timing test")
 
     retrieve_step = response.trace[0]
@@ -74,6 +80,8 @@ def test_standard_workflow_trace_contains_timing_metrics() -> None:
     assert isinstance(retrieve_step["dense_retrieve_ms"], int)
     assert isinstance(retrieve_step["sparse_retrieve_ms"], int)
     assert isinstance(retrieve_step["hybrid_merge_ms"], int)
+    assert retrieve_step["breakdown_available"] is True
+    assert retrieve_step["retrieval_timing_breakdown_available"] is True
 
     timing_summary = next(
         step for step in response.trace if step.get("step") == "timing_summary"
@@ -92,6 +100,153 @@ def test_standard_workflow_trace_contains_timing_metrics() -> None:
     ):
         assert key in timing_summary
         assert isinstance(timing_summary[key], int)
+        assert timing_summary[key] >= 0
+    assert timing_summary["breakdown_available"] is True
+
+
+def test_standard_workflow_missing_retrieval_breakdown_uses_zero_timings() -> None:
+    class _UntimedRetriever:
+        def retrieve(self, query: str, top_k: int = 5) -> list[RetrievalResult]:
+            _ = query
+            _ = top_k
+            return [
+                RetrievalResult(
+                    chunk_id="untimed_std_001",
+                    doc_id="untimed_doc_001",
+                    source="seeded://untimed",
+                    content="Untimed retriever still returns useful context.",
+                    score=0.91,
+                    score_type="hybrid",
+                    rank=1,
+                )
+            ]
+
+    class _FakeIndexManager:
+        def get_retriever(self) -> _UntimedRetriever:
+            return _UntimedRetriever()
+
+        def get_active_source(self) -> str:
+            return "seeded"
+
+    class _StubLLM:
+        def complete(
+            self,
+            prompt: str,
+            system_prompt: str | None = None,
+            model: str | None = None,
+        ) -> str:
+            _ = prompt
+            _ = system_prompt
+            _ = model
+            return '{"answer":"Untimed answer.","confidence":0.8,"status":"answered"}'
+
+    workflow = StandardWorkflow(
+        index_manager=_FakeIndexManager(),
+        llm_client=_StubLLM(),
+        reranker=ScoreOnlyReranker(),
+    )
+
+    response = workflow.run(query="untimed retrieval")
+    retrieve_step = response.trace[0]
+    timing_summary = next(
+        step for step in response.trace if step.get("step") == "timing_summary"
+    )
+
+    assert retrieve_step["dense_retrieve_ms"] == 0
+    assert retrieve_step["sparse_retrieve_ms"] == 0
+    assert retrieve_step["hybrid_merge_ms"] == 0
+    assert retrieve_step["breakdown_available"] is False
+    assert timing_summary["breakdown_available"] is False
+
+
+def test_standard_workflow_uses_request_scoped_timing_for_concurrent_runs() -> None:
+    class _RequestScopedTimingRetriever:
+        async def retrieve_with_timing_async(
+            self, query: str, top_k: int = 5
+        ) -> RetrievalBatch:
+            _ = top_k
+            is_slow = "slow" in query
+            await asyncio.sleep(0.02 if is_slow else 0.01)
+            marker = 41 if is_slow else 7
+            return RetrievalBatch(
+                results=[
+                    RetrievalResult(
+                        chunk_id=f"scoped_{marker}",
+                        doc_id=f"scoped_doc_{marker}",
+                        source="seeded://scoped-timing",
+                        content=f"Request-scoped timing context {marker}.",
+                        score=0.9,
+                        score_type="hybrid",
+                        rank=1,
+                    )
+                ],
+                timings_ms={
+                    "retrieval_total_ms": marker + 3,
+                    "dense_retrieve_ms": marker,
+                    "sparse_retrieve_ms": marker + 1,
+                    "hybrid_merge_ms": marker + 2,
+                },
+                timing_breakdown_available=True,
+            )
+
+        async def retrieve_async(
+            self, query: str, top_k: int = 5
+        ) -> list[RetrievalResult]:
+            return (await self.retrieve_with_timing_async(query, top_k=top_k)).results
+
+        def retrieve(self, query: str, top_k: int = 5) -> list[RetrievalResult]:
+            raise AssertionError("workflow should use request-scoped async timing")
+
+        def get_last_timing(self) -> dict[str, int]:
+            return {
+                "retrieval_total_ms": 999,
+                "dense_retrieve_ms": 999,
+                "sparse_retrieve_ms": 999,
+                "hybrid_merge_ms": 999,
+            }
+
+    class _FakeIndexManager:
+        def __init__(self) -> None:
+            self.retriever = _RequestScopedTimingRetriever()
+
+        def get_retriever(self) -> _RequestScopedTimingRetriever:
+            return self.retriever
+
+        def get_active_source(self) -> str:
+            return "seeded"
+
+    class _StubLLM:
+        def complete(
+            self,
+            prompt: str,
+            system_prompt: str | None = None,
+            model: str | None = None,
+        ) -> str:
+            _ = prompt
+            _ = system_prompt
+            _ = model
+            return '{"answer":"Scoped timing answer.","confidence":0.8,"status":"answered"}'
+
+    async def _run_pair() -> tuple[StandardQueryResponse, StandardQueryResponse]:
+        workflow = StandardWorkflow(
+            index_manager=_FakeIndexManager(),
+            llm_client=_StubLLM(),
+            reranker=ScoreOnlyReranker(),
+        )
+        slow, fast = await asyncio.gather(
+            workflow.run_async(query="slow request scoped timing"),
+            workflow.run_async(query="fast request scoped timing"),
+        )
+        return slow, fast
+
+    slow_response, fast_response = asyncio.run(_run_pair())
+    slow_retrieve = slow_response.trace[0]
+    fast_retrieve = fast_response.trace[0]
+
+    assert slow_retrieve["dense_retrieve_ms"] == 41
+    assert fast_retrieve["dense_retrieve_ms"] == 7
+    assert slow_retrieve["breakdown_available"] is True
+    assert fast_retrieve["breakdown_available"] is True
 
 
 def test_standard_workflow_uses_ingested_files_instead_of_memory_corpus() -> None:

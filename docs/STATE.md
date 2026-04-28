@@ -1,58 +1,81 @@
 # Project State
 
-<<<<<<< HEAD
-## Current features
-- RAG standard
-- Self-RAG advanced
-- Compare mode
-- OCR (partial)
-- Hybrid search
-- reranker
+Last updated: 2026-04-29 (Asia/Bangkok)
 
-## Known issues
-- advanced too strict
-- grounding threshold too high
-- stale index after delete
-- OCR not effective yet
-
-## Goal
-stabilize system before demo
-=======
-Last updated: 2026-04-26
+## Repository snapshot
+- Branch: `vankhanh`
+- HEAD: `7347c63b` (`timing`)
+- Working tree: timing instrumentation fixes in backend/workflow/tests/docs.
 
 ## Current status
-- Standard mode, Advanced mode, Compare mode are working end-to-end.
-- Document lifecycle APIs support upload/list/status/delete-one/delete-all.
-- OCR pipeline for scanned PDF is integrated into parse -> chunk -> runtime index -> retrieval.
-- Grounding/hallucination heuristic is tuned to be less aggressive for Vietnamese paraphrases.
-- Compare scoring prioritizes citations + groundedness + safety signals over raw confidence.
-- Settings modal explains chunking/retrieval tradeoffs and remains usable on small screens.
+- Standard mode, Advanced mode, Compare mode are running end-to-end.
+- Per-step latency instrumentation is implemented across the RAG query pipeline.
+- Retrieval timing now prefers request-scoped timing payloads over shared `get_last_timing`.
+- Response schema remains backward compatible (`latency_ms` and existing fields still intact).
 
-## Regression validation (latest pass)
-- `python -m compileall app`: pass (run in `.venv`)
-- `pytest -m "not slow and not e2e"`: pass (`146 passed, 7 deselected`)
-- `cd frontend && npm run build`: pass
+## Latency instrumentation completed
 
-## Scenario coverage
-- Delete all documents clears registry/raw files/runtime and falls back to seeded retrieval.
-- Delete one document removes it from list/status/query citations and keeps remaining uploaded docs retrievable.
-- OCR upload returns debug metadata:
-  - `total_blocks`
-  - `text_blocks`
-  - `table_blocks`
-  - `image_blocks`
-  - `ocr_blocks`
-  - `total_chunks`
-  - `ocr_chunks`
-- OCR mocked path produces `ocr_text` blocks/chunks and those chunks are indexed/retrievable.
-- Advanced workflow does not reject valid context too aggressively in tested Vietnamese cases.
-- Compare workflow prefers grounded/cited branch and handles weak/tie cases.
+### Standard mode
+- Added trace/metadata timings:
+  - `normalize_query_ms`
+  - `retrieval_total_ms`
+  - `dense_retrieve_ms` (0 when unavailable)
+  - `sparse_retrieve_ms` (0 when unavailable)
+  - `hybrid_merge_ms` (0 when unavailable)
+  - `breakdown_available` / `retrieval_timing_breakdown_available`
+  - `rerank_ms`
+  - `context_select_ms`
+  - `llm_generate_ms`
+  - `grounding_ms`
+  - `total_ms`
 
-## Remaining limitations
-- No dedicated frontend e2e test yet for modal usability; currently validated by component structure + build.
-- One non-blocking warning remains in tests (`FutureWarning` from sentence-transformers embedding dimension getter rename).
-- OCR requires system Tesseract with Vietnamese language pack and re-upload after enabling OCR.
+### Advanced mode
+- Added stage timings:
+  - `retrieval_gate_ms`
+  - `query_rewrite_ms`
+  - `standard_pipeline_ms`
+  - `critique_ms`
+  - `refine_ms` (when executed)
+  - `refine_stage_ms`
+  - `language_guard_ms` (when executed)
+  - `hallucination_guard_ms` (when executed)
+  - `final_grounding_ms`
+  - `total_ms`
+- Added `timing_summary` trace step including these keys.
 
-## Next stabilization focus
-- Keep regression suite green while avoiding backend/frontend behavior drift.
->>>>>>> main
+### Compare mode
+- Added compare branch timings:
+  - `standard_branch_ms`
+  - `advanced_branch_ms`
+  - `compare_total_ms`
+- Each branch trace gets a `compare_timing` step.
+
+## Streaming status
+- Standard retrieval/generation events include `timings_ms`.
+- Advanced stage events include stage timing and final timing bundle.
+- Compare mode emits `compare_timing` event.
+- SSE final response behavior is unchanged and still working.
+
+## Key files touched for timing
+- `app/core/timing.py`
+- `app/retrieval/hybrid.py`
+- `app/schemas/retrieval.py`
+- `app/services/index_runtime.py`
+- `app/workflows/standard.py`
+- `app/workflows/advanced_pipeline.py`
+- `app/workflows/advanced.py`
+- `app/workflows/compare.py`
+- `tests/workflows/test_standard_workflow.py`
+- `tests/workflows/test_advanced_workflow.py`
+- `tests/workflows/test_compare_workflow.py`
+
+## Test validation (latest)
+- `make test-fast`: pass (`232 passed, 8 deselected`)
+- Targeted workflow + stream tests also pass.
+- Timing fix targeted tests: pass (`5 passed`)
+- Related retrieval/index/workflow timing tests: pass (`63 passed, 1 deselected`)
+
+## Notes for next session
+- If retriever internals are not exposed, sub-step dense/sparse/merge timing is reported as `0` with `breakdown_available=false`.
+- Per-retriever `get_last_timing` is a legacy shared diagnostic and is unsafe under concurrent requests. Prefer `retrieve_with_timing` / `retrieve_with_timing_async`, which return request-scoped `RetrievalBatch` timing.
+- Next optional step: surface these timing metrics in frontend trace/diagnostics panels.

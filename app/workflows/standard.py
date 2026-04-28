@@ -13,7 +13,7 @@ from app.core.async_utils import run_coro_sync
 from app.core.cache import create_cache_group_from_settings
 from app.core.config import get_settings
 from app.core.json_utils import parse_json_object
-from app.core.timing import StepTimer
+from app.core.timing import StepTimer, has_timing_breakdown, normalize_timing_payload
 from app.generation import (
     BaselineGenerator,
     LLMClient,
@@ -73,6 +73,7 @@ class StandardPipelineResult:
     generated: GeneratedAnswer
     retrieval_debug: dict[str, Any] = field(default_factory=dict)
     timings: dict[str, int] = field(default_factory=dict)
+    retrieval_timing_breakdown_available: bool = False
 
 
 class RetrieverLike(Protocol):
@@ -304,44 +305,92 @@ class StandardWorkflow:
             normalized_query = normalize_query(query)
         retrieval_top_k = max(1, self.hybrid_top_k)
         retriever = self._get_retriever(query_filters=query_filters)
+        retrieval_debug: dict[str, Any] = {}
+        retrieval_timing_payload: dict[str, int] = {}
+        retrieval_timing_breakdown_available = False
+        timed_retrieve_async = getattr(retriever, "retrieve_with_timing_async", None)
+        timed_retrieve = getattr(retriever, "retrieve_with_timing", None)
         retrieve_async = getattr(retriever, "retrieve_async", None)
-        if callable(retrieve_async):
-            async with timer.measure_async("retrieval_total_ms"):
-                retrieved = await retrieve_async(normalized_query, top_k=retrieval_top_k)
-        else:
-            async with timer.measure_async("retrieval_total_ms"):
+
+        async with timer.measure_async("retrieval_total_ms"):
+            if callable(timed_retrieve_async):
+                batch = await timed_retrieve_async(
+                    normalized_query, top_k=retrieval_top_k
+                )
+                retrieved = list(getattr(batch, "results", []))
+                raw_timing = getattr(batch, "timings_ms", {})
+                if isinstance(raw_timing, dict):
+                    retrieval_timing_payload = normalize_timing_payload(raw_timing)
+                retrieval_timing_breakdown_available = bool(
+                    getattr(
+                        batch,
+                        "timing_breakdown_available",
+                        has_timing_breakdown(raw_timing)
+                        if isinstance(raw_timing, dict)
+                        else False,
+                    )
+                )
+                debug_payload = getattr(batch, "filter_debug", {})
+                if isinstance(debug_payload, dict):
+                    retrieval_debug = dict(debug_payload)
+            elif callable(timed_retrieve):
+                batch = await asyncio.to_thread(
+                    timed_retrieve,
+                    normalized_query,
+                    retrieval_top_k,
+                )
+                retrieved = list(getattr(batch, "results", []))
+                raw_timing = getattr(batch, "timings_ms", {})
+                if isinstance(raw_timing, dict):
+                    retrieval_timing_payload = normalize_timing_payload(raw_timing)
+                retrieval_timing_breakdown_available = bool(
+                    getattr(
+                        batch,
+                        "timing_breakdown_available",
+                        has_timing_breakdown(raw_timing)
+                        if isinstance(raw_timing, dict)
+                        else False,
+                    )
+                )
+                debug_payload = getattr(batch, "filter_debug", {})
+                if isinstance(debug_payload, dict):
+                    retrieval_debug = dict(debug_payload)
+            elif callable(retrieve_async):
+                retrieved = await retrieve_async(
+                    normalized_query, top_k=retrieval_top_k
+                )
+            else:
                 retrieved = await asyncio.to_thread(
                     retriever.retrieve,
                     normalized_query,
                     retrieval_top_k,
                 )
-        retrieval_debug: dict[str, Any] = {}
-        debug_getter = getattr(retriever, "get_last_filter_debug", None)
-        if callable(debug_getter):
-            debug_payload = debug_getter()
-            if isinstance(debug_payload, dict):
-                retrieval_debug = debug_payload
-        retrieval_timing_payload: dict[str, int] = {}
-        timing_getter = getattr(retriever, "get_last_timing", None)
-        if callable(timing_getter):
-            raw_timing = timing_getter()
-            if isinstance(raw_timing, dict):
-                retrieval_timing_payload = {
-                    key: int(value)
-                    for key, value in raw_timing.items()
-                    if isinstance(value, (int, float))
-                }
+
+        if not retrieval_timing_payload:
+            debug_getter = getattr(retriever, "get_last_filter_debug", None)
+            if callable(debug_getter):
+                debug_payload = debug_getter()
+                if isinstance(debug_payload, dict):
+                    retrieval_debug = debug_payload
+            timing_getter = getattr(retriever, "get_last_timing", None)
+            if callable(timing_getter):
+                raw_timing = timing_getter()
+                if isinstance(raw_timing, dict):
+                    retrieval_timing_payload = normalize_timing_payload(raw_timing)
+                    retrieval_timing_breakdown_available = has_timing_breakdown(
+                        raw_timing
+                    )
         timer.record_ms(
             "dense_retrieve_ms",
-            retrieval_timing_payload.get("dense_retrieve_ms", -1),
+            retrieval_timing_payload.get("dense_retrieve_ms", 0),
         )
         timer.record_ms(
             "sparse_retrieve_ms",
-            retrieval_timing_payload.get("sparse_retrieve_ms", -1),
+            retrieval_timing_payload.get("sparse_retrieve_ms", 0),
         )
         timer.record_ms(
             "hybrid_merge_ms",
-            retrieval_timing_payload.get("hybrid_merge_ms", -1),
+            retrieval_timing_payload.get("hybrid_merge_ms", 0),
         )
         with timer.measure("rerank_ms"):
             reranked = await asyncio.to_thread(
@@ -366,12 +415,16 @@ class StandardWorkflow:
                 "reranked_count": len(reranked),
                 "selected_count": len(selected_context),
                 "chunk_ids": [item.chunk_id for item in selected_context],
+                "breakdown_available": retrieval_timing_breakdown_available,
+                "retrieval_timing_breakdown_available": (
+                    retrieval_timing_breakdown_available
+                ),
                 "timings_ms": {
                     "normalize_query_ms": timer.get_ms("normalize_query_ms", 0),
                     "retrieval_total_ms": timer.get_ms("retrieval_total_ms", 0),
-                    "dense_retrieve_ms": timer.get_ms("dense_retrieve_ms", -1),
-                    "sparse_retrieve_ms": timer.get_ms("sparse_retrieve_ms", -1),
-                    "hybrid_merge_ms": timer.get_ms("hybrid_merge_ms", -1),
+                    "dense_retrieve_ms": timer.get_ms("dense_retrieve_ms", 0),
+                    "sparse_retrieve_ms": timer.get_ms("sparse_retrieve_ms", 0),
+                    "hybrid_merge_ms": timer.get_ms("hybrid_merge_ms", 0),
                     "rerank_ms": timer.get_ms("rerank_ms", 0),
                     "context_select_ms": timer.get_ms("context_select_ms", 0),
                 },
@@ -472,6 +525,7 @@ class StandardWorkflow:
             generated=generated,
             retrieval_debug=retrieval_debug,
             timings=timer.metrics(),
+            retrieval_timing_breakdown_available=retrieval_timing_breakdown_available,
         )
 
     async def run_async(
@@ -554,9 +608,9 @@ class StandardWorkflow:
         timings["total_ms"] = elapsed_ms
         timings.setdefault("normalize_query_ms", 0)
         timings.setdefault("retrieval_total_ms", 0)
-        timings.setdefault("dense_retrieve_ms", -1)
-        timings.setdefault("sparse_retrieve_ms", -1)
-        timings.setdefault("hybrid_merge_ms", -1)
+        timings.setdefault("dense_retrieve_ms", 0)
+        timings.setdefault("sparse_retrieve_ms", 0)
+        timings.setdefault("hybrid_merge_ms", 0)
         timings.setdefault("rerank_ms", 0)
         timings.setdefault("context_select_ms", 0)
         timings.setdefault("llm_generate_ms", 0)
@@ -607,9 +661,13 @@ class StandardWorkflow:
                 ),
                 "normalize_query_ms": timings.get("normalize_query_ms", 0),
                 "retrieval_total_ms": timings.get("retrieval_total_ms", 0),
-                "dense_retrieve_ms": timings.get("dense_retrieve_ms", -1),
-                "sparse_retrieve_ms": timings.get("sparse_retrieve_ms", -1),
-                "hybrid_merge_ms": timings.get("hybrid_merge_ms", -1),
+                "dense_retrieve_ms": timings.get("dense_retrieve_ms", 0),
+                "sparse_retrieve_ms": timings.get("sparse_retrieve_ms", 0),
+                "hybrid_merge_ms": timings.get("hybrid_merge_ms", 0),
+                "breakdown_available": pipeline.retrieval_timing_breakdown_available,
+                "retrieval_timing_breakdown_available": (
+                    pipeline.retrieval_timing_breakdown_available
+                ),
             },
             {
                 "step": "rerank",
@@ -710,9 +768,13 @@ class StandardWorkflow:
                 "step": "timing_summary",
                 "normalize_query_ms": timings.get("normalize_query_ms", 0),
                 "retrieval_total_ms": timings.get("retrieval_total_ms", 0),
-                "dense_retrieve_ms": timings.get("dense_retrieve_ms", -1),
-                "sparse_retrieve_ms": timings.get("sparse_retrieve_ms", -1),
-                "hybrid_merge_ms": timings.get("hybrid_merge_ms", -1),
+                "dense_retrieve_ms": timings.get("dense_retrieve_ms", 0),
+                "sparse_retrieve_ms": timings.get("sparse_retrieve_ms", 0),
+                "hybrid_merge_ms": timings.get("hybrid_merge_ms", 0),
+                "breakdown_available": pipeline.retrieval_timing_breakdown_available,
+                "retrieval_timing_breakdown_available": (
+                    pipeline.retrieval_timing_breakdown_available
+                ),
                 "rerank_ms": timings.get("rerank_ms", 0),
                 "context_select_ms": timings.get("context_select_ms", 0),
                 "llm_generate_ms": timings.get("llm_generate_ms", 0),

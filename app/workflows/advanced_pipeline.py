@@ -22,6 +22,20 @@ if TYPE_CHECKING:
     from app.workflows.advanced import AdvancedWorkflow
 
 
+ADVANCED_TIMING_KEYS: tuple[str, ...] = (
+    "retrieval_gate_ms",
+    "query_rewrite_ms",
+    "standard_pipeline_ms",
+    "critique_ms",
+    "refine_ms",
+    "refine_stage_ms",
+    "language_guard_ms",
+    "hallucination_guard_ms",
+    "final_grounding_ms",
+    "total_ms",
+)
+
+
 @dataclass
 class AdvancedPipelineContext:
     """Run-scoped mutable context shared by advanced pipeline stages."""
@@ -61,6 +75,15 @@ class AdvancedPipelineContext:
     llm_fallback_used: bool = False
 
     terminal_response: AdvancedQueryResponse | None = None
+
+    def timing_summary(self, *, total_ms: int | None = None) -> dict[str, Any]:
+        """Build a trace-ready timing summary from measured stage timings."""
+        if total_ms is not None:
+            self.timings["total_ms"] = int(total_ms)
+        summary: dict[str, Any] = {"step": "timing_summary"}
+        for key in ADVANCED_TIMING_KEYS:
+            summary[key] = int(self.timings.get(key, 0))
+        return summary
 
 
 class PipelineStage(Protocol):
@@ -132,30 +155,7 @@ class RetrievalGateStage(BasePipelineStage):
 
         if not need_retrieval:
             total_ms = int((time.perf_counter() - context.start_time) * 1000)
-            context.timings.setdefault("standard_pipeline_ms", 0)
-            context.timings.setdefault("critique_ms", 0)
-            context.timings.setdefault("refine_ms", 0)
-            context.timings.setdefault("language_guard_ms", 0)
-            context.timings.setdefault("hallucination_guard_ms", 0)
-            context.timings.setdefault("final_grounding_ms", 0)
-            context.timings["total_ms"] = total_ms
-            context.trace.append(
-                {
-                    "step": "timing_summary",
-                    "retrieval_gate_ms": context.timings.get("retrieval_gate_ms", 0),
-                    "standard_pipeline_ms": context.timings.get(
-                        "standard_pipeline_ms", 0
-                    ),
-                    "critique_ms": context.timings.get("critique_ms", 0),
-                    "refine_ms": context.timings.get("refine_ms", 0),
-                    "language_guard_ms": context.timings.get("language_guard_ms", 0),
-                    "hallucination_guard_ms": context.timings.get(
-                        "hallucination_guard_ms", 0
-                    ),
-                    "final_grounding_ms": context.timings.get("final_grounding_ms", 0),
-                    "total_ms": total_ms,
-                }
-            )
+            context.trace.append(context.timing_summary(total_ms=total_ms))
             answer, confidence, status, stop_reason = (
                 workflow._direct_answer_without_retrieval(
                     state.normalized_query,
@@ -359,6 +359,9 @@ class CritiqueLoopStage(BasePipelineStage):
                     "query_rewrite_ms": rewrite_ms,
                     "standard_pipeline_ms": standard_pipeline_ms,
                     "critique_ms": critique_ms,
+                    "retrieval_timing_breakdown_available": (
+                        pipeline.retrieval_timing_breakdown_available
+                    ),
                     "pipeline_step_timings_ms": dict(pipeline.timings),
                 }
             )
@@ -924,22 +927,9 @@ class FinalGroundingStage(BasePipelineStage):
         )
         stage_ms = int((time.perf_counter() - stage_started) * 1000)
         context.timings["final_grounding_ms"] = stage_ms
-        context.timings["total_ms"] = int((time.perf_counter() - context.start_time) * 1000)
-        context.trace.append(
-            {
-                "step": "timing_summary",
-                "retrieval_gate_ms": context.timings.get("retrieval_gate_ms", 0),
-                "standard_pipeline_ms": context.timings.get("standard_pipeline_ms", 0),
-                "critique_ms": context.timings.get("critique_ms", 0),
-                "refine_ms": context.timings.get("refine_ms", 0),
-                "language_guard_ms": context.timings.get("language_guard_ms", 0),
-                "hallucination_guard_ms": context.timings.get(
-                    "hallucination_guard_ms", 0
-                ),
-                "final_grounding_ms": stage_ms,
-                "total_ms": context.timings.get("total_ms", 0),
-            }
-        )
+        total_ms = int((time.perf_counter() - context.start_time) * 1000)
+        timing_summary = context.timing_summary(total_ms=total_ms)
+        context.trace.append(timing_summary)
         await emit_stream_event(
             context.event_handler,
             {
@@ -947,18 +937,7 @@ class FinalGroundingStage(BasePipelineStage):
                 "stage": "final_grounding",
                 "stage_ms": stage_ms,
                 "timings_ms": {
-                    "retrieval_gate_ms": context.timings.get("retrieval_gate_ms", 0),
-                    "standard_pipeline_ms": context.timings.get(
-                        "standard_pipeline_ms", 0
-                    ),
-                    "critique_ms": context.timings.get("critique_ms", 0),
-                    "refine_ms": context.timings.get("refine_ms", 0),
-                    "language_guard_ms": context.timings.get("language_guard_ms", 0),
-                    "hallucination_guard_ms": context.timings.get(
-                        "hallucination_guard_ms", 0
-                    ),
-                    "final_grounding_ms": stage_ms,
-                    "total_ms": context.timings.get("total_ms", 0),
+                    key: value for key, value in timing_summary.items() if key != "step"
                 },
                 **context.event_context,
             },

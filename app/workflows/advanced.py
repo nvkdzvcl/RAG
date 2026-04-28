@@ -13,6 +13,7 @@ from app.schemas.common import Citation, Mode
 from app.schemas.retrieval import RetrievalResult
 from app.schemas.workflow import WorkflowState
 from app.workflows.advanced_pipeline import (
+    ADVANCED_TIMING_KEYS,
     AdvancedPipelineContext,
     CritiqueLoopStage,
     FinalGroundingStage,
@@ -194,28 +195,15 @@ class AdvancedWorkflow:
             None,
         )
         if timing_step_index is None:
-            response_trace.append(
-                {
-                    "step": "timing_summary",
-                    "retrieval_gate_ms": 0,
-                    "standard_pipeline_ms": 0,
-                    "critique_ms": 0,
-                    "refine_ms": 0,
-                    "language_guard_ms": 0,
-                    "hallucination_guard_ms": 0,
-                    "final_grounding_ms": 0,
-                    "total_ms": elapsed_ms,
-                }
-            )
+            summary: dict[str, Any] = {"step": "timing_summary"}
+            for key in ADVANCED_TIMING_KEYS:
+                summary[key] = 0
+            summary["total_ms"] = elapsed_ms
+            response_trace.append(summary)
         else:
             summary = dict(response_trace[timing_step_index])
-            summary.setdefault("retrieval_gate_ms", 0)
-            summary.setdefault("standard_pipeline_ms", 0)
-            summary.setdefault("critique_ms", 0)
-            summary.setdefault("refine_ms", 0)
-            summary.setdefault("language_guard_ms", 0)
-            summary.setdefault("hallucination_guard_ms", 0)
-            summary.setdefault("final_grounding_ms", 0)
+            for key in ADVANCED_TIMING_KEYS:
+                summary.setdefault(key, 0)
             summary["total_ms"] = elapsed_ms
             response_trace[timing_step_index] = summary
 
