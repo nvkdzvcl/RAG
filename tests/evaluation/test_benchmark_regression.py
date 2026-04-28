@@ -4,6 +4,7 @@ import json
 from pathlib import Path
 from typing import Any
 
+from app.evaluation.schemas import RetrievedSourceTrace
 from app.evaluation.metrics import compute_retrieval_metrics
 from app.indexing.bm25_index import BM25Index
 from app.indexing.persistence import InMemoryVectorIndex
@@ -41,9 +42,25 @@ def run_benchmark() -> dict[str, Any]:
         gold = item["gold_sources"]
 
         scored_chunks = retriever.retrieve(query)
-        retrieved_ids = [sc.chunk.chunk_id for sc in scored_chunks]
+        retrieved_ids = []
+        retrieved_sources = []
+        for sc in scored_chunks:
+            retrieved_ids.append(sc.chunk.chunk_id)
+            retrieved_sources.append(
+                RetrievedSourceTrace(
+                    chunk_id=sc.chunk.chunk_id,
+                    doc_id=sc.chunk.doc_id,
+                    source=sc.chunk.source,
+                    title=sc.chunk.title,
+                    section=sc.chunk.section,
+                )
+            )
 
-        hit, mrr, ndcg = compute_retrieval_metrics(retrieved_ids, gold)
+        hit, mrr, ndcg = compute_retrieval_metrics(
+            retrieved_chunk_ids=retrieved_ids,
+            gold_sources=gold,
+            retrieved_sources=retrieved_sources,
+        )
 
         if hit:
             total_hit += 1
