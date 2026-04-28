@@ -7,6 +7,7 @@ import logging
 from dataclasses import dataclass
 from pathlib import Path
 from threading import RLock
+from typing import cast
 from uuid import uuid4
 
 from fastapi import UploadFile
@@ -136,7 +137,7 @@ class DocumentService:
         for mode, (preset_size, preset_overlap) in cls.PRESET_CHUNKING.items():
             if chunk_size == preset_size and chunk_overlap == preset_overlap:
                 if mode in {"small", "medium", "large"}:
-                    return mode
+                    return cast(ChunkingMode, mode)
         return None
 
     @classmethod

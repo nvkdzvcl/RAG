@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import os
-from collections.abc import Iterable
+from collections.abc import Generator, Iterable
 
 import pytest
 
@@ -64,7 +64,7 @@ def _starts_with_any(value: str, prefixes: Iterable[str]) -> bool:
 
 
 @pytest.fixture(autouse=True)
-def _fast_runtime_defaults() -> None:
+def _fast_runtime_defaults() -> Generator[None, None, None]:
     """Keep local tests deterministic and avoid loading heavy model backends by default."""
     _apply_test_env_defaults()
     get_settings.cache_clear()

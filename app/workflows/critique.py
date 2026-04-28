@@ -107,7 +107,7 @@ class HeuristicCritic:
     @staticmethod
     def _to_float(value: object, default: float) -> float:
         try:
-            return float(value)
+            return float(value if isinstance(value, (str, int, float)) else str(value))
         except (TypeError, ValueError):
             return default
 

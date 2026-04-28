@@ -11,4 +11,5 @@ mypy_extensions==1.1.0
 pathspec==1.1.1
 pluggy==1.6.0
 pytest==9.0.3
+pytest-cov>=5.0,<8.0
 ruff==0.15.12

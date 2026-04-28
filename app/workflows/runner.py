@@ -14,11 +14,10 @@ from app.schemas.documents import (
     RetrievalSettingsRequest,
     RetrievalSettingsResponse,
 )
-from app.services.index_runtime import RuntimeIndexManager
 from app.workflows.advanced import AdvancedWorkflow
 from app.workflows.compare import CompareWorkflow
 from app.workflows.streaming import StreamEventHandler
-from app.workflows.standard import StandardWorkflow
+from app.workflows.standard import IndexManagerLike, StandardWorkflow
 
 logger = logging.getLogger(__name__)
 
@@ -33,7 +32,7 @@ class WorkflowRunner:
         "custom": 8,
     }
 
-    def __init__(self, *, index_manager: RuntimeIndexManager | None = None) -> None:
+    def __init__(self, *, index_manager: IndexManagerLike | None = None) -> None:
         settings = get_settings()
         self._standard = StandardWorkflow(index_manager=index_manager)
         self._advanced = AdvancedWorkflow(standard_workflow=self._standard)

@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from typing import cast
+
 from app.generation import BaselineGenerator
 from app.retrieval import ScoreOnlyReranker
 from app.schemas.api import AdvancedQueryResponse, StandardQueryResponse
@@ -123,12 +125,13 @@ def test_advanced_prompt_includes_vietnamese_language_instruction() -> None:
     )
 
     assert response.response_language == "vi"
-    prompts = standard.llm_client.prompts
+    recording_llm = cast(_RecordingLLMClient, standard.llm_client)
+    prompts = recording_llm.prompts
     assert any("Mode: `advanced`" in prompt for prompt in prompts)
     assert any("Response language: `vi` (`Vietnamese`)" in prompt for prompt in prompts)
     assert any(
         prompt and "You must answer in Vietnamese. Do not switch languages." in prompt
-        for prompt in standard.llm_client.system_prompts
+        for prompt in recording_llm.system_prompts
     )
 
 

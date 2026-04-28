@@ -86,7 +86,7 @@ QueryResponse: TypeAlias = Annotated[
     Field(discriminator="mode"),
 ]
 
-QueryResponseAdapter = TypeAdapter(QueryResponse)
+QueryResponseAdapter: TypeAdapter[QueryResponse] = TypeAdapter(QueryResponse)
 
 
 def validate_query_response(payload: dict[str, Any]) -> QueryResponse:

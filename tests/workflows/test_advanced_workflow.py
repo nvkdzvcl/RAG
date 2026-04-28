@@ -85,6 +85,7 @@ def test_advanced_mode_run_path() -> None:
 
     assert isinstance(parsed, AdvancedQueryResponse)
     assert parsed.mode == "advanced"
+    assert parsed.loop_count is not None
     assert parsed.loop_count <= 2
     assert parsed.answer
 

@@ -2,10 +2,18 @@
 
 from __future__ import annotations
 
+from typing import cast
+
 from app.generation import FallbackLLMClient, StubLLMClient
+from app.schemas.api import (
+    AdvancedQueryResponse,
+    CompareQueryResponse,
+    StandardQueryResponse,
+)
 from app.schemas.common import Mode
 from app.schemas.retrieval import RetrievalResult
 from app.workflows.advanced import AdvancedWorkflow
+from app.workflows.refine import AnswerRefiner
 from app.workflows.runner import WorkflowRunner
 from app.workflows.standard import StandardWorkflow
 
@@ -59,14 +67,20 @@ def test_workflow_runner_runs_all_modes_without_real_qwen(monkeypatch) -> None:
 
     runner = WorkflowRunner()
 
-    standard = runner.run("Standard mode question", Mode.STANDARD)
-    advanced = runner.run("Advanced mode question", Mode.ADVANCED)
-    compare = runner.run("Compare modes question", Mode.COMPARE)
+    standard = StandardQueryResponse.model_validate(
+        runner.run("Standard mode question", Mode.STANDARD).model_dump()
+    )
+    advanced = AdvancedQueryResponse.model_validate(
+        runner.run("Advanced mode question", Mode.ADVANCED).model_dump()
+    )
+    compare_response = CompareQueryResponse.model_validate(
+        runner.run("Compare modes question", Mode.COMPARE).model_dump()
+    )
 
     assert standard.answer
     assert advanced.answer
-    assert compare.standard.answer
-    assert compare.advanced.answer
+    assert compare_response.standard.answer
+    assert compare_response.advanced.answer
 
 
 def test_standard_workflow_falls_back_when_qwen_endpoint_fails(monkeypatch) -> None:
@@ -94,9 +108,10 @@ def test_compare_mode_uses_mocked_qwen_for_both_branches(monkeypatch) -> None:
 
     runner = WorkflowRunner(index_manager=_FakeIndexManager())
     response = runner.run("compare with mocked qwen", Mode.COMPARE)
+    compare_response = CompareQueryResponse.model_validate(response.model_dump())
 
-    assert "Mocked Qwen answer." in response.standard.answer
-    assert "Mocked Qwen answer." in response.advanced.answer
+    assert "Mocked Qwen answer." in compare_response.standard.answer
+    assert "Mocked Qwen answer." in compare_response.advanced.answer
 
 
 def test_advanced_components_share_standard_llm_client_instance() -> None:
@@ -107,4 +122,4 @@ def test_advanced_components_share_standard_llm_client_instance() -> None:
     assert advanced.retrieval_gate.llm_client is llm_client
     assert advanced.query_rewriter.llm_client is llm_client
     assert advanced.critic.llm_client is llm_client
-    assert advanced.refiner.llm_client is llm_client
+    assert cast(AnswerRefiner, advanced.refiner).llm_client is llm_client

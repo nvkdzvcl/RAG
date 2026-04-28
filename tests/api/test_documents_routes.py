@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+from collections.abc import Generator
 from io import BytesIO
 from pathlib import Path
 from types import SimpleNamespace
@@ -17,7 +18,7 @@ from app.main import create_app
 @pytest.fixture
 def isolated_client(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> tuple[TestClient, Path]:
+) -> Generator[tuple[TestClient, Path], None, None]:
     data_dir = tmp_path / "data"
     corpus_dir = tmp_path / "corpus"
     corpus_dir.mkdir(parents=True, exist_ok=True)
@@ -44,7 +45,7 @@ def isolated_client(
 def isolated_client_ocr_enabled(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
-) -> tuple[TestClient, Path]:
+) -> Generator[tuple[TestClient, Path], None, None]:
     data_dir = tmp_path / "data"
     corpus_dir = tmp_path / "corpus"
     corpus_dir.mkdir(parents=True, exist_ok=True)
@@ -54,7 +55,7 @@ def isolated_client_ocr_enabled(
     )
 
     class FakePage:
-        images = []
+        images: list[object] = []
 
         @staticmethod
         def extract_text() -> str:

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+from collections.abc import Sequence
 from typing import Any
 
 from app.retrieval import (
@@ -20,7 +21,7 @@ class _FakeCrossEncoderModel:
 
     def predict(
         self,
-        sentences: list[tuple[str, str]],
+        sentences: Sequence[tuple[str, str]],
         *,
         batch_size: int,
         show_progress_bar: bool,
@@ -38,7 +39,7 @@ class _FakeCrossEncoderModel:
 class _BrokenPredictCrossEncoderModel:
     def predict(
         self,
-        sentences: list[tuple[str, str]],
+        sentences: Sequence[tuple[str, str]],
         *,
         batch_size: int,
         show_progress_bar: bool,
@@ -202,9 +203,7 @@ def test_create_reranker_load_failure_falls_back_to_pass_through(
     assert [item.chunk_id for item in reranked] == ["c_low", "c_high", "c_mid"]
 
 
-def test_create_reranker_logs_load_failure_reason(
-    monkeypatch, caplog
-) -> None:
+def test_create_reranker_logs_load_failure_reason(monkeypatch, caplog) -> None:
     class _BrokenCrossEncoderReranker:
         def __init__(self, **_: object) -> None:
             raise RuntimeError("cross encoder unavailable")

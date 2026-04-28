@@ -106,7 +106,7 @@ def test_text_parser_splits_paragraphs_without_losing_utf8(tmp_path: Path) -> No
 
 def test_pdf_parser_ocr_disabled_does_not_invoke_ocr(monkeypatch) -> None:
     class FakePage:
-        images = []
+        images: list[object] = []
 
         @staticmethod
         def extract_text() -> str:
@@ -150,7 +150,7 @@ def test_pdf_parser_ocr_disabled_does_not_invoke_ocr(monkeypatch) -> None:
 
 def test_pdf_parser_missing_tesseract_does_not_crash(monkeypatch) -> None:
     class FakePage:
-        images = []
+        images: list[object] = []
 
         @staticmethod
         def extract_text() -> str:
@@ -188,7 +188,7 @@ def test_pdf_parser_missing_tesseract_does_not_crash(monkeypatch) -> None:
 
 def test_pdf_parser_appends_ocr_text_block_with_metadata(monkeypatch) -> None:
     class FakePage:
-        images = []
+        images: list[object] = []
 
         @staticmethod
         def extract_text() -> str:
@@ -252,7 +252,7 @@ def test_pdf_parser_text_extraction_still_works_without_ocr_fallback(
     monkeypatch,
 ) -> None:
     class FakePage:
-        images = []
+        images: list[object] = []
 
         @staticmethod
         def extract_text() -> str:
@@ -300,7 +300,7 @@ def test_pdf_parser_text_extraction_still_works_without_ocr_fallback(
 
 def test_pdf_parser_ocr_runtime_error_does_not_crash(monkeypatch) -> None:
     class FakePage:
-        images = []
+        images: list[object] = []
 
         @staticmethod
         def extract_text() -> str:

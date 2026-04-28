@@ -7,7 +7,7 @@ import logging
 import time
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any
+from typing import Any, Protocol
 
 from app.core.async_utils import run_coro_sync
 from app.core.cache import create_cache_group_from_settings
@@ -43,7 +43,7 @@ from app.schemas.common import Mode
 from app.schemas.generation import GeneratedAnswer
 from app.schemas.ingestion import DocumentChunk
 from app.schemas.retrieval import RetrievalResult
-from app.services.index_runtime import EmptyRetriever, RuntimeIndexManager
+from app.services.index_runtime import EmptyRetriever
 from app.workflows.shared import (
     assess_grounding,
     build_chat_history_context,
@@ -73,6 +73,20 @@ class StandardPipelineResult:
     retrieval_debug: dict[str, Any] = field(default_factory=dict)
 
 
+class RetrieverLike(Protocol):
+    """Subset of retriever behavior required by the workflow."""
+
+    def retrieve(self, query: str, top_k: int = 5) -> list[RetrievalResult]: ...
+
+
+class IndexManagerLike(Protocol):
+    """Minimal runtime index manager contract used by StandardWorkflow."""
+
+    def get_retriever(self) -> RetrieverLike: ...
+
+    def get_active_source(self) -> str: ...
+
+
 class StandardWorkflow:
     """Baseline RAG workflow: retrieve -> rerank -> select context -> generate."""
 
@@ -98,7 +112,7 @@ class StandardWorkflow:
         chunk_size: int | None = None,
         chunk_overlap: int | None = None,
         persist_indexes: bool = False,
-        index_manager: RuntimeIndexManager | None = None,
+        index_manager: IndexManagerLike | None = None,
         embedding_provider: BaseEmbeddingProvider | None = None,
         reranker: BaseReranker | None = None,
         llm_client: LLMClient | None = None,
@@ -142,7 +156,7 @@ class StandardWorkflow:
         self.index_manager = index_manager
         self.caches = create_cache_group_from_settings(settings)
 
-        self._fallback_retriever: HybridRetriever | EmptyRetriever | None = None
+        self._fallback_retriever: RetrieverLike | None = None
 
         if self.index_manager is None:
             resolved_provider = embedding_provider or create_embedding_provider(
@@ -224,7 +238,7 @@ class StandardWorkflow:
         self,
         *,
         query_filters: dict[str, Any] | None = None,
-    ) -> HybridRetriever | EmptyRetriever:
+    ) -> RetrieverLike:
         if self.index_manager is not None:
             getter = getattr(self.index_manager, "get_retriever")
             if query_filters is None:

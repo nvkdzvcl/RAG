@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import time
-from typing import Any
+from typing import Any, Literal
 
 from app.core.async_utils import run_coro_sync
 from app.schemas.api import (
@@ -148,7 +148,7 @@ class CompareWorkflow:
             or advanced_grounded < 0.08
         )
 
-        winner = "tie"
+        winner: Literal["standard", "advanced", "tie", "both_weak"] = "tie"
         reasons: list[str] = []
 
         if (

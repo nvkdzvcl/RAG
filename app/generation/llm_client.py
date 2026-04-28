@@ -18,14 +18,11 @@ logger = logging.getLogger(__name__)
 class LLMClient(Protocol):
     """Abstraction for text generation providers."""
 
-    async def complete(
+    def complete(
         self,
         prompt: str,
         system_prompt: str | None = None,
-        model: str | None = None,
-        max_tokens: int | None = None,
-        **kwargs: Any,
-    ) -> str:
+    ) -> str | Awaitable[str]:
         """Return completion text for prompt/system_prompt."""
 
 
@@ -179,7 +176,8 @@ async def complete_with_model(
     if kwargs:
         payload.update(kwargs)
     selected = _supported_complete_kwargs(llm_client, payload)
-    output = await await_if_needed(llm_client.complete(**selected))
+    output: str | Awaitable[str] = llm_client.complete(**selected)
+    output = await await_if_needed(output)
     if not isinstance(output, str):
         raise TypeError("LLM completion output must be a string.")
     return output

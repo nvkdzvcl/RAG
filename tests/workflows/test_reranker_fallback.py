@@ -2,6 +2,11 @@
 
 from __future__ import annotations
 
+from app.schemas.api import (
+    AdvancedQueryResponse,
+    CompareQueryResponse,
+    StandardQueryResponse,
+)
 from app.schemas.common import Mode
 from app.schemas.retrieval import RetrievalResult
 from app.retrieval import PassThroughReranker, ScoreOnlyReranker
@@ -22,14 +27,20 @@ def test_workflows_run_when_cross_encoder_unavailable(monkeypatch) -> None:
 
     runner = WorkflowRunner()
 
-    standard = runner.run(query="What is standard mode?", mode=Mode.STANDARD)
-    advanced = runner.run(query="What is advanced mode?", mode=Mode.ADVANCED)
-    compare = runner.run(query="Compare these modes", mode=Mode.COMPARE)
+    standard = StandardQueryResponse.model_validate(
+        runner.run(query="What is standard mode?", mode=Mode.STANDARD).model_dump()
+    )
+    advanced = AdvancedQueryResponse.model_validate(
+        runner.run(query="What is advanced mode?", mode=Mode.ADVANCED).model_dump()
+    )
+    compare_response = CompareQueryResponse.model_validate(
+        runner.run(query="Compare these modes", mode=Mode.COMPARE).model_dump()
+    )
 
     assert standard.answer
     assert advanced.answer
-    assert compare.standard.answer
-    assert compare.advanced.answer
+    assert compare_response.standard.answer
+    assert compare_response.advanced.answer
 
 
 def test_standard_workflow_uses_create_reranker_from_settings(monkeypatch) -> None:

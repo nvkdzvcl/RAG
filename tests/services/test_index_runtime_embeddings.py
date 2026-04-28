@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 from pathlib import Path
 from types import SimpleNamespace
+from typing import Any, cast
 
 from app.core.config import get_settings
 from app.ingestion.base_loader import build_doc_id
@@ -207,7 +208,7 @@ def test_runtime_index_manager_indexes_and_retrieves_ocr_chunks(
         ocr_confidence_threshold = 40.0
 
     class FakePage:
-        images = []
+        images: list[object] = []
 
         @staticmethod
         def extract_text() -> str:
@@ -270,7 +271,9 @@ def test_runtime_index_manager_indexes_and_retrieves_ocr_chunks(
     assert any(item.metadata.get("block_type") == "ocr_text" for item in results)
     assert any("ocrtokenviet99" in item.content for item in results)
     activation_stats = manager.get_last_activation_stats()
-    assert activation_stats["ocr_chunks"] >= 1
+    ocr_chunks = activation_stats["ocr_chunks"]
+    assert isinstance(ocr_chunks, int)
+    assert ocr_chunks >= 1
 
 
 def test_runtime_uploaded_retrieval_filters_to_active_document_ids(
@@ -486,7 +489,8 @@ def test_get_retriever_accepts_query_filters_and_exposes_filter_debug(
 
     retriever = manager.get_retriever(query_filters={"doc_ids": ["uploaded-doc-1"]})
     results = retriever.retrieve("token", top_k=3)
-    debug = retriever.get_last_filter_debug()
+    assert hasattr(retriever, "get_last_filter_debug")
+    debug = cast(Any, retriever).get_last_filter_debug()
 
     assert results == []
     assert debug["applied_filters"] == {"doc_ids": ["uploaded-doc-1"]}
@@ -539,7 +543,8 @@ def test_runtime_query_filter_include_ocr_false_excludes_ocr_chunks(
     all_results = manager.get_retriever().retrieve(shared_token, top_k=5)
     filtered_retriever = manager.get_retriever(query_filters={"include_ocr": False})
     filtered_results = filtered_retriever.retrieve(shared_token, top_k=5)
-    debug = filtered_retriever.get_last_filter_debug()
+    assert hasattr(filtered_retriever, "get_last_filter_debug")
+    debug = cast(Any, filtered_retriever).get_last_filter_debug()
 
     assert all_results
     assert any(bool(item.metadata.get("ocr")) for item in all_results)

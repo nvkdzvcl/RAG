@@ -78,7 +78,7 @@ def test_pdf_loader_ocr_vietnamese_text_becomes_chunk_and_preserves_metadata(
     pdf_path.write_bytes(b"%PDF-1.4 fake content")
 
     class FakePage:
-        images = []
+        images: list[object] = []
 
         @staticmethod
         def extract_text() -> str:

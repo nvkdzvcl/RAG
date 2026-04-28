@@ -219,7 +219,7 @@ def test_create_llm_client_unknown_provider_falls_back_to_stub() -> None:
     )
 
     assert (
-        asyncio.run(client.complete("test"))
+        asyncio.run(complete_with_model(client, "test"))
         == '{"answer":"stub","confidence":0.2,"status":"answered"}'
     )
 

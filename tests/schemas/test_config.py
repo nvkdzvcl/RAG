@@ -64,7 +64,8 @@ def test_settings_defaults(monkeypatch) -> None:
     ]:
         monkeypatch.delenv(key, raising=False)
 
-    settings = Settings(_env_file=None)
+    # Pydantic BaseSettings accepts `_env_file` at runtime; mypy stubs do not expose it.
+    settings = Settings(_env_file=None)  # type: ignore[call-arg]
     assert settings.app_name == "Self-RAG"
     assert settings.max_advanced_loops == 1
     assert settings.chunk_mode == "preset"
@@ -169,12 +170,13 @@ def test_critique_schema() -> None:
 def test_settings_supports_reranker_top_k_and_legacy_top_n(monkeypatch) -> None:
     monkeypatch.setenv("RERANKER_TOP_K", "9")
     monkeypatch.delenv("RERANKER_TOP_N", raising=False)
-    settings_top_k = Settings(_env_file=None)
+    # Keep tests isolated from local `.env`.
+    settings_top_k = Settings(_env_file=None)  # type: ignore[call-arg]
     assert settings_top_k.reranker_top_k == 9
     assert settings_top_k.reranker_top_n == 9
 
     monkeypatch.delenv("RERANKER_TOP_K", raising=False)
     monkeypatch.setenv("RERANKER_TOP_N", "7")
-    settings_top_n = Settings(_env_file=None)
+    settings_top_n = Settings(_env_file=None)  # type: ignore[call-arg]
     assert settings_top_n.reranker_top_k == 7
     assert settings_top_n.reranker_top_n == 7

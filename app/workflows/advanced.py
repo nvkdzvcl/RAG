@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import time
-from typing import Any
+from typing import Any, Protocol
 
 from app.core.async_utils import run_coro_sync
 from app.core.config import get_settings
@@ -36,6 +36,33 @@ from app.workflows.streaming import StreamEventHandler
 from app.workflows.standard import StandardWorkflow
 
 
+class RefinerLike(Protocol):
+    """Subset of refiner behavior required by advanced pipeline."""
+
+    def refine(
+        self,
+        query: str,
+        draft_answer: str,
+        critique: Any,
+        context: list[RetrievalResult],
+        *,
+        chat_history: list[dict[str, str]] | None = None,
+        model: str | None = None,
+        response_language: str = "en",
+    ) -> str: ...
+
+    def refine_strict_grounded(
+        self,
+        *,
+        query: str,
+        draft_answer: str,
+        context: list[RetrievalResult],
+        chat_history: list[dict[str, str]] | None = None,
+        model: str | None = None,
+        response_language: str = "en",
+    ) -> str: ...
+
+
 class AdvancedWorkflow:
     """Practical Self-RAG workflow reusing standard retrieval/generation pipeline."""
 
@@ -50,7 +77,7 @@ class AdvancedWorkflow:
         retrieval_gate: HeuristicRetrievalGate | None = None,
         query_rewriter: QueryRewriter | None = None,
         critic: HeuristicCritic | None = None,
-        refiner: AnswerRefiner | None = None,
+        refiner: RefinerLike | None = None,
     ) -> None:
         settings = get_settings()
         self.max_loops = (

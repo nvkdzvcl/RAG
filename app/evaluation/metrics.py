@@ -331,15 +331,15 @@ def _parse_gold_source_fields(gold: str) -> dict[str, str]:
         except json.JSONDecodeError:
             payload = None
         if isinstance(payload, dict):
-            parsed: dict[str, str] = {}
+            parsed_json: dict[str, str] = {}
             for key, value in payload.items():
                 if not isinstance(key, str) or not isinstance(value, str):
                     continue
                 alias = _GOLD_FIELD_ALIASES.get(key.strip().lower())
                 if alias:
-                    parsed[alias] = value.strip()
-            if parsed:
-                return parsed
+                    parsed_json[alias] = value.strip()
+            if parsed_json:
+                return parsed_json
 
     parsed: dict[str, str] = {}
     for part in re.split(r"[|,]", raw):

@@ -86,10 +86,9 @@ class PDFParser(BaseDocumentParser):
         top = image.get("top")
         x1 = image.get("x1")
         bottom = image.get("bottom")
-        coords = [x0, top, x1, bottom]
-        if any(value is None for value in coords):
+        if x0 is None or top is None or x1 is None or bottom is None:
             return None
-        return [float(value) for value in coords]
+        return [float(x0), float(top), float(x1), float(bottom)]
 
     def _extract_ocr_block(
         self,

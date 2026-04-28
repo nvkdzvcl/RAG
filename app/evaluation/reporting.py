@@ -89,9 +89,7 @@ def build_comparative_summary(
     retrieval_by_mode: dict[str, RetrievalModeSummary] = {}
     for retrieval_mode in ("dense", "bm25", "hybrid", "hybrid_rerank"):
         rows_with_mode = [
-            row
-            for row in flattened
-            if retrieval_mode in row.metrics.retrieval_by_mode
+            row for row in flattened if retrieval_mode in row.metrics.retrieval_by_mode
         ]
         if not rows_with_mode:
             continue

@@ -22,13 +22,19 @@ except ModuleNotFoundError:  # pragma: no cover - optional dependency.
 try:
     import pytesseract
     from pytesseract import Output
-    from pytesseract import TesseractNotFoundError
 except ModuleNotFoundError:  # pragma: no cover - optional dependency.
     pytesseract = None  # type: ignore[assignment]
     Output = None  # type: ignore[assignment]
 
-    class TesseractNotFoundError(RuntimeError):
+TesseractNotFoundErrorType: type[BaseException]
+if pytesseract is None:
+
+    class _FallbackTesseractNotFoundError(RuntimeError):
         """Fallback exception when pytesseract is unavailable."""
+
+    TesseractNotFoundErrorType = _FallbackTesseractNotFoundError
+else:
+    TesseractNotFoundErrorType = pytesseract.TesseractNotFoundError
 
 
 def configure_tesseract_cmd(cmd: str | None) -> None:
@@ -45,7 +51,7 @@ def is_tesseract_available() -> bool:
     try:
         _ = pytesseract.get_tesseract_version()
         return True
-    except (OSError, RuntimeError, TesseractNotFoundError):
+    except (OSError, RuntimeError, TesseractNotFoundErrorType):
         return False
 
 
@@ -221,7 +227,7 @@ def ocr_pdf_page_with_pymupdf(
         document.close()
 
     image_mode = "RGB" if pixmap.n >= 3 else "L"
-    image = Image.frombytes(image_mode, [pixmap.width, pixmap.height], pixmap.samples)
+    image = Image.frombytes(image_mode, (pixmap.width, pixmap.height), pixmap.samples)
     return ocr_image(
         image,
         lang=lang,
