@@ -13,3 +13,13 @@ export type DocumentRecord = {
   message: string | null;
   source: "backend" | "fallback";
 };
+
+export type UploadBatchStatus = "pending" | "uploading" | "success" | "error";
+
+export type UploadBatchItem = {
+  id: string;
+  filename: string;
+  status: UploadBatchStatus;
+  progress: number | null;
+  message: string | null;
+};

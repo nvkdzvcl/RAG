@@ -33,7 +33,9 @@ class PromptRepository:
         """Render prompt template with best-effort variable substitution."""
         template_text = self.get(file_name, fallback=fallback)
         template = Template(template_text)
-        normalized = {key: self._coerce_value(value) for key, value in variables.items()}
+        normalized = {
+            key: self._coerce_value(value) for key, value in variables.items()
+        }
         return template.safe_substitute(normalized)
 
     @staticmethod

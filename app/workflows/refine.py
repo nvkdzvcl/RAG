@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
+from app.core.async_utils import run_coro_sync
 from app.core.config import get_settings
 from app.core.json_utils import parse_json_object
 from app.core.prompting import PromptRepository
@@ -35,7 +36,7 @@ _STRICT_GROUNDED_REWRITE_PROMPT_FALLBACK = (
     "ONLY use facts present in selected_context.\\n"
     "Do NOT use external knowledge.\\n"
     "If the context does not support the answer, return exactly: "
-    "\"Không đủ thông tin từ tài liệu để trả lời\"\\n"
+    '"Không đủ thông tin từ tài liệu để trả lời"\\n'
     "Return in $response_language_name only.\\n"
     "Return strict JSON only with key: refined_answer.\\n"
     "question: $question\\n"
@@ -62,7 +63,9 @@ class AnswerRefiner:
         self.memory_window = max(0, int(getattr(settings, "memory_window", 3)))
         self.max_tokens = max(1, int(getattr(settings, "llm_max_tokens", 2048)))
         resolved_prompt_dir = prompt_dir or settings.prompt_dir
-        self.prompt_repository = prompt_repository or PromptRepository(resolved_prompt_dir)
+        self.prompt_repository = prompt_repository or PromptRepository(
+            resolved_prompt_dir
+        )
 
     def _heuristic_refine(
         self,
@@ -76,7 +79,11 @@ class AnswerRefiner:
         refined = draft_answer.strip()
 
         if critique.missing_aspects:
-            refined += "\\n\\nAdditional coverage: " + ", ".join(critique.missing_aspects[:3]) + "."
+            refined += (
+                "\\n\\nAdditional coverage: "
+                + ", ".join(critique.missing_aspects[:3])
+                + "."
+            )
 
         if context:
             lead_source = context[0]
@@ -87,11 +94,13 @@ class AnswerRefiner:
 
         if response_language == "vi":
             refined = refined.replace("Additional coverage:", "Bổ sung nội dung:")
-            refined = refined.replace("Evidence note: supported by", "Ghi chú bằng chứng: được hỗ trợ bởi")
+            refined = refined.replace(
+                "Evidence note: supported by", "Ghi chú bằng chứng: được hỗ trợ bởi"
+            )
 
         return refined
 
-    def refine(
+    async def refine_async(
         self,
         query: str,
         draft_answer: str,
@@ -139,7 +148,7 @@ class AnswerRefiner:
         )
 
         try:
-            raw = complete_with_model(
+            raw = await complete_with_model(
                 self.llm_client,
                 prompt,
                 system_prompt=build_language_system_prompt(response_language),
@@ -157,7 +166,7 @@ class AnswerRefiner:
 
         return heuristic
 
-    def refine_strict_grounded(
+    async def refine_strict_grounded_async(
         self,
         *,
         query: str,
@@ -200,7 +209,7 @@ class AnswerRefiner:
             response_language_name=response_language_name(response_language),
         )
         try:
-            raw = complete_with_model(
+            raw = await complete_with_model(
                 self.llm_client,
                 prompt,
                 system_prompt=build_language_system_prompt(response_language),
@@ -216,3 +225,49 @@ class AnswerRefiner:
             if refined_answer:
                 return refined_answer
         return default_answer
+
+    def refine(
+        self,
+        query: str,
+        draft_answer: str,
+        critique: CritiqueResult,
+        context: list[RetrievalResult],
+        *,
+        chat_history: list[dict[str, str]] | None = None,
+        model: str | None = None,
+        response_language: str = "en",
+    ) -> str:
+        """Sync wrapper for legacy callers."""
+        return run_coro_sync(
+            self.refine_async(
+                query=query,
+                draft_answer=draft_answer,
+                critique=critique,
+                context=context,
+                chat_history=chat_history,
+                model=model,
+                response_language=response_language,
+            )
+        )
+
+    def refine_strict_grounded(
+        self,
+        *,
+        query: str,
+        draft_answer: str,
+        context: list[RetrievalResult],
+        chat_history: list[dict[str, str]] | None = None,
+        model: str | None = None,
+        response_language: str = "en",
+    ) -> str:
+        """Sync wrapper for legacy callers."""
+        return run_coro_sync(
+            self.refine_strict_grounded_async(
+                query=query,
+                draft_answer=draft_answer,
+                context=context,
+                chat_history=chat_history,
+                model=model,
+                response_language=response_language,
+            )
+        )

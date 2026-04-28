@@ -6,6 +6,7 @@ import json
 import re
 from pathlib import Path
 
+from app.core.async_utils import run_coro_sync
 from app.core.config import get_settings
 from app.core.json_utils import parse_json_object
 from app.core.prompting import PromptRepository
@@ -50,7 +51,9 @@ class HeuristicRetrievalGate:
         self.use_llm = use_llm
         self.max_tokens = max(1, int(getattr(settings, "llm_gate_max_tokens", 128)))
         resolved_prompt_dir = prompt_dir or settings.prompt_dir
-        self.prompt_repository = prompt_repository or PromptRepository(resolved_prompt_dir)
+        self.prompt_repository = prompt_repository or PromptRepository(
+            resolved_prompt_dir
+        )
 
     def _heuristic_decide(
         self, query: str, chat_history: list[dict[str, str]] | None = None
@@ -67,12 +70,14 @@ class HeuristicRetrievalGate:
         if tokens and tokens.issubset(self._small_talk_tokens):
             return False, "small_talk"
 
-        if len(tokens) <= 2 and any(token in self._small_talk_tokens for token in tokens):
+        if len(tokens) <= 2 and any(
+            token in self._small_talk_tokens for token in tokens
+        ):
             return False, "small_talk_short"
 
         return True, "default_retrieval"
 
-    def _llm_decide(
+    async def _llm_decide(
         self,
         query: str,
         chat_history: list[dict[str, str]] | None = None,
@@ -93,7 +98,7 @@ class HeuristicRetrievalGate:
         )
 
         try:
-            raw = complete_with_model(
+            raw = await complete_with_model(
                 self.llm_client,
                 prompt,
                 system_prompt=build_language_system_prompt(response_language),
@@ -115,7 +120,7 @@ class HeuristicRetrievalGate:
             reason = "llm_gate"
         return need_retrieval, reason.strip()
 
-    def decide(
+    async def decide_async(
         self,
         query: str,
         chat_history: list[dict[str, str]] | None = None,
@@ -123,11 +128,18 @@ class HeuristicRetrievalGate:
         model: str | None = None,
         response_language: str = "en",
     ) -> tuple[bool, str]:
-        heuristic_need, heuristic_reason = self._heuristic_decide(query, chat_history=chat_history)
-        if heuristic_reason in {"empty_query", "forced_retrieval", "small_talk", "small_talk_short"}:
+        heuristic_need, heuristic_reason = self._heuristic_decide(
+            query, chat_history=chat_history
+        )
+        if heuristic_reason in {
+            "empty_query",
+            "forced_retrieval",
+            "small_talk",
+            "small_talk_short",
+        }:
             return heuristic_need, heuristic_reason
 
-        llm_decision = self._llm_decide(
+        llm_decision = await self._llm_decide(
             query,
             chat_history=chat_history,
             model=model,
@@ -136,3 +148,21 @@ class HeuristicRetrievalGate:
         if llm_decision is not None:
             return llm_decision
         return heuristic_need, heuristic_reason
+
+    def decide(
+        self,
+        query: str,
+        chat_history: list[dict[str, str]] | None = None,
+        *,
+        model: str | None = None,
+        response_language: str = "en",
+    ) -> tuple[bool, str]:
+        """Sync wrapper for legacy callers."""
+        return run_coro_sync(
+            self.decide_async(
+                query,
+                chat_history=chat_history,
+                model=model,
+                response_language=response_language,
+            )
+        )

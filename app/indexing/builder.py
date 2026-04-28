@@ -6,7 +6,7 @@ from dataclasses import dataclass
 
 from app.indexing.bm25_index import BM25Index
 from app.indexing.embeddings import EmbeddingProvider
-from app.indexing.vector_index import InMemoryVectorIndex, VectorIndex
+from app.indexing.vector_index import InMemoryVectorIndex
 from app.schemas.ingestion import DocumentChunk
 
 
@@ -14,7 +14,7 @@ from app.schemas.ingestion import DocumentChunk
 class BuiltIndexes:
     """Container for built indexing artifacts."""
 
-    vector_index: VectorIndex
+    vector_index: InMemoryVectorIndex
     bm25_index: BM25Index
     chunk_count: int
     embedding_provider: str
@@ -26,7 +26,7 @@ class IndexBuilder:
     def __init__(
         self,
         embedding_provider: EmbeddingProvider,
-        vector_index: VectorIndex | None = None,
+        vector_index: InMemoryVectorIndex | None = None,
         bm25_index: BM25Index | None = None,
     ) -> None:
         self.embedding_provider = embedding_provider
@@ -37,7 +37,9 @@ class IndexBuilder:
         if not chunks:
             raise ValueError("Cannot build indexes from empty chunks")
 
-        vectors = self.embedding_provider.embed_documents([chunk.content for chunk in chunks])
+        vectors = self.embedding_provider.embed_documents(
+            [chunk.content for chunk in chunks]
+        )
         self.vector_index.build(chunks, vectors)
         self.bm25_index.build(chunks)
 

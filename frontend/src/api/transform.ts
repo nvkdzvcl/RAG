@@ -1,16 +1,36 @@
 import type { ApiCitation, ApiModeResponse, ApiQueryResponse } from "@/api/types";
 import type { Citation, CompareResult, ModeResult, QueryResult, SourceReference, TraceEntry, TraceStatus } from "@/types/chat";
 
+function filenameFromSourcePath(path: string): string | null {
+  const trimmed = path.trim();
+  if (!trimmed) {
+    return null;
+  }
+  const normalized = trimmed.replace(/\\/g, "/").replace(/\/+$/, "");
+  const candidate = normalized.split("/").filter(Boolean).pop();
+  return candidate && candidate.length > 0 ? candidate : trimmed;
+}
+
 function citationToUi(citation: ApiCitation, index: number): Citation {
+  const derivedFilename = filenameFromSourcePath(citation.source);
   return {
     id: `${citation.chunk_id}-${index}`,
     chunkId: citation.chunk_id,
+    sourceId: citation.source_id ?? citation.chunk_id,
     docId: citation.doc_id,
     source: citation.source,
+    fileName: citation.file_name ?? citation.filename ?? derivedFilename ?? null,
+    fileType: citation.file_type ?? null,
     title: citation.title ?? null,
     section: citation.section ?? null,
     page: citation.page ?? null,
     blockType: citation.block_type ?? null,
+    ocr: citation.ocr ?? null,
+    text: citation.text ?? null,
+    content: citation.content ?? citation.text ?? null,
+    snippet: citation.snippet ?? null,
+    score: citation.score ?? null,
+    rerankScore: citation.rerank_score ?? null,
   };
 }
 
@@ -58,11 +78,18 @@ function citationsToSources(citations: Citation[], rerankScores: Map<string, num
         chunkId: citation.chunkId,
         docId: citation.docId,
         source: citation.source,
+        fileName: citation.fileName ?? null,
+        fileType: citation.fileType ?? null,
         title: citation.title,
         section: citation.section,
         page: citation.page,
         blockType: citation.blockType,
-        rerankScore: rerankScores.get(citation.chunkId) ?? null,
+        ocr: citation.ocr ?? null,
+        text: citation.text ?? null,
+        content: citation.content ?? citation.text ?? null,
+        snippet: citation.snippet ?? null,
+        score: citation.score ?? null,
+        rerankScore: citation.rerankScore ?? rerankScores.get(citation.chunkId) ?? null,
       });
     }
   }
@@ -246,6 +273,16 @@ export function apiToUi(result: ApiQueryResponse): QueryResult {
       standard: modeToUi(result.standard),
       advanced: modeToUi(result.advanced),
       comparison: {
+        winner: result.comparison.winner ?? null,
+        reasons: Array.isArray(result.comparison.reasons) ? result.comparison.reasons : [],
+        standardScore:
+          typeof result.comparison.standard_score === "number" && Number.isFinite(result.comparison.standard_score)
+            ? result.comparison.standard_score
+            : null,
+        advancedScore:
+          typeof result.comparison.advanced_score === "number" && Number.isFinite(result.comparison.advanced_score)
+            ? result.comparison.advanced_score
+            : null,
         confidenceDelta: result.comparison.confidence_delta ?? null,
         latencyDeltaMs: result.comparison.latency_delta_ms ?? null,
         citationDelta: result.comparison.citation_delta ?? null,

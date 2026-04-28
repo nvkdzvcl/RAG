@@ -4,12 +4,21 @@ export type SingleMode = Exclude<Mode, "compare">;
 export type Citation = {
   id: string;
   chunkId: string;
+  sourceId?: string | null;
   docId: string;
   source: string;
+  fileName?: string | null;
+  fileType?: string | null;
   title?: string | null;
   section?: string | null;
   page?: number | null;
   blockType?: string | null;
+  ocr?: boolean | null;
+  text?: string | null;
+  content?: string | null;
+  snippet?: string | null;
+  score?: number | null;
+  rerankScore?: number | null;
 };
 
 export type SourceReference = {
@@ -17,10 +26,17 @@ export type SourceReference = {
   chunkId: string;
   docId: string;
   source: string;
+  fileName?: string | null;
+  fileType?: string | null;
   title?: string | null;
   section?: string | null;
   page?: number | null;
   blockType?: string | null;
+  ocr?: boolean | null;
+  text?: string | null;
+  content?: string | null;
+  snippet?: string | null;
+  score?: number | null;
   rerankScore?: number | null;
 };
 
@@ -53,6 +69,10 @@ export type ModeResult = {
 };
 
 export type ComparisonSummary = {
+  winner: "standard" | "advanced" | "tie" | "both_weak" | null;
+  reasons: string[];
+  standardScore: number | null;
+  advancedScore: number | null;
   confidenceDelta: number | null;
   latencyDeltaMs: number | null;
   citationDelta: number | null;

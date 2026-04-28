@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from datetime import datetime
 from typing import Annotated, Any, Literal, TypeAlias
 
 from pydantic import BaseModel, Field, TypeAdapter
@@ -16,6 +17,12 @@ class QueryRequest(BaseModel):
     mode: Mode = Mode.STANDARD
     chat_history: list[dict[str, str]] = Field(default_factory=list)
     model: str | None = Field(default=None, min_length=1)
+    doc_ids: list[str] | None = None
+    filenames: list[str] | None = None
+    file_types: list[str] | None = None
+    uploaded_after: datetime | None = None
+    uploaded_before: datetime | None = None
+    include_ocr: bool | None = None
 
 
 class ModeResult(BaseModel):
@@ -31,6 +38,7 @@ class ModeResult(BaseModel):
     response_language: str = "en"
     language_mismatch: bool = False
     grounded_score: float = 0.0
+    grounding_reason: str = "not_evaluated"
     citation_count: int = 0
     hallucination_detected: bool = False
     llm_fallback_used: bool = False
@@ -52,6 +60,10 @@ class AdvancedQueryResponse(ModeResult):
 class ComparisonSummary(BaseModel):
     """Aggregated metrics for compare mode output."""
 
+    winner: Literal["standard", "advanced", "tie", "both_weak"] | None = None
+    reasons: list[str] = Field(default_factory=list)
+    standard_score: float | None = None
+    advanced_score: float | None = None
     confidence_delta: float | None = None
     latency_delta_ms: int | None = None
     citation_delta: int | None = None
@@ -74,7 +86,7 @@ QueryResponse: TypeAlias = Annotated[
     Field(discriminator="mode"),
 ]
 
-QueryResponseAdapter = TypeAdapter(QueryResponse)
+QueryResponseAdapter: TypeAdapter[QueryResponse] = TypeAdapter(QueryResponse)
 
 
 def validate_query_response(payload: dict[str, Any]) -> QueryResponse:

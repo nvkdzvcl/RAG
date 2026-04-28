@@ -78,7 +78,7 @@ def test_pdf_loader_ocr_vietnamese_text_becomes_chunk_and_preserves_metadata(
     pdf_path.write_bytes(b"%PDF-1.4 fake content")
 
     class FakePage:
-        images = []
+        images: list[object] = []
 
         @staticmethod
         def extract_text() -> str:
@@ -104,10 +104,14 @@ def test_pdf_loader_ocr_vietnamese_text_becomes_chunk_and_preserves_metadata(
         "app.ingestion.parsers.pdf_parser.pdfplumber",
         SimpleNamespace(open=lambda _: FakePDF()),
     )
-    monkeypatch.setattr("app.ingestion.parsers.pdf_parser.is_tesseract_available", lambda: True)
+    monkeypatch.setattr(
+        "app.ingestion.parsers.pdf_parser.is_tesseract_available", lambda: True
+    )
     monkeypatch.setattr(
         "app.ingestion.parsers.pdf_parser.ocr_pdf_page_with_pymupdf",
-        lambda *args, **kwargs: "Tài liệu quét có nội dung tiếng Việt: dữ liệu truy hồi.",
+        lambda *args, **kwargs: (
+            "Tài liệu quét có nội dung tiếng Việt: dữ liệu truy hồi."
+        ),
     )
 
     loader = PdfLoader(

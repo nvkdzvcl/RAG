@@ -32,16 +32,49 @@ class EvalExample(BaseModel):
     notes: str | None = None
 
 
+class RetrievedSourceTrace(BaseModel):
+    """Normalized source metadata from retrieved trace documents."""
+
+    chunk_id: str | None = None
+    doc_id: str | None = None
+    source: str | None = None
+    path: str | None = None
+    title: str | None = None
+    section: str | None = None
+
+
 class TraceExtraction(BaseModel):
     """Retrieval/rerank trace fields extracted from mode trace."""
 
     retrieved_chunk_ids: list[str] = Field(default_factory=list)
+    retrieved_sources: list[RetrievedSourceTrace] = Field(default_factory=list)
+    retrieval_rankings: dict[str, list[str]] = Field(default_factory=dict)
+    retrieval_sources_by_mode: dict[str, list[RetrievedSourceTrace]] = Field(
+        default_factory=dict
+    )
     rerank_scores: dict[str, float] = Field(default_factory=dict)
     retrieved_count: int = 0
     selected_context_count: int = 0
     selected_context_texts: list[str] = Field(default_factory=list)
     chunk_size: int | None = None
     chunk_overlap: int | None = None
+
+
+class RetrievalModeMetrics(BaseModel):
+    """Per-retrieval-strategy effectiveness for one evaluation output."""
+
+    hit: bool = False
+    mrr: float = 0.0
+    ndcg: float = 0.0
+
+
+class RetrievalModeSummary(BaseModel):
+    """Aggregated retrieval metrics grouped by retrieval strategy."""
+
+    count: int = 0
+    hit_rate: float = 0.0
+    avg_mrr: float = 0.0
+    avg_ndcg: float = 0.0
 
 
 class EvalMetrics(BaseModel):
@@ -58,6 +91,11 @@ class EvalMetrics(BaseModel):
     selected_context_count: int
     chunk_size: int | None = None
     chunk_overlap: int | None = None
+
+    retrieval_hit: bool = False
+    retrieval_mrr: float = 0.0
+    retrieval_ndcg: float = 0.0
+    retrieval_by_mode: dict[str, RetrievalModeMetrics] = Field(default_factory=dict)
 
     answer_non_empty: bool
     answer_contains_reference_keywords: bool | None = None
@@ -80,6 +118,7 @@ class ModeEvalOutput(BaseModel):
     confidence: float | None = None
     status: str | None = None
     retrieved_chunk_ids: list[str] = Field(default_factory=list)
+    retrieved_sources: list[RetrievedSourceTrace] = Field(default_factory=list)
     rerank_scores: dict[str, float] = Field(default_factory=dict)
     loop_count: int | None = None
     stop_reason: str | None = None
@@ -116,6 +155,9 @@ class CategorySummary(BaseModel):
     citation_rate: float
     abstain_rate: float
     retry_rate: float
+    hit_rate: float = 0.0
+    avg_mrr: float = 0.0
+    avg_ndcg: float = 0.0
 
 
 class ComparativeSummary(BaseModel):
@@ -125,8 +167,12 @@ class ComparativeSummary(BaseModel):
     avg_latency_delta_ms: float | None = None
     avg_confidence_delta: float | None = None
     advanced_retry_rate: float
+    hit_rate: float = 0.0
+    avg_mrr: float = 0.0
+    avg_ndcg: float = 0.0
     abstain_rate_by_mode: dict[str, float] = Field(default_factory=dict)
     citation_rate_by_mode: dict[str, float] = Field(default_factory=dict)
+    retrieval_by_mode: dict[str, RetrievalModeSummary] = Field(default_factory=dict)
     per_category: list[CategorySummary] = Field(default_factory=list)
 
 

@@ -17,6 +17,9 @@ function filenameFromSourcePath(path: string): string {
 }
 
 function sourcePrimaryTitle(source: SourceReference): string {
+  if (source.fileName && source.fileName.trim().length > 0) {
+    return source.fileName.trim();
+  }
   if (source.source && source.source.trim().length > 0) {
     return filenameFromSourcePath(source.source);
   }
@@ -42,6 +45,9 @@ function sourceSecondaryMeta(source: SourceReference): string {
 
 function sourceDetailRows(source: SourceReference): string[] {
   const rows: string[] = [];
+  if (source.fileName && source.fileName.trim().length > 0) {
+    rows.push(`Tệp: ${source.fileName}`);
+  }
   if (source.title && source.title.trim().length > 0) {
     rows.push(`Tiêu đề: ${source.title}`);
   }

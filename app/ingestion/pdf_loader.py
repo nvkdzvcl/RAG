@@ -5,14 +5,20 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any
 
-from app.ingestion.base_loader import BaseLoader, blocks_to_loaded_documents, build_doc_id
+from app.ingestion.base_loader import (
+    BaseLoader,
+    blocks_to_loaded_documents,
+    build_doc_id,
+)
 from app.ingestion.parsers import PDFParser
 from app.schemas.ingestion import DocumentBlock, LoadedDocument
 
 try:
-    from pypdf import PdfReader
-except ModuleNotFoundError:  # pragma: no cover - exercised only when dependency is missing.
-    PdfReader = None  # type: ignore[assignment]
+    import pypdf as _pypdf
+except (
+    ModuleNotFoundError
+):  # pragma: no cover - exercised only when dependency is missing.
+    _pypdf = None
 
 
 class PdfLoader(BaseLoader):
@@ -40,9 +46,9 @@ class PdfLoader(BaseLoader):
         try:
             blocks = self.parser.parse(path)
         except Exception:
-            if PdfReader is None:
+            if _pypdf is None:
                 raise RuntimeError("PDF parsing fallback requires the 'pypdf' package.")
-            reader = PdfReader(str(path))
+            reader = _pypdf.PdfReader(str(path))
             blocks = []
             for page_index, page in enumerate(reader.pages, start=1):
                 text = (page.extract_text() or "").strip()

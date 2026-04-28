@@ -1,0 +1,78 @@
+{
+    "queries": [
+        {
+            "query": "What is the capital of France?",
+            "gold_sources": [
+                "doc_id=doc_france"
+            ]
+        },
+        {
+            "query": "How to cook pasta?",
+            "gold_sources": [
+                "doc_id=doc_pasta"
+            ]
+        },
+        {
+            "query": "Python programming features",
+            "gold_sources": [
+                "doc_id=doc_python"
+            ]
+        },
+        {
+            "query": "Information retrieval BM25",
+            "gold_sources": [
+                "doc_id=doc_ir"
+            ]
+        },
+        {
+            "query": "Test strict fallback matching",
+            "gold_sources": [
+                "doc_id=doc_ir"
+            ]
+        }
+    ],
+    "corpus": [
+        {
+            "chunk_id": "doc_france_01",
+            "doc_id": "doc_france",
+            "content": "The capital of France is Paris. It is a beautiful city in Europe.",
+            "source": "memory"
+        },
+        {
+            "chunk_id": "doc_pasta_01",
+            "doc_id": "doc_pasta",
+            "content": "To cook pasta, boil salted water, add pasta, and stir occasionally for 10 minutes.",
+            "source": "memory"
+        },
+        {
+            "chunk_id": "doc_python_01",
+            "doc_id": "doc_python",
+            "content": "Python is an interpreted, high-level programming language with dynamic semantics and typing.",
+            "source": "memory"
+        },
+        {
+            "chunk_id": "doc_ir_01",
+            "doc_id": "doc_ir",
+            "content": "BM25 is a ranking function used in information retrieval to estimate relevance of documents.",
+            "source": "memory"
+        },
+        {
+            "chunk_id": "doc_noise_01",
+            "doc_id": "doc_noise_01",
+            "content": "The capital of Spain is Madrid. People love cooking paella.",
+            "source": "memory"
+        },
+        {
+            "chunk_id": "doc_noise_02",
+            "doc_id": "doc_noise_02",
+            "content": "Python is a non-venomous snake. It is not a programming language.",
+            "source": "memory"
+        },
+        {
+            "chunk_id": "doc_ir_deceptive_chunk",
+            "doc_id": "completely_unrelated",
+            "content": "This document contains Test strict fallback matching keywords to pull it up, but its doc_id is completely_unrelated. It should NOT be considered relevant despite having doc_ir in the chunk_id.",
+            "source": "memory"
+        }
+    ]
+}

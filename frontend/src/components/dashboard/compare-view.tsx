@@ -22,32 +22,36 @@ function isFallbackUsed(result: ModeResult): boolean {
 
 function reliabilitySummary(result: CompareResult): string {
   const standard = result.standard;
-  const advanced = result.advanced;
   const responseLanguage = standard.responseLanguage;
-  const preferred = result.comparison.preferredMode ?? "review";
-  const standardReliable =
-    standard.citationCount > 0 &&
-    !standard.hallucinationDetected &&
-    !standard.languageMismatch &&
-    !standard.llmFallbackUsed &&
-    standard.groundedScore >= 0.16;
-  const advancedReliable =
-    advanced.citationCount > 0 &&
-    !advanced.hallucinationDetected &&
-    !advanced.languageMismatch &&
-    !advanced.llmFallbackUsed &&
-    advanced.groundedScore >= 0.16;
+  const explicitNote = result.comparison.note?.trim();
+  if (explicitNote) {
+    return explicitNote;
+  }
 
-  if (!standardReliable && !advancedReliable) {
-    return responseLanguage === "vi" ? "Cả hai cần kiểm tra lại" : "Both need manual review";
+  const winner = result.comparison.winner;
+  if (responseLanguage === "vi") {
+    if (winner === "standard") {
+      return "Chuẩn đáng tin cậy hơn vì có trích dẫn và độ bám tài liệu cao hơn";
+    }
+    if (winner === "advanced") {
+      return "Nâng cao đáng tin cậy hơn vì có trích dẫn và độ bám tài liệu cao hơn";
+    }
+    if (winner === "both_weak") {
+      return "Cả hai cần kiểm tra lại vì thiếu bằng chứng đủ mạnh";
+    }
+    return "Hai chế độ có độ tin cậy tương đương, cần kiểm tra thêm theo ngữ cảnh";
   }
-  if (standard.citationCount > 0 && advanced.citationCount === 0) {
-    return responseLanguage === "vi" ? "Chuẩn đáng tin cậy hơn" : "Standard is more reliable";
+
+  if (winner === "standard") {
+    return "Standard is more reliable due to stronger citations and groundedness.";
   }
-  if (advancedReliable && preferred === "advanced") {
-    return responseLanguage === "vi" ? "Nâng cao đáng tin cậy hơn" : "Advanced is more reliable";
+  if (winner === "advanced") {
+    return "Advanced is more reliable due to stronger citations and groundedness.";
   }
-  return responseLanguage === "vi" ? "Chuẩn đáng tin cậy hơn" : "Standard is more reliable";
+  if (winner === "both_weak") {
+    return "Both branches need review due to weak evidence.";
+  }
+  return "Both branches are similarly reliable; review context to choose.";
 }
 
 function ModeColumn({ title, result }: { title: string; result: ModeResult }) {
@@ -99,7 +103,7 @@ function ModeColumn({ title, result }: { title: string; result: ModeResult }) {
 
         <div className="space-y-2">
           <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">{translations.citations.title}</p>
-          <CitationList citations={result.citations} compact />
+          <CitationList citations={result.citations} compact highlightText={result.answer} />
         </div>
       </CardContent>
     </Card>
@@ -107,6 +111,16 @@ function ModeColumn({ title, result }: { title: string; result: ModeResult }) {
 }
 
 export function CompareView({ result }: CompareViewProps) {
+  const winnerLabel =
+    result.comparison.winner === null
+      ? "n/a"
+      : result.comparison.winner === "both_weak"
+        ? "both weak"
+        : result.comparison.winner;
+  const standardScore =
+    result.comparison.standardScore === null ? "n/a" : result.comparison.standardScore.toFixed(3);
+  const advancedScore =
+    result.comparison.advancedScore === null ? "n/a" : result.comparison.advancedScore.toFixed(3);
   const confidenceDelta =
     result.comparison.confidenceDelta === null ? "n/a" : result.comparison.confidenceDelta.toFixed(3);
   const latencyDelta = result.comparison.latencyDeltaMs === null ? "n/a" : `${result.comparison.latencyDeltaMs}ms`;
@@ -123,11 +137,23 @@ export function CompareView({ result }: CompareViewProps) {
         <CardContent className="space-y-2">
           <p className="text-sm text-slate-700">{reliabilitySummary(result)}</p>
           <div className="flex flex-wrap gap-2">
+            <Badge variant="outline">winner {winnerLabel}</Badge>
+            <Badge variant="outline">điểm chuẩn {standardScore}</Badge>
+            <Badge variant="outline">điểm nâng cao {advancedScore}</Badge>
             <Badge variant="outline">chênh lệch độ tin cậy {confidenceDelta}</Badge>
             <Badge variant="outline">chênh lệch độ bám tài liệu {groundedDelta}</Badge>
             <Badge variant="outline">chênh lệch thời gian {latencyDelta}</Badge>
             <Badge variant="outline">chênh lệch trích dẫn {citationDelta}</Badge>
           </div>
+          {result.comparison.reasons.length > 0 ? (
+            <div className="space-y-1">
+              {result.comparison.reasons.map((reason, index) => (
+                <p key={`${reason}-${index}`} className="text-xs text-slate-600">
+                  {`- ${reason}`}
+                </p>
+              ))}
+            </div>
+          ) : null}
           {result.comparison.note ? <p className="text-xs text-slate-500">{result.comparison.note}</p> : null}
         </CardContent>
       </Card>

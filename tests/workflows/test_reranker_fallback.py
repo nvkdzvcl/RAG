@@ -2,9 +2,14 @@
 
 from __future__ import annotations
 
+from app.schemas.api import (
+    AdvancedQueryResponse,
+    CompareQueryResponse,
+    StandardQueryResponse,
+)
 from app.schemas.common import Mode
 from app.schemas.retrieval import RetrievalResult
-from app.retrieval import ScoreOnlyReranker
+from app.retrieval import PassThroughReranker, ScoreOnlyReranker
 from app.workflows.advanced import AdvancedWorkflow
 from app.workflows.runner import WorkflowRunner
 from app.workflows.standard import StandardWorkflow
@@ -22,14 +27,20 @@ def test_workflows_run_when_cross_encoder_unavailable(monkeypatch) -> None:
 
     runner = WorkflowRunner()
 
-    standard = runner.run(query="What is standard mode?", mode=Mode.STANDARD)
-    advanced = runner.run(query="What is advanced mode?", mode=Mode.ADVANCED)
-    compare = runner.run(query="Compare these modes", mode=Mode.COMPARE)
+    standard = StandardQueryResponse.model_validate(
+        runner.run(query="What is standard mode?", mode=Mode.STANDARD).model_dump()
+    )
+    advanced = AdvancedQueryResponse.model_validate(
+        runner.run(query="What is advanced mode?", mode=Mode.ADVANCED).model_dump()
+    )
+    compare_response = CompareQueryResponse.model_validate(
+        runner.run(query="Compare these modes", mode=Mode.COMPARE).model_dump()
+    )
 
     assert standard.answer
     assert advanced.answer
-    assert compare.standard.answer
-    assert compare.advanced.answer
+    assert compare_response.standard.answer
+    assert compare_response.advanced.answer
 
 
 def test_standard_workflow_uses_create_reranker_from_settings(monkeypatch) -> None:
@@ -65,7 +76,9 @@ def test_standard_workflow_uses_create_reranker_from_settings(monkeypatch) -> No
 
     captured: dict[str, object] = {}
 
-    def _fake_create_reranker(*, provider_name: str, model: str, device: str, batch_size: int):
+    def _fake_create_reranker(
+        *, provider_name: str, model: str, device: str, batch_size: int
+    ):
         captured.update(
             {
                 "provider_name": provider_name,
@@ -91,13 +104,60 @@ def test_standard_workflow_uses_create_reranker_from_settings(monkeypatch) -> No
     }
 
 
+def test_standard_workflow_skips_reranker_when_disabled(monkeypatch) -> None:
+    class _Settings:
+        corpus_dir = "docs"
+        index_dir = "data/indexes"
+        reranker_enabled = False
+        reranker_provider = "cross_encoder"
+        reranker_model = "stub-model"
+        reranker_device = "cpu"
+        reranker_batch_size = 3
+        reranker_top_n = 2
+        prompt_dir = "prompts"
+        llm_provider = "stub"
+        llm_model = "qwen2.5:3b"
+        llm_api_base = "http://localhost:11434/v1"
+        llm_api_key = "ollama"
+        llm_temperature = 0.2
+        llm_max_tokens = 256
+        llm_timeout_seconds = 5
+
+    class _FakeRetriever:
+        def retrieve(self, query: str, top_k: int = 5) -> list[RetrievalResult]:
+            _ = query
+            _ = top_k
+            return []
+
+    class _FakeIndexManager:
+        def get_retriever(self) -> _FakeRetriever:
+            return _FakeRetriever()
+
+        def get_active_source(self) -> str:
+            return "seeded"
+
+    monkeypatch.setattr("app.workflows.standard.get_settings", lambda: _Settings())
+    monkeypatch.setattr(
+        "app.workflows.standard.create_reranker",
+        lambda **_: (_ for _ in ()).throw(AssertionError("should not be called")),
+    )
+
+    workflow = StandardWorkflow(index_manager=_FakeIndexManager())
+    response = workflow.run(query="test", chat_history=None)
+
+    assert response.mode == "standard"
+    assert isinstance(workflow.reranker, PassThroughReranker)
+
+
 def test_advanced_workflow_reuses_standard_workflow_configured_reranker() -> None:
     class _SpyReranker(ScoreOnlyReranker):
         def __init__(self) -> None:
             super().__init__()
             self.called = 0
 
-        def rerank(self, query: str, docs: list[RetrievalResult], top_k: int | None = None) -> list[RetrievalResult]:
+        def rerank(
+            self, query: str, docs: list[RetrievalResult], top_k: int | None = None
+        ) -> list[RetrievalResult]:
             self.called += 1
             return super().rerank(query, docs, top_k=top_k)
 
@@ -125,7 +185,9 @@ def test_advanced_workflow_reuses_standard_workflow_configured_reranker() -> Non
             return "seeded"
 
     spy_reranker = _SpyReranker()
-    standard = StandardWorkflow(index_manager=_FakeIndexManager(), reranker=spy_reranker)
+    standard = StandardWorkflow(
+        index_manager=_FakeIndexManager(), reranker=spy_reranker
+    )
     advanced = AdvancedWorkflow(standard_workflow=standard, max_loops=1)
 
     response = advanced.run("How does advanced mode improve reliability?")

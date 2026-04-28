@@ -2,13 +2,17 @@
 
 from __future__ import annotations
 
-from app.indexing.providers.sentence_transformer_embedding import SentenceTransformerEmbeddingProvider
+from typing import Any
+
+from app.indexing.providers.sentence_transformer_embedding import (
+    SentenceTransformerEmbeddingProvider,
+)
 
 
 class _FakeSentenceTransformerModel:
     def __init__(self, dimension: int = 4) -> None:
         self.dimension = dimension
-        self.calls: list[dict[str, object]] = []
+        self.calls: list[dict[str, Any]] = []
 
     def get_sentence_embedding_dimension(self) -> int:
         return self.dimension

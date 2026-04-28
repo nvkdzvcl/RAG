@@ -5,17 +5,22 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
+from app.core.async_utils import run_coro_sync
 from app.core.config import get_settings
 from app.core.json_utils import parse_json_list, parse_json_object
 from app.core.prompting import PromptRepository
 from app.generation.llm_client import LLMClient, complete_with_model
 from app.schemas.workflow import CritiqueResult
-from app.workflows.shared import build_chat_history_context, build_language_system_prompt, response_language_name
+from app.workflows.shared import (
+    build_chat_history_context,
+    build_language_system_prompt,
+    response_language_name,
+)
 
 _REWRITE_PROMPT_FALLBACK = (
     "Rewrite the query to improve retrieval quality.\n"
     "Return strict JSON only.\n"
-    "Schema: {\"rewrites\": [\"string\", ...]}\n"
+    'Schema: {"rewrites": ["string", ...]}\n'
     "Use chat history only to resolve follow-up references.\n"
     "Provide up to 3 concise alternatives in $response_language_name.\n"
     "response_language: $response_language\n"
@@ -45,7 +50,9 @@ class QueryRewriter:
         self.memory_window = max(0, int(getattr(settings, "memory_window", 3)))
         self.max_tokens = max(1, int(getattr(settings, "llm_rewrite_max_tokens", 256)))
         resolved_prompt_dir = prompt_dir or settings.prompt_dir
-        self.prompt_repository = prompt_repository or PromptRepository(resolved_prompt_dir)
+        self.prompt_repository = prompt_repository or PromptRepository(
+            resolved_prompt_dir
+        )
 
     @staticmethod
     def _dedupe(candidates: list[str], max_candidates: int) -> list[str]:
@@ -87,7 +94,7 @@ class QueryRewriter:
 
         return self._dedupe(candidates, max_candidates=self.max_candidates)
 
-    def _llm_rewrite(
+    async def _llm_rewrite(
         self,
         query: str,
         *,
@@ -100,7 +107,9 @@ class QueryRewriter:
         if not self.use_llm or self.llm_client is None:
             return []
 
-        critique_payload = critique.model_dump(mode="json") if critique is not None else {}
+        critique_payload = (
+            critique.model_dump(mode="json") if critique is not None else {}
+        )
         prompt = self.prompt_repository.render(
             "query_rewrite.md",
             fallback=_REWRITE_PROMPT_FALLBACK,
@@ -116,7 +125,7 @@ class QueryRewriter:
         )
 
         try:
-            raw = complete_with_model(
+            raw = await complete_with_model(
                 self.llm_client,
                 prompt,
                 system_prompt=build_language_system_prompt(response_language),
@@ -129,14 +138,18 @@ class QueryRewriter:
         rewrites: list[str] = []
         payload = parse_json_object(raw)
         if payload and isinstance(payload.get("rewrites"), list):
-            rewrites = [str(item).strip() for item in payload["rewrites"] if str(item).strip()]
+            rewrites = [
+                str(item).strip() for item in payload["rewrites"] if str(item).strip()
+            ]
         else:
             payload_list = parse_json_list(raw)
             if payload_list:
-                rewrites = [str(item).strip() for item in payload_list if str(item).strip()]
+                rewrites = [
+                    str(item).strip() for item in payload_list if str(item).strip()
+                ]
         return self._dedupe(rewrites, max_candidates=self.max_candidates)
 
-    def rewrite(
+    async def rewrite_async(
         self,
         query: str,
         *,
@@ -146,7 +159,7 @@ class QueryRewriter:
         model: str | None = None,
         response_language: str = "en",
     ) -> list[str]:
-        llm_candidates = self._llm_rewrite(
+        llm_candidates = await self._llm_rewrite(
             query,
             critique=critique,
             loop_count=loop_count,
@@ -162,4 +175,26 @@ class QueryRewriter:
         return self._dedupe(
             llm_candidates + heuristic_candidates,
             max_candidates=self.max_candidates,
+        )
+
+    def rewrite(
+        self,
+        query: str,
+        *,
+        critique: CritiqueResult | None = None,
+        loop_count: int = 0,
+        chat_history: list[dict[str, str]] | None = None,
+        model: str | None = None,
+        response_language: str = "en",
+    ) -> list[str]:
+        """Sync wrapper for legacy callers."""
+        return run_coro_sync(
+            self.rewrite_async(
+                query,
+                critique=critique,
+                loop_count=loop_count,
+                chat_history=chat_history,
+                model=model,
+                response_language=response_language,
+            )
         )

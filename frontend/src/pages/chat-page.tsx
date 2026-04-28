@@ -8,6 +8,11 @@ import { ChatComposer } from "@/components/dashboard/chat-composer";
 import { ChatPanel } from "@/components/dashboard/chat-panel";
 import { DocumentUploadCard } from "@/components/dashboard/document-upload-card";
 import { ModeSelector } from "@/components/dashboard/mode-selector";
+import {
+  QueryFilters,
+  type QueryFileTypeFilter,
+  type QueryOcrFilter,
+} from "@/components/dashboard/query-filters";
 import { Sidebar, type RecentChat } from "@/components/dashboard/sidebar";
 import { SourcesPanel } from "@/components/dashboard/sources-panel";
 import { WorkflowTrace } from "@/components/dashboard/workflow-trace";
@@ -35,6 +40,23 @@ const DEFAULT_MODEL =
 
 const MAX_MESSAGES_PER_SESSION = 24;
 const MAX_STORED_SESSIONS = 80;
+
+function dateInputToIso(value: string, boundary: "start" | "end"): string | undefined {
+  if (!value) {
+    return undefined;
+  }
+  return boundary === "start" ? `${value}T00:00:00.000Z` : `${value}T23:59:59.999Z`;
+}
+
+function ocrFilterToPayload(value: QueryOcrFilter): boolean | undefined {
+  if (value === "only") {
+    return true;
+  }
+  if (value === "exclude") {
+    return false;
+  }
+  return undefined;
+}
 
 function initialSessions(): ChatSession[] {
   const loaded = loadChatSessions();
@@ -94,6 +116,11 @@ export function ChatPage() {
   const [isDeletingAllDocuments, setIsDeletingAllDocuments] = useState(false);
   const [isDeletingSingleDocument, setIsDeletingSingleDocument] = useState(false);
   const [showSettingsModal, setShowSettingsModal] = useState(false);
+  const [selectedFilterDocIds, setSelectedFilterDocIds] = useState<string[]>([]);
+  const [selectedFileTypes, setSelectedFileTypes] = useState<QueryFileTypeFilter[]>([]);
+  const [uploadedAfter, setUploadedAfter] = useState("");
+  const [uploadedBefore, setUploadedBefore] = useState("");
+  const [ocrFilter, setOcrFilter] = useState<QueryOcrFilter>("all");
   const documentsSectionRef = useRef<HTMLDivElement | null>(null);
 
   const {
@@ -104,9 +131,11 @@ export function ChatPage() {
     deletingDocumentId,
     uploadMessage,
     uploadError,
+    uploadBatchItems,
+    uploadBatchSummary,
     canQuery,
     queryDisabledReason,
-    uploadFile,
+    uploadFiles,
     clearAllUploadedDocuments,
     deleteUploadedDocument,
     reindexDocuments,
@@ -198,6 +227,21 @@ export function ChatPage() {
   }, [sessions]);
 
   const canSubmit = query.trim().length > 0 && !isLoading && canQuery;
+  const readyDocuments = useMemo(
+    () => documents.filter((item) => item.status === "ready"),
+    [documents],
+  );
+
+  useEffect(() => {
+    if (selectedFilterDocIds.length === 0) {
+      return;
+    }
+    const readyIds = new Set(readyDocuments.map((item) => item.id));
+    const next = selectedFilterDocIds.filter((item) => readyIds.has(item));
+    if (next.length !== selectedFilterDocIds.length) {
+      setSelectedFilterDocIds(next);
+    }
+  }, [readyDocuments, selectedFilterDocIds]);
 
   const updateSessionById = (sessionId: string, updater: (previous: ChatSession) => ChatSession) => {
     setSessions((previous) =>
@@ -286,11 +330,20 @@ export function ChatPage() {
     setQuery("");
 
     try {
+      const selectedDocuments = selectedFilterDocIds.length > 0
+        ? readyDocuments.filter((item) => selectedFilterDocIds.includes(item.id))
+        : [];
       const payload = await postQuery({
         query: normalized,
         mode: requestMode,
         chat_history: requestChatHistoryPayload,
         model: requestModel,
+        doc_ids: selectedFilterDocIds.length > 0 ? selectedFilterDocIds : undefined,
+        filenames: selectedDocuments.length > 0 ? selectedDocuments.map((item) => item.filename) : undefined,
+        file_types: selectedFileTypes.length > 0 ? selectedFileTypes : undefined,
+        uploaded_after: dateInputToIso(uploadedAfter, "start"),
+        uploaded_before: dateInputToIso(uploadedBefore, "end"),
+        include_ocr: ocrFilterToPayload(ocrFilter),
       });
 
       const mapped = apiToUi(payload);
@@ -492,12 +545,28 @@ export function ChatPage() {
           deletingDocumentId={deletingDocumentId}
           uploadMessage={uploadMessage}
           uploadError={uploadError}
-          onUpload={uploadFile}
+          uploadBatchItems={uploadBatchItems}
+          uploadBatchSummary={uploadBatchSummary}
+          onUploadFiles={uploadFiles}
           onRequestDeleteDocument={(document) => setSelectedDocumentForDelete(document)}
           onRequestDeleteAllDocuments={() => setShowClearVectorDialog(true)}
         />
       </div>
       <ChatPanel messages={messages} result={result} isLoading={isLoading} error={error} notice={notice} />
+      <QueryFilters
+        documents={documents}
+        selectedDocIds={selectedFilterDocIds}
+        onSelectedDocIdsChange={setSelectedFilterDocIds}
+        selectedFileTypes={selectedFileTypes}
+        onSelectedFileTypesChange={setSelectedFileTypes}
+        uploadedAfter={uploadedAfter}
+        onUploadedAfterChange={setUploadedAfter}
+        uploadedBefore={uploadedBefore}
+        onUploadedBeforeChange={setUploadedBefore}
+        ocrFilter={ocrFilter}
+        onOcrFilterChange={setOcrFilter}
+        disabled={isLoading}
+      />
       <ChatComposer
         query={query}
         onQueryChange={setQuery}

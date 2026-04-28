@@ -47,12 +47,29 @@ def blocks_to_loaded_documents(
     """Convert parser blocks to loader-normalized documents."""
     base_metadata = dict(metadata or {})
     resolved_title = title or file_path.stem
+    default_file_extension = file_path.suffix.lower()
+    default_file_type = default_file_extension.lstrip(".")
+    default_file_name = file_path.name
 
     loaded_documents: list[LoadedDocument] = []
     for block_index, block in enumerate(blocks):
         merged_metadata = dict(base_metadata)
         merged_metadata.update(dict(block.metadata))
-        merged_metadata.update({"block_index": block_index})
+        merged_metadata.update(
+            {
+                "block_index": block_index,
+                "doc_id": doc_id,
+                "filename": str(merged_metadata.get("filename") or default_file_name),
+                "file_name": str(merged_metadata.get("file_name") or default_file_name),
+                "file_extension": str(
+                    merged_metadata.get("file_extension") or default_file_extension
+                ),
+                "file_type": str(merged_metadata.get("file_type") or default_file_type),
+                "page": block.metadata.get("page"),
+                "block_type": str(merged_metadata.get("block_type") or block.type),
+                "ocr": bool(merged_metadata.get("ocr", False)),
+            }
+        )
 
         loaded_documents.append(
             LoadedDocument(

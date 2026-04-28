@@ -1,4 +1,5 @@
-import { useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
+import type { DragEvent as ReactDragEvent } from "react";
 import {
   AlertCircle,
   CheckCircle2,
@@ -12,8 +13,13 @@ import {
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
-import type { DocumentRecord, ProcessingStage } from "@/types/document";
+import type { DocumentRecord, ProcessingStage, UploadBatchItem } from "@/types/document";
 import { translations } from "@/lib/translations";
+import {
+  SUPPORTED_UPLOAD_ACCEPT,
+  formatUploadValidationMessages,
+  splitValidUploadFiles,
+} from "@/lib/upload-files";
 
 type DocumentUploadCardProps = {
   documents: DocumentRecord[];
@@ -23,7 +29,9 @@ type DocumentUploadCardProps = {
   deletingDocumentId?: string | null;
   uploadMessage: string | null;
   uploadError: string | null;
-  onUpload: (file: File) => Promise<void>;
+  uploadBatchItems?: UploadBatchItem[];
+  uploadBatchSummary?: string | null;
+  onUploadFiles: (files: File[]) => Promise<void>;
   onRequestDeleteDocument?: (document: DocumentRecord) => void;
   onRequestDeleteAllDocuments?: () => void;
 };
@@ -59,6 +67,32 @@ function statusBadgeClass(status: DocumentRecord["status"]): string {
     return "border-blue-300 bg-blue-50 text-blue-700";
   }
   return "border-violet-300 bg-violet-50 text-violet-700";
+}
+
+function uploadBatchStatusLabel(status: UploadBatchItem["status"]): string {
+  if (status === "pending") {
+    return "pending";
+  }
+  if (status === "uploading") {
+    return "uploading";
+  }
+  if (status === "success") {
+    return "success";
+  }
+  return "error";
+}
+
+function uploadBatchStatusClass(status: UploadBatchItem["status"]): string {
+  if (status === "success") {
+    return "border-emerald-300 bg-emerald-50 text-emerald-700";
+  }
+  if (status === "error") {
+    return "border-rose-300 bg-rose-50 text-rose-700";
+  }
+  if (status === "uploading") {
+    return "border-blue-300 bg-blue-50 text-blue-700";
+  }
+  return "border-slate-300 bg-slate-50 text-slate-600";
 }
 
 function stageState(active: DocumentRecord | null, stage: ProcessingStage): StageState {
@@ -97,6 +131,10 @@ function StageIndicator({ state }: { state: StageState }) {
   return <Circle className="h-4 w-4 text-slate-400" />;
 }
 
+function isFileDrag(event: DragEvent | ReactDragEvent<HTMLElement>): boolean {
+  return Array.from(event.dataTransfer?.types ?? []).includes("Files");
+}
+
 export function DocumentUploadCard({
   documents,
   activeDocument,
@@ -105,20 +143,96 @@ export function DocumentUploadCard({
   deletingDocumentId = null,
   uploadMessage,
   uploadError,
-  onUpload,
+  uploadBatchItems = [],
+  uploadBatchSummary = null,
+  onUploadFiles,
   onRequestDeleteDocument,
   onRequestDeleteAllDocuments,
 }: DocumentUploadCardProps) {
   const [isDragging, setIsDragging] = useState(false);
+  const [fileSelectionErrors, setFileSelectionErrors] = useState<string[]>([]);
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const dragDepthRef = useRef(0);
 
   const activeProgress = activeDocument?.uploadProgress;
+
+  useEffect(() => {
+    const preventPageFileDrop = (event: DragEvent) => {
+      if (!isFileDrag(event)) {
+        return;
+      }
+      event.preventDefault();
+    };
+
+    window.addEventListener("dragover", preventPageFileDrop);
+    window.addEventListener("drop", preventPageFileDrop);
+    return () => {
+      window.removeEventListener("dragover", preventPageFileDrop);
+      window.removeEventListener("drop", preventPageFileDrop);
+    };
+  }, []);
+
+  const resetDragState = () => {
+    dragDepthRef.current = 0;
+    setIsDragging(false);
+  };
 
   const handleFiles = async (files: FileList | null) => {
     if (!files || files.length === 0) {
       return;
     }
-    await onUpload(files[0]);
+    if (isUploading) {
+      setFileSelectionErrors(["Đang tải tài liệu. Vui lòng đợi trước khi thêm tệp mới."]);
+      return;
+    }
+
+    const selectedFiles = Array.from(files);
+    const { rejected } = splitValidUploadFiles(selectedFiles);
+    setFileSelectionErrors(formatUploadValidationMessages(rejected));
+
+    await onUploadFiles(selectedFiles);
+  };
+
+  const handleDragEnter = (event: ReactDragEvent<HTMLDivElement>) => {
+    if (!isFileDrag(event)) {
+      return;
+    }
+    event.preventDefault();
+    event.stopPropagation();
+    dragDepthRef.current += 1;
+    setIsDragging(true);
+  };
+
+  const handleDragOver = (event: ReactDragEvent<HTMLDivElement>) => {
+    if (!isFileDrag(event)) {
+      return;
+    }
+    event.preventDefault();
+    event.stopPropagation();
+    event.dataTransfer.dropEffect = "copy";
+    setIsDragging(true);
+  };
+
+  const handleDragLeave = (event: ReactDragEvent<HTMLDivElement>) => {
+    if (!isFileDrag(event)) {
+      return;
+    }
+    event.preventDefault();
+    event.stopPropagation();
+    dragDepthRef.current = Math.max(0, dragDepthRef.current - 1);
+    if (dragDepthRef.current === 0) {
+      setIsDragging(false);
+    }
+  };
+
+  const handleDrop = (event: ReactDragEvent<HTMLDivElement>) => {
+    if (!isFileDrag(event)) {
+      return;
+    }
+    event.preventDefault();
+    event.stopPropagation();
+    resetDragState();
+    void handleFiles(event.dataTransfer.files);
   };
 
   return (
@@ -130,7 +244,8 @@ export function DocumentUploadCard({
         <input
           ref={fileInputRef}
           type="file"
-          accept=".pdf,.docx,.doc,application/pdf,application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+          accept={SUPPORTED_UPLOAD_ACCEPT}
+          multiple
           className="hidden"
           onChange={(event) => {
             void handleFiles(event.target.files);
@@ -140,23 +255,18 @@ export function DocumentUploadCard({
 
         <div
           className={`rounded-xl border border-dashed px-4 py-5 transition ${
-            isDragging ? "border-blue-400 bg-blue-50" : "border-slate-300 bg-slate-50"
+            isDragging ? "border-blue-500 bg-blue-50 ring-2 ring-blue-100" : "border-slate-300 bg-slate-50"
           }`}
-          onDragOver={(event) => {
-            event.preventDefault();
-            setIsDragging(true);
-          }}
-          onDragLeave={() => setIsDragging(false)}
-          onDrop={(event) => {
-            event.preventDefault();
-            setIsDragging(false);
-            void handleFiles(event.dataTransfer.files);
-          }}
+          onDragEnter={handleDragEnter}
+          onDragOver={handleDragOver}
+          onDragLeave={handleDragLeave}
+          onDrop={handleDrop}
         >
           <div className="flex flex-col items-center gap-2 text-center">
             <UploadCloud className="h-6 w-6 text-blue-600" />
             <p className="text-sm font-medium text-slate-700">Kéo thả tài liệu PDF hoặc DOCX vào đây</p>
             <p className="text-xs text-slate-500">hoặc nhấn để chọn tệp</p>
+            <p className="text-xs font-medium text-slate-500">Hỗ trợ PDF, DOCX • Tối đa 50MB mỗi tệp</p>
             <Button
               type="button"
               variant="outline"
@@ -185,6 +295,32 @@ export function DocumentUploadCard({
           </div>
         ) : null}
 
+        {uploadBatchItems.length > 0 ? (
+          <div className="space-y-2 rounded-lg border border-slate-200 bg-white px-3 py-2">
+            <div className="flex items-center justify-between gap-2">
+              <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">Danh sách tải lên</p>
+              {uploadBatchSummary ? <p className="text-xs font-medium text-slate-600">{uploadBatchSummary}</p> : null}
+            </div>
+            <ul className="max-h-32 space-y-1 overflow-y-auto pr-1">
+              {uploadBatchItems.map((item) => (
+                <li key={item.id} className="flex items-center justify-between gap-2 rounded-md bg-slate-50 px-2 py-1">
+                  <div className="min-w-0">
+                    <p className="truncate text-xs font-medium text-slate-700">{item.filename}</p>
+                    {item.message ? (
+                      <p className="truncate text-[11px] text-slate-500">{item.message}</p>
+                    ) : item.status === "uploading" && typeof item.progress === "number" ? (
+                      <p className="text-[11px] text-slate-500">{item.progress}%</p>
+                    ) : null}
+                  </div>
+                  <Badge variant="outline" className={`shrink-0 ${uploadBatchStatusClass(item.status)}`}>
+                    {uploadBatchStatusLabel(item.status)}
+                  </Badge>
+                </li>
+              ))}
+            </ul>
+          </div>
+        ) : null}
+
         {uploadMessage ? (
           <div className="rounded-lg border border-emerald-200 bg-emerald-50 px-3 py-2 text-sm text-emerald-700">
             {uploadMessage}
@@ -195,6 +331,17 @@ export function DocumentUploadCard({
           <div className="flex items-center gap-2 rounded-lg border border-rose-200 bg-rose-50 px-3 py-2 text-sm text-rose-700">
             <AlertCircle className="h-4 w-4" />
             <span>{uploadError}</span>
+          </div>
+        ) : null}
+
+        {fileSelectionErrors.length > 0 ? (
+          <div className="flex gap-2 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-800">
+            <AlertCircle className="mt-0.5 h-4 w-4 shrink-0" />
+            <div className="space-y-1">
+              {fileSelectionErrors.map((message) => (
+                <p key={message}>{message}</p>
+              ))}
+            </div>
           </div>
         ) : null}
 

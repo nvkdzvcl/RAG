@@ -2,12 +2,22 @@ import type { Mode } from "@/types/chat";
 
 export type ApiCitation = {
   chunk_id: string;
+  source_id?: string | null;
   doc_id: string;
   source: string;
   title?: string | null;
   section?: string | null;
   page?: number | null;
+  filename?: string | null;
+  file_name?: string | null;
+  file_type?: string | null;
   block_type?: string | null;
+  ocr?: boolean | null;
+  text?: string | null;
+  content?: string | null;
+  snippet?: string | null;
+  score?: number | null;
+  rerank_score?: number | null;
 };
 
 export type ApiModeResponse = {
@@ -29,6 +39,10 @@ export type ApiModeResponse = {
 };
 
 export type ApiComparison = {
+  winner?: "standard" | "advanced" | "tie" | "both_weak" | null;
+  reasons?: string[] | null;
+  standard_score?: number | null;
+  advanced_score?: number | null;
   confidence_delta?: number | null;
   latency_delta_ms?: number | null;
   citation_delta?: number | null;
@@ -51,6 +65,12 @@ export type ApiQueryRequest = {
   mode: Mode;
   chat_history: Array<Record<string, string>>;
   model?: string | null;
+  doc_ids?: string[] | null;
+  filenames?: string[] | null;
+  file_types?: string[] | null;
+  uploaded_after?: string | null;
+  uploaded_before?: string | null;
+  include_ocr?: boolean | null;
 };
 
 export type ApiDocument = {

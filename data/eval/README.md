@@ -20,6 +20,13 @@ Optional fields:
 
 - `reference_answer`: target answer for qualitative checks
 - `gold_sources`: expected source/chunk identifiers
+  - backward-compatible plain strings still work (example: `docs/MODES.md`)
+  - structured selectors are also supported, for example:
+    - `chunk_id=docabc_chunk_0001_hash`
+    - `doc_id=docabc`
+    - `source=docs/MODES.md`
+    - `path=docs/MODES.md`
+    - `section=Advanced Mode`
 - `notes`: evaluator notes
 
 Example row:

@@ -7,12 +7,21 @@ import logging
 from dataclasses import dataclass
 from pathlib import Path
 from threading import RLock
+from typing import cast
 from uuid import uuid4
 
 from fastapi import UploadFile
 
 from app.core.config import get_settings
-from app.ingestion import BaseLoader, Chunker, DocxLoader, MarkdownLoader, PdfLoader, TextCleaner, TextLoader
+from app.ingestion import (
+    BaseLoader,
+    Chunker,
+    DocxLoader,
+    MarkdownLoader,
+    PdfLoader,
+    TextCleaner,
+    TextLoader,
+)
 from app.ingestion.base_loader import build_doc_id
 from app.schemas.documents import (
     ChunkConfigMode,
@@ -82,20 +91,37 @@ class DocumentService:
         self.registry_path = self.data_dir / "document_registry.json"
         self.index_manager = index_manager
         self.cleaner = TextCleaner()
-        self.chunk_size = chunk_size if chunk_size is not None else int(getattr(settings, "chunk_size", 320))
-        self.chunk_overlap = (
-            chunk_overlap if chunk_overlap is not None else int(getattr(settings, "chunk_overlap", 40))
+        self.chunk_size = (
+            chunk_size
+            if chunk_size is not None
+            else int(getattr(settings, "chunk_size", 320))
         )
-        configured_chunk_mode = str(getattr(settings, "chunk_mode", "preset")).strip().lower()
+        self.chunk_overlap = (
+            chunk_overlap
+            if chunk_overlap is not None
+            else int(getattr(settings, "chunk_overlap", 40))
+        )
+        configured_chunk_mode = (
+            str(getattr(settings, "chunk_mode", "preset")).strip().lower()
+        )
         inferred_mode = self._infer_chunking_mode(self.chunk_size, self.chunk_overlap)
         if configured_chunk_mode == "custom":
             self.selected_chunking_mode = "custom"
             self.chunk_mode = "custom"
         else:
-            self.selected_chunking_mode = inferred_mode if inferred_mode is not None else "custom"
+            self.selected_chunking_mode = (
+                inferred_mode if inferred_mode is not None else "custom"
+            )
             self.chunk_mode = "preset" if inferred_mode is not None else "custom"
-        self.chunker = Chunker(chunk_size=self.chunk_size, chunk_overlap=self.chunk_overlap)
-        self.loaders: list[BaseLoader] = [MarkdownLoader(), TextLoader(), PdfLoader(), DocxLoader()]
+        self.chunker = Chunker(
+            chunk_size=self.chunk_size, chunk_overlap=self.chunk_overlap
+        )
+        self.loaders: list[BaseLoader] = [
+            MarkdownLoader(),
+            TextLoader(),
+            PdfLoader(),
+            DocxLoader(),
+        ]
         self._lock = RLock()
 
         self.data_dir.mkdir(parents=True, exist_ok=True)
@@ -105,11 +131,13 @@ class DocumentService:
         self._refresh_runtime_indexes()
 
     @classmethod
-    def _infer_chunking_mode(cls, chunk_size: int, chunk_overlap: int) -> ChunkingMode | None:
+    def _infer_chunking_mode(
+        cls, chunk_size: int, chunk_overlap: int
+    ) -> ChunkingMode | None:
         for mode, (preset_size, preset_overlap) in cls.PRESET_CHUNKING.items():
             if chunk_size == preset_size and chunk_overlap == preset_overlap:
                 if mode in {"small", "medium", "large"}:
-                    return mode
+                    return cast(ChunkingMode, mode)
         return None
 
     @classmethod
@@ -122,7 +150,9 @@ class DocumentService:
             return payload.mode, "preset", chunk_size, chunk_overlap
 
         if payload.chunk_size is None or payload.chunk_overlap is None:
-            raise ValueError("chunk_size and chunk_overlap are required when mode=custom.")
+            raise ValueError(
+                "chunk_size and chunk_overlap are required when mode=custom."
+            )
         return "custom", "custom", int(payload.chunk_size), int(payload.chunk_overlap)
 
     def _apply_chunking(
@@ -138,7 +168,9 @@ class DocumentService:
             self.chunk_mode = chunk_mode
             self.chunk_size = int(chunk_size)
             self.chunk_overlap = int(chunk_overlap)
-            self.chunker = Chunker(chunk_size=self.chunk_size, chunk_overlap=self.chunk_overlap)
+            self.chunker = Chunker(
+                chunk_size=self.chunk_size, chunk_overlap=self.chunk_overlap
+            )
 
         self.index_manager.set_chunking(
             chunk_size=self.chunk_size,
@@ -176,13 +208,18 @@ class DocumentService:
         try:
             payload = json.loads(self.registry_path.read_text(encoding="utf-8"))
         except json.JSONDecodeError:
-            logger.warning("Invalid document registry JSON. Starting with an empty registry.")
+            logger.warning(
+                "Invalid document registry JSON. Starting with an empty registry."
+            )
             return {}
 
         records: dict[str, StoredDocumentRecord] = {}
         for raw_record in payload.get("documents", []):
             record = StoredDocumentRecord.model_validate(raw_record)
-            if record.status == DocumentProcessingStatus.READY and not Path(record.stored_path).exists():
+            if (
+                record.status == DocumentProcessingStatus.READY
+                and not Path(record.stored_path).exists()
+            ):
                 record = record.with_status(
                     DocumentProcessingStatus.FAILED,
                     message="Stored file not found on disk.",
@@ -191,7 +228,9 @@ class DocumentService:
         return records
 
     def _persist_records(self) -> None:
-        ordered = sorted(self._records.values(), key=lambda item: item.created_at, reverse=True)
+        ordered = sorted(
+            self._records.values(), key=lambda item: item.created_at, reverse=True
+        )
         payload = {"documents": [record.model_dump(mode="json") for record in ordered]}
         self.registry_path.write_text(
             json.dumps(payload, ensure_ascii=True, indent=2),
@@ -206,7 +245,8 @@ class DocumentService:
             return {
                 record.document_id
                 for record in self._records.values()
-                if record.status == DocumentProcessingStatus.READY and Path(record.stored_path).is_file()
+                if record.status == DocumentProcessingStatus.READY
+                and Path(record.stored_path).is_file()
             }
 
     def _ready_records(self) -> list[StoredDocumentRecord]:
@@ -234,7 +274,9 @@ class DocumentService:
                 self.index_manager.clear_uploaded_indexes()
                 self.index_manager.activate_from_seeded_corpus()
         except Exception:  # pragma: no cover - defensive fallback path.
-            logger.exception("Failed to refresh indexes from uploaded docs, falling back to seeded corpus.")
+            logger.exception(
+                "Failed to refresh indexes from uploaded docs, falling back to seeded corpus."
+            )
             self.index_manager.clear_uploaded_indexes()
             self.index_manager.activate_from_seeded_corpus()
 
@@ -261,7 +303,9 @@ class DocumentService:
             file_path.unlink()
             return True
         except OSError:
-            logger.exception("Failed to delete uploaded file", extra={"path": str(file_path)})
+            logger.exception(
+                "Failed to delete uploaded file", extra={"path": str(file_path)}
+            )
             return False
 
     def _rebuild_after_deletion(self) -> None:
@@ -277,7 +321,9 @@ class DocumentService:
             self.index_manager.clear_uploaded_indexes()
             self.index_manager.activate_from_seeded_corpus()
         except Exception:  # pragma: no cover - defensive fallback path.
-            logger.exception("Failed rebuilding indexes after deletion; clearing uploaded runtime indexes.")
+            logger.exception(
+                "Failed rebuilding indexes after deletion; clearing uploaded runtime indexes."
+            )
             self.index_manager.clear_uploaded_indexes()
             self.index_manager.activate_from_seeded_corpus()
 
@@ -296,12 +342,19 @@ class DocumentService:
     ) -> StoredDocumentRecord:
         with self._lock:
             record = self._records[document_id]
-            updated = record.with_status(status, chunk_count=chunk_count, message=message)
+            updated = record.with_status(
+                status, chunk_count=chunk_count, message=message
+            )
             self._records[document_id] = updated
             self._persist_records()
             return updated
 
-    def _load_file(self, file_path: Path) -> list[LoadedDocument]:
+    def _load_file(
+        self,
+        file_path: Path,
+        *,
+        record: StoredDocumentRecord | None = None,
+    ) -> list[LoadedDocument]:
         loader = self._resolve_loader(file_path)
         if loader is None:
             raise ValueError(f"Unsupported file type: {file_path.suffix.lower()}")
@@ -319,17 +372,37 @@ class DocumentService:
                 settings.ocr_render_dpi,
                 settings.ocr_confidence_threshold,
             )
+        extension = file_path.suffix.lower()
+        file_type = (
+            record.file_type if record is not None else extension.lstrip(".")
+        ) or None
+        file_name = record.filename if record is not None else file_path.name
+        metadata: dict[str, str] = {
+            "source_collection": "uploaded",
+            "relative_path": file_path.name,
+            "filename": file_name,
+            "file_name": file_name,
+            "file_extension": extension,
+            "file_type": file_type or "",
+        }
+        if record is not None:
+            metadata["doc_id"] = record.document_id
+            metadata["uploaded_at"] = record.created_at.isoformat()
+            metadata["created_at"] = record.created_at.isoformat()
+            metadata["status"] = record.status.value
+
         return loader.load(
             file_path,
-            metadata={
-                "source_collection": "uploaded",
-                "relative_path": file_path.name,
-                "file_extension": file_path.suffix.lower(),
-            },
+            metadata=metadata,
         )
 
-    def _chunk_file(self, file_path: Path) -> tuple[list[DocumentChunk], UploadDebugStats]:
-        loaded = self._load_file(file_path)
+    def _chunk_file(
+        self,
+        file_path: Path,
+        *,
+        record: StoredDocumentRecord | None = None,
+    ) -> tuple[list[DocumentChunk], UploadDebugStats]:
+        loaded = self._load_file(file_path, record=record)
         debug_stats = UploadDebugStats(
             total_blocks=len(loaded),
             text_blocks=sum(1 for doc in loaded if doc.block_type == "text"),
@@ -338,7 +411,8 @@ class DocumentService:
             ocr_blocks=sum(
                 1
                 for doc in loaded
-                if doc.metadata.get("block_type") == "ocr_text" or bool(doc.metadata.get("ocr"))
+                if doc.metadata.get("block_type") == "ocr_text"
+                or bool(doc.metadata.get("ocr"))
             ),
         )
         cleaned = self.cleaner.clean_documents(loaded)
@@ -347,7 +421,8 @@ class DocumentService:
         debug_stats.ocr_chunks = sum(
             1
             for chunk in chunks
-            if chunk.metadata.get("block_type") == "ocr_text" or bool(chunk.metadata.get("ocr"))
+            if chunk.metadata.get("block_type") == "ocr_text"
+            or bool(chunk.metadata.get("ocr"))
         )
         logger.info(
             (
@@ -365,13 +440,17 @@ class DocumentService:
         )
         return chunks, debug_stats
 
-    def _process_uploaded_document(self, record: StoredDocumentRecord) -> tuple[StoredDocumentRecord, UploadDebugStats]:
+    def _process_uploaded_document(
+        self, record: StoredDocumentRecord
+    ) -> tuple[StoredDocumentRecord, UploadDebugStats]:
         file_path = Path(record.stored_path)
         self._update_status(record.document_id, DocumentProcessingStatus.SPLITTING)
 
-        chunks, debug_stats = self._chunk_file(file_path)
+        chunks, debug_stats = self._chunk_file(file_path, record=record)
         if not chunks:
-            raise ValueError(f"No chunks produced from uploaded document: {record.filename}")
+            raise ValueError(
+                f"No chunks produced from uploaded document: {record.filename}"
+            )
         per_document_chunk_count = len(chunks)
 
         candidate_paths = self._ready_paths()
@@ -389,7 +468,9 @@ class DocumentService:
         )
         activation_stats = self.index_manager.get_last_activation_stats()
         indexed_ocr_chunks = activation_stats.get("ocr_chunks")
-        debug_stats.indexed_ocr_chunks = int(indexed_ocr_chunks) if isinstance(indexed_ocr_chunks, int) else 0
+        debug_stats.indexed_ocr_chunks = (
+            int(indexed_ocr_chunks) if isinstance(indexed_ocr_chunks, int) else 0
+        )
         logger.info(
             (
                 "Upload indexing stats | file=%s | indexed_total_chunks=%s | indexed_ocr_chunks=%s"
@@ -426,6 +507,8 @@ class DocumentService:
         created = StoredDocumentRecord.create(
             document_id=document_id,
             filename=safe_filename,
+            original_filename=safe_filename,
+            file_type=extension.lstrip(".") or None,
             stored_path=str(stored_path),
             status=DocumentProcessingStatus.UPLOADED,
         )
@@ -438,7 +521,10 @@ class DocumentService:
                 debug_stats=debug_stats.response_payload(),
             )
         except Exception as exc:
-            logger.exception("Failed processing uploaded document", extra={"document_id": document_id})
+            logger.exception(
+                "Failed processing uploaded document",
+                extra={"document_id": document_id},
+            )
             failed = self._update_status(
                 document_id,
                 DocumentProcessingStatus.FAILED,
@@ -448,8 +534,12 @@ class DocumentService:
 
     def list_documents(self) -> DocumentListResponse:
         with self._lock:
-            records = sorted(self._records.values(), key=lambda item: item.created_at, reverse=True)
-        return DocumentListResponse(documents=[DocumentResponse.from_record(record) for record in records])
+            records = sorted(
+                self._records.values(), key=lambda item: item.created_at, reverse=True
+            )
+        return DocumentListResponse(
+            documents=[DocumentResponse.from_record(record) for record in records]
+        )
 
     def get_document_status(self, document_id: str) -> DocumentResponse:
         with self._lock:
@@ -461,7 +551,9 @@ class DocumentService:
     def delete_all_documents(self) -> DeleteAllDocumentsResponse:
         with self._lock:
             deleted_documents = len(self._records)
-            stored_paths = [Path(record.stored_path) for record in self._records.values()]
+            stored_paths = [
+                Path(record.stored_path) for record in self._records.values()
+            ]
             self._records.clear()
             self._persist_records()
 
@@ -499,7 +591,9 @@ class DocumentService:
             self._persist_records()
             remaining_documents = len(self._records)
 
-        deleted_files = 1 if self._safe_delete_uploaded_file(Path(record.stored_path)) else 0
+        deleted_files = (
+            1 if self._safe_delete_uploaded_file(Path(record.stored_path)) else 0
+        )
         self._rebuild_after_deletion()
 
         return DeleteDocumentResponse(
@@ -509,13 +603,19 @@ class DocumentService:
             deleted_files=deleted_files,
         )
 
-    def update_chunk_settings(self, payload: ChunkSettingsRequest) -> ReindexDocumentsResponse:
+    def update_chunk_settings(
+        self, payload: ChunkSettingsRequest
+    ) -> ReindexDocumentsResponse:
         """Apply chunk settings and rebuild active uploaded indexes."""
         chunk_size = int(payload.chunk_size)
         chunk_overlap = int(payload.chunk_overlap)
         inferred_mode = self._infer_chunking_mode(chunk_size, chunk_overlap)
-        selected_mode: ChunkingMode = inferred_mode if inferred_mode is not None else "custom"
-        chunk_mode: ChunkConfigMode = "preset" if inferred_mode is not None else "custom"
+        selected_mode: ChunkingMode = (
+            inferred_mode if inferred_mode is not None else "custom"
+        )
+        chunk_mode: ChunkConfigMode = (
+            "preset" if inferred_mode is not None else "custom"
+        )
         ready_documents, active_chunks = self._apply_chunking(
             selected_mode=selected_mode,
             chunk_mode=chunk_mode,
@@ -530,9 +630,13 @@ class DocumentService:
             active_chunks=active_chunks,
         )
 
-    def apply_chunking_settings(self, payload: ChunkingSettingsRequest) -> ChunkingSettingsResponse:
+    def apply_chunking_settings(
+        self, payload: ChunkingSettingsRequest
+    ) -> ChunkingSettingsResponse:
         """Apply preset/custom chunking settings and rebuild uploaded indexes."""
-        selected_mode, chunk_mode, chunk_size, chunk_overlap = self._resolve_chunking_values(payload)
+        selected_mode, chunk_mode, chunk_size, chunk_overlap = (
+            self._resolve_chunking_values(payload)
+        )
         ready_documents, active_chunks = self._apply_chunking(
             selected_mode=selected_mode,
             chunk_mode=chunk_mode,

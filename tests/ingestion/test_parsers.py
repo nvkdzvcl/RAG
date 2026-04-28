@@ -67,7 +67,9 @@ def test_docx_parser_extracts_heading_paragraph_and_table(tmp_path: Path) -> Non
     parser = DocxParser()
     blocks = parser.parse(doc_path)
 
-    assert any(block.type == "text" and block.metadata.get("is_heading") for block in blocks)
+    assert any(
+        block.type == "text" and block.metadata.get("is_heading") for block in blocks
+    )
     assert any(block.type == "table" for block in blocks)
     table_block = next(block for block in blocks if block.type == "table")
     assert "| Name | Score |" in table_block.content
@@ -83,7 +85,11 @@ def test_vietnamese_text_preserved_through_loader_and_chunker(tmp_path: Path) ->
 
     assert docs[0].content == vi_text
     assert any("Tiếng Việt có dấu" in chunk.content for chunk in chunks)
-    assert all(chunk.metadata.get("language") == "auto" or chunk.metadata.get("language") == "vi" for chunk in chunks)
+    assert all(
+        chunk.metadata.get("language") == "auto"
+        or chunk.metadata.get("language") == "vi"
+        for chunk in chunks
+    )
     assert all(chunk.metadata.get("block_type") == "text" for chunk in chunks)
 
 
@@ -100,7 +106,7 @@ def test_text_parser_splits_paragraphs_without_losing_utf8(tmp_path: Path) -> No
 
 def test_pdf_parser_ocr_disabled_does_not_invoke_ocr(monkeypatch) -> None:
     class FakePage:
-        images = []
+        images: list[object] = []
 
         @staticmethod
         def extract_text() -> str:
@@ -132,7 +138,9 @@ def test_pdf_parser_ocr_disabled_does_not_invoke_ocr(monkeypatch) -> None:
         _ = kwargs
         raise AssertionError("OCR should not run when OCR is disabled")
 
-    monkeypatch.setattr("app.ingestion.parsers.pdf_parser.ocr_pdf_page_with_pymupdf", _unexpected_ocr)
+    monkeypatch.setattr(
+        "app.ingestion.parsers.pdf_parser.ocr_pdf_page_with_pymupdf", _unexpected_ocr
+    )
 
     parser = PDFParser(ocr_enabled=False, ocr_min_text_chars=100)
     blocks = parser.parse(Path("sample.pdf"))
@@ -142,7 +150,7 @@ def test_pdf_parser_ocr_disabled_does_not_invoke_ocr(monkeypatch) -> None:
 
 def test_pdf_parser_missing_tesseract_does_not_crash(monkeypatch) -> None:
     class FakePage:
-        images = []
+        images: list[object] = []
 
         @staticmethod
         def extract_text() -> str:
@@ -168,7 +176,9 @@ def test_pdf_parser_missing_tesseract_does_not_crash(monkeypatch) -> None:
         "app.ingestion.parsers.pdf_parser.pdfplumber",
         SimpleNamespace(open=lambda _: FakePDF()),
     )
-    monkeypatch.setattr("app.ingestion.parsers.pdf_parser.is_tesseract_available", lambda: False)
+    monkeypatch.setattr(
+        "app.ingestion.parsers.pdf_parser.is_tesseract_available", lambda: False
+    )
 
     parser = PDFParser(ocr_enabled=True, ocr_min_text_chars=100)
     blocks = parser.parse(Path("scan.pdf"))
@@ -178,7 +188,7 @@ def test_pdf_parser_missing_tesseract_does_not_crash(monkeypatch) -> None:
 
 def test_pdf_parser_appends_ocr_text_block_with_metadata(monkeypatch) -> None:
     class FakePage:
-        images = []
+        images: list[object] = []
 
         @staticmethod
         def extract_text() -> str:
@@ -204,7 +214,9 @@ def test_pdf_parser_appends_ocr_text_block_with_metadata(monkeypatch) -> None:
         "app.ingestion.parsers.pdf_parser.pdfplumber",
         SimpleNamespace(open=lambda _: FakePDF()),
     )
-    monkeypatch.setattr("app.ingestion.parsers.pdf_parser.is_tesseract_available", lambda: True)
+    monkeypatch.setattr(
+        "app.ingestion.parsers.pdf_parser.is_tesseract_available", lambda: True
+    )
     ocr_calls: list[tuple[tuple[object, ...], dict[str, object]]] = []
 
     def _fake_ocr(*args, **kwargs) -> str:
@@ -236,9 +248,11 @@ def test_pdf_parser_appends_ocr_text_block_with_metadata(monkeypatch) -> None:
     assert len(ocr_calls) == 1
 
 
-def test_pdf_parser_text_extraction_still_works_without_ocr_fallback(monkeypatch) -> None:
+def test_pdf_parser_text_extraction_still_works_without_ocr_fallback(
+    monkeypatch,
+) -> None:
     class FakePage:
-        images = []
+        images: list[object] = []
 
         @staticmethod
         def extract_text() -> str:
@@ -264,14 +278,18 @@ def test_pdf_parser_text_extraction_still_works_without_ocr_fallback(monkeypatch
         "app.ingestion.parsers.pdf_parser.pdfplumber",
         SimpleNamespace(open=lambda _: FakePDF()),
     )
-    monkeypatch.setattr("app.ingestion.parsers.pdf_parser.is_tesseract_available", lambda: True)
+    monkeypatch.setattr(
+        "app.ingestion.parsers.pdf_parser.is_tesseract_available", lambda: True
+    )
 
     def _unexpected_ocr(*args, **kwargs) -> str:
         _ = args
         _ = kwargs
         raise AssertionError("OCR should be skipped when page already has enough text")
 
-    monkeypatch.setattr("app.ingestion.parsers.pdf_parser.ocr_pdf_page_with_pymupdf", _unexpected_ocr)
+    monkeypatch.setattr(
+        "app.ingestion.parsers.pdf_parser.ocr_pdf_page_with_pymupdf", _unexpected_ocr
+    )
 
     parser = PDFParser(ocr_enabled=True, ocr_min_text_chars=10)
     blocks = parser.parse(Path("digital.pdf"))
@@ -282,7 +300,7 @@ def test_pdf_parser_text_extraction_still_works_without_ocr_fallback(monkeypatch
 
 def test_pdf_parser_ocr_runtime_error_does_not_crash(monkeypatch) -> None:
     class FakePage:
-        images = []
+        images: list[object] = []
 
         @staticmethod
         def extract_text() -> str:
@@ -308,14 +326,18 @@ def test_pdf_parser_ocr_runtime_error_does_not_crash(monkeypatch) -> None:
         "app.ingestion.parsers.pdf_parser.pdfplumber",
         SimpleNamespace(open=lambda _: FakePDF()),
     )
-    monkeypatch.setattr("app.ingestion.parsers.pdf_parser.is_tesseract_available", lambda: True)
+    monkeypatch.setattr(
+        "app.ingestion.parsers.pdf_parser.is_tesseract_available", lambda: True
+    )
 
     def _broken_ocr(*args, **kwargs) -> str:
         _ = args
         _ = kwargs
         raise RuntimeError("missing OCR dependency")
 
-    monkeypatch.setattr("app.ingestion.parsers.pdf_parser.ocr_pdf_page_with_pymupdf", _broken_ocr)
+    monkeypatch.setattr(
+        "app.ingestion.parsers.pdf_parser.ocr_pdf_page_with_pymupdf", _broken_ocr
+    )
 
     parser = PDFParser(ocr_enabled=True, ocr_min_text_chars=100)
     blocks = parser.parse(Path("broken-ocr.pdf"))

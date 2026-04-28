@@ -1,4 +1,4 @@
-.PHONY: test-fast test-integration test-full
+.PHONY: test-fast test-integration test-full lock-deps
 
 PYTHON ?= python
 ifneq ("$(wildcard .venv/bin/python)","")
@@ -13,3 +13,6 @@ test-integration:
 
 test-full:
 	$(PYTHON) -m pytest
+
+lock-deps:
+	$(PYTHON) scripts/lock_requirements.py

@@ -6,7 +6,9 @@ from app.indexing.embeddings import BaseEmbeddingProvider, EmbeddingProvider
 from app.indexing.persistence import LocalIndexStore
 from app.indexing.providers.factory import create_embedding_provider
 from app.indexing.providers.hash_embedding import HashEmbeddingProvider
-from app.indexing.providers.sentence_transformer_embedding import SentenceTransformerEmbeddingProvider
+from app.indexing.providers.sentence_transformer_embedding import (
+    SentenceTransformerEmbeddingProvider,
+)
 from app.indexing.vector_index import InMemoryVectorIndex, VectorIndex
 
 __all__ = [

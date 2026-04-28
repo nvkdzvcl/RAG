@@ -2,38 +2,60 @@
 
 from __future__ import annotations
 
+import asyncio
 import logging
 import time
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
+from typing import Any, Protocol
 
+from app.core.async_utils import run_coro_sync
+from app.core.cache import create_cache_group_from_settings
 from app.core.config import get_settings
 from app.core.json_utils import parse_json_object
-from app.generation import BaselineGenerator, LLMClient, create_llm_client_from_settings
+from app.generation import (
+    BaselineGenerator,
+    LLMClient,
+    close_llm_client,
+    create_llm_client_from_settings,
+)
 from app.generation.llm_client import complete_with_model
 from app.indexing.bm25_index import BM25Index
 from app.indexing.vector_index import VectorIndex
-from app.indexing import BaseEmbeddingProvider, IndexBuilder, LocalIndexStore, create_embedding_provider
+from app.indexing import (
+    BaseEmbeddingProvider,
+    IndexBuilder,
+    LocalIndexStore,
+    create_embedding_provider,
+)
 from app.ingestion import Chunker, DirectoryIngestor, TextCleaner
-from app.retrieval import BaseReranker, ContextSelector, DenseRetriever, HybridRetriever, SparseRetriever, create_reranker
+from app.retrieval import (
+    BaseReranker,
+    ContextSelector,
+    DenseRetriever,
+    HybridRetriever,
+    PassThroughReranker,
+    SparseRetriever,
+    create_reranker,
+)
 from app.schemas.api import StandardQueryResponse
 from app.schemas.common import Mode
 from app.schemas.generation import GeneratedAnswer
 from app.schemas.ingestion import DocumentChunk
 from app.schemas.retrieval import RetrievalResult
-from app.services.index_runtime import EmptyRetriever, RuntimeIndexManager
+from app.services.index_runtime import EmptyRetriever
 from app.workflows.shared import (
+    assess_grounding,
     build_chat_history_context,
     build_language_system_prompt,
     detect_response_language,
-    detect_hallucination,
-    grounded_overlap_score,
     is_language_mismatch,
     localized_insufficient_evidence,
     normalize_query,
     response_language_name,
     trim_chat_history,
 )
+from app.workflows.streaming import StreamEventHandler, emit_stream_event
 
 
 logger = logging.getLogger(__name__)
@@ -48,6 +70,21 @@ class StandardPipelineResult:
     reranked: list[RetrievalResult]
     selected_context: list[RetrievalResult]
     generated: GeneratedAnswer
+    retrieval_debug: dict[str, Any] = field(default_factory=dict)
+
+
+class RetrieverLike(Protocol):
+    """Subset of retriever behavior required by the workflow."""
+
+    def retrieve(self, query: str, top_k: int = 5) -> list[RetrievalResult]: ...
+
+
+class IndexManagerLike(Protocol):
+    """Minimal runtime index manager contract used by StandardWorkflow."""
+
+    def get_retriever(self) -> RetrieverLike: ...
+
+    def get_active_source(self) -> str: ...
 
 
 class StandardWorkflow:
@@ -57,7 +94,7 @@ class StandardWorkflow:
         "Rewrite the answer into $response_language_name while keeping the same grounded meaning.\n"
         "Do not add new facts.\n"
         "Do not use Chinese unless explicitly requested.\n"
-        "Return strict JSON only: {\"answer\": \"string\"}\n"
+        'Return strict JSON only: {"answer": "string"}\n'
         "response_language: $response_language\n"
         "question: $question\n"
         "answer:\n$draft_answer"
@@ -75,29 +112,51 @@ class StandardWorkflow:
         chunk_size: int | None = None,
         chunk_overlap: int | None = None,
         persist_indexes: bool = False,
-        index_manager: RuntimeIndexManager | None = None,
+        index_manager: IndexManagerLike | None = None,
         embedding_provider: BaseEmbeddingProvider | None = None,
         reranker: BaseReranker | None = None,
         llm_client: LLMClient | None = None,
     ) -> None:
         settings = get_settings()
-        configured_top_k = hybrid_top_k if hybrid_top_k is not None else int(getattr(settings, "retrieval_top_k", 8))
+        configured_top_k = (
+            hybrid_top_k
+            if hybrid_top_k is not None
+            else int(getattr(settings, "retrieval_top_k", 8))
+        )
         self.hybrid_top_k = max(1, int(configured_top_k))
-        configured_rerank = rerank_top_k if rerank_top_k is not None else int(settings.reranker_top_n)
+        configured_rerank = (
+            rerank_top_k
+            if rerank_top_k is not None
+            else int(
+                getattr(
+                    settings,
+                    "reranker_top_k",
+                    getattr(settings, "reranker_top_n", 6),
+                )
+            )
+        )
         self.configured_rerank_top_n = max(1, int(configured_rerank))
         self.rerank_top_k = min(self.configured_rerank_top_n, self.hybrid_top_k)
+        self.reranker_enabled = bool(getattr(settings, "reranker_enabled", True))
         self.context_top_k = context_top_k
-        self.chunk_size = chunk_size if chunk_size is not None else int(getattr(settings, "chunk_size", 320))
+        self.chunk_size = (
+            chunk_size
+            if chunk_size is not None
+            else int(getattr(settings, "chunk_size", 320))
+        )
         self.chunk_overlap = (
-            chunk_overlap if chunk_overlap is not None else int(getattr(settings, "chunk_overlap", 40))
+            chunk_overlap
+            if chunk_overlap is not None
+            else int(getattr(settings, "chunk_overlap", 40))
         )
         self.memory_window = max(0, int(getattr(settings, "memory_window", 3)))
         self.corpus_dir = Path(corpus_dir or settings.corpus_dir)
         self.index_dir = Path(index_dir or settings.index_dir)
         self.persist_indexes = persist_indexes
         self.index_manager = index_manager
+        self.caches = create_cache_group_from_settings(settings)
 
-        self._fallback_retriever: HybridRetriever | EmptyRetriever | None = None
+        self._fallback_retriever: RetrieverLike | None = None
 
         if self.index_manager is None:
             resolved_provider = embedding_provider or create_embedding_provider(
@@ -114,17 +173,38 @@ class StandardWorkflow:
             if self.persist_indexes:
                 self._save_indexes(built.vector_index, built.bm25_index)
 
-            dense = DenseRetriever(built.vector_index, resolved_provider)
+            dense = DenseRetriever(
+                built.vector_index,
+                resolved_provider,
+                embedding_cache=self.caches.embedding,
+            )
             sparse = SparseRetriever(built.bm25_index)
-            self._fallback_retriever = HybridRetriever(dense, sparse)
+            self._fallback_retriever = HybridRetriever(
+                dense,
+                sparse,
+                retrieval_cache=self.caches.retrieval,
+            )
 
-        self.reranker = reranker or create_reranker(
-            provider_name=settings.reranker_provider,
-            model=settings.reranker_model,
-            device=settings.reranker_device,
-            batch_size=settings.reranker_batch_size,
+        if reranker is not None:
+            self.reranker = reranker
+        elif not self.reranker_enabled:
+            logger.info(
+                (
+                    "Reranker disabled by configuration (RERANKER_ENABLED=false). "
+                    "Using pass-through retrieval order."
+                )
+            )
+            self.reranker = PassThroughReranker(reason="disabled")
+        else:
+            self.reranker = create_reranker(
+                provider_name=settings.reranker_provider,
+                model=settings.reranker_model,
+                device=settings.reranker_device,
+                batch_size=settings.reranker_batch_size,
+            )
+        self.context_selector = ContextSelector(
+            max_chunks=context_top_k, max_chars=context_max_chars
         )
-        self.context_selector = ContextSelector(max_chunks=context_top_k, max_chars=context_max_chars)
         resolved_llm_client = llm_client or create_llm_client_from_settings(settings)
         self.generator = BaselineGenerator(
             llm_client=resolved_llm_client,
@@ -144,7 +224,9 @@ class StandardWorkflow:
         chunker = Chunker(chunk_size=self.chunk_size, chunk_overlap=self.chunk_overlap)
         chunks = chunker.chunk_documents(cleaner.clean_documents(loaded))
         if not chunks:
-            raise ValueError(f"No chunks were produced from corpus directory: {self.corpus_dir}")
+            raise ValueError(
+                f"No chunks were produced from corpus directory: {self.corpus_dir}"
+            )
         return chunks
 
     def _save_indexes(self, vector_index: VectorIndex, bm25_index: BM25Index) -> None:
@@ -152,9 +234,20 @@ class StandardWorkflow:
         store.save_vector_index(vector_index)
         store.save_bm25_index(bm25_index)
 
-    def _get_retriever(self) -> HybridRetriever | EmptyRetriever:
+    def _get_retriever(
+        self,
+        *,
+        query_filters: dict[str, Any] | None = None,
+    ) -> RetrieverLike:
         if self.index_manager is not None:
-            return self.index_manager.get_retriever()
+            getter = getattr(self.index_manager, "get_retriever")
+            if query_filters is None:
+                return getter()
+            try:
+                return getter(query_filters=query_filters)
+            except TypeError:
+                # Backward-compatible with tests/fakes exposing legacy get_retriever() signature.
+                return getter()
         if self._fallback_retriever is None:
             return EmptyRetriever()
         return self._fallback_retriever
@@ -190,21 +283,62 @@ class StandardWorkflow:
         """Return effective rerank top_n (always <= retrieval top_k)."""
         return self.rerank_top_k
 
-    def run_pipeline(
+    async def run_pipeline(
         self,
         query: str,
         mode: Mode = Mode.STANDARD,
         model: str | None = None,
         response_language: str = "en",
         chat_history: list[dict[str, str]] | None = None,
+        query_filters: dict[str, Any] | None = None,
+        event_handler: StreamEventHandler | None = None,
+        event_context: dict[str, Any] | None = None,
     ) -> StandardPipelineResult:
         """Run one retrieval-generation pass and return intermediate artifacts."""
         self._sync_chunk_settings_from_runtime()
+        context_payload = dict(event_context or {})
         normalized_query = normalize_query(query)
         retrieval_top_k = max(1, self.hybrid_top_k)
-        retrieved = self._get_retriever().retrieve(normalized_query, top_k=retrieval_top_k)
-        reranked = self.reranker.rerank(normalized_query, retrieved, top_k=self.rerank_top_k)
-        selected_context = self.context_selector.select(reranked, top_k=self.context_top_k)
+        retriever = self._get_retriever(query_filters=query_filters)
+        retrieve_async = getattr(retriever, "retrieve_async", None)
+        if callable(retrieve_async):
+            retrieved = await retrieve_async(normalized_query, top_k=retrieval_top_k)
+        else:
+            retrieved = await asyncio.to_thread(
+                retriever.retrieve,
+                normalized_query,
+                retrieval_top_k,
+            )
+        retrieval_debug: dict[str, Any] = {}
+        debug_getter = getattr(retriever, "get_last_filter_debug", None)
+        if callable(debug_getter):
+            debug_payload = debug_getter()
+            if isinstance(debug_payload, dict):
+                retrieval_debug = debug_payload
+        reranked = await asyncio.to_thread(
+            self.reranker.rerank,
+            normalized_query,
+            retrieved,
+            self.rerank_top_k,
+        )
+        selected_context = await asyncio.to_thread(
+            self.context_selector.select,
+            reranked,
+            self.context_top_k,
+        )
+        await emit_stream_event(
+            event_handler,
+            {
+                "type": "retrieval",
+                "mode": mode.value,
+                "query": normalized_query,
+                "retrieved_count": len(retrieved),
+                "reranked_count": len(reranked),
+                "selected_count": len(selected_context),
+                "chunk_ids": [item.chunk_id for item in selected_context],
+                **context_payload,
+            },
+        )
         if not selected_context:
             generated = GeneratedAnswer(
                 answer=localized_insufficient_evidence(response_language),
@@ -214,18 +348,64 @@ class StandardWorkflow:
                 stop_reason="no_context",
                 llm_fallback_used=False,
             )
+            await emit_stream_event(
+                event_handler,
+                {
+                    "type": "generation",
+                    "mode": mode.value,
+                    "phase": "skipped",
+                    "reason": "no_context",
+                    **context_payload,
+                },
+            )
         else:
             history_context = build_chat_history_context(
                 chat_history,
                 memory_window=self.memory_window,
             )
-            generated = self.generator.generate_answer(
+            await emit_stream_event(
+                event_handler,
+                {
+                    "type": "generation",
+                    "mode": mode.value,
+                    "phase": "started",
+                    "context_count": len(selected_context),
+                    **context_payload,
+                },
+            )
+
+            async def _on_llm_delta(delta: str) -> None:
+                await emit_stream_event(
+                    event_handler,
+                    {
+                        "type": "generation_delta",
+                        "mode": mode.value,
+                        "delta": delta,
+                        **context_payload,
+                    },
+                )
+
+            generated = await self.generator.generate_answer_async(
                 query=normalized_query,
                 context=selected_context,
                 mode=mode,
                 model=model,
                 response_language=response_language,
                 chat_history_context=history_context,
+                on_llm_delta=_on_llm_delta if event_handler is not None else None,
+            )
+            await emit_stream_event(
+                event_handler,
+                {
+                    "type": "generation",
+                    "mode": mode.value,
+                    "phase": "completed",
+                    "status": generated.status,
+                    "stop_reason": generated.stop_reason,
+                    "answer": generated.answer,
+                    "citation_count": len(generated.citations),
+                    **context_payload,
+                },
             )
 
         logger.info(
@@ -243,14 +423,18 @@ class StandardWorkflow:
             reranked=reranked,
             selected_context=selected_context,
             generated=generated,
+            retrieval_debug=retrieval_debug,
         )
 
-    def run(
+    async def run_async(
         self,
         query: str,
         chat_history: list[dict[str, str]] | None = None,
         model: str | None = None,
         response_language: str | None = None,
+        query_filters: dict[str, Any] | None = None,
+        event_handler: StreamEventHandler | None = None,
+        event_context: dict[str, Any] | None = None,
     ) -> StandardQueryResponse:
         start_time = time.perf_counter()
         normalized_history = trim_chat_history(
@@ -259,20 +443,25 @@ class StandardWorkflow:
         )
 
         resolved_language = response_language or detect_response_language(query)
-        pipeline = self.run_pipeline(
+        pipeline = await self.run_pipeline(
             query=query,
             mode=Mode.STANDARD,
             model=model,
             response_language=resolved_language,
             chat_history=normalized_history,
+            query_filters=query_filters,
+            event_handler=event_handler,
+            event_context=event_context,
         )
         final_answer = pipeline.generated.answer
         language_mismatch = is_language_mismatch(final_answer, resolved_language)
         stop_reason = pipeline.generated.stop_reason
-        context_texts = [item.content for item in pipeline.selected_context if item.content.strip()]
+        context_texts = [
+            item.content for item in pipeline.selected_context if item.content.strip()
+        ]
 
         if language_mismatch and pipeline.generated.status != "insufficient_evidence":
-            rewritten = self._rewrite_answer_language(
+            rewritten = await self._rewrite_answer_language(
                 query=pipeline.normalized_query,
                 answer=final_answer,
                 response_language=resolved_language,
@@ -280,17 +469,24 @@ class StandardWorkflow:
             )
             if rewritten:
                 final_answer = rewritten
-                language_mismatch = is_language_mismatch(final_answer, resolved_language)
+                language_mismatch = is_language_mismatch(
+                    final_answer, resolved_language
+                )
                 if not language_mismatch:
                     stop_reason = "language_refined"
 
-        grounded_score = grounded_overlap_score(final_answer, context_texts)
-        hallucination_detected = detect_hallucination(
+        final_citations = list(pipeline.generated.citations)
+        citation_count = len(final_citations)
+        grounding = assess_grounding(
             final_answer,
             context_texts,
+            citation_count=citation_count,
+            has_selected_context=bool(pipeline.selected_context),
             status=pipeline.generated.status,
         )
-        citation_count = len(pipeline.generated.citations)
+        grounded_score = grounding.grounded_score
+        grounding_reason = grounding.grounding_reason
+        hallucination_detected = grounding.hallucination_detected
         llm_fallback_used = bool(pipeline.generated.llm_fallback_used)
 
         elapsed_ms = int((time.perf_counter() - start_time) * 1000)
@@ -308,10 +504,43 @@ class StandardWorkflow:
                 "index_source": self._get_index_source(),
                 "count": len(pipeline.retrieved),
                 "chunk_ids": [item.chunk_id for item in pipeline.retrieved],
+                "docs": [
+                    {
+                        "chunk_id": item.chunk_id,
+                        "doc_id": item.doc_id,
+                        "source": item.source,
+                        "title": item.title,
+                        "section": item.section,
+                        "file_name": item.metadata.get("file_name")
+                        or item.metadata.get("filename"),
+                        "file_type": item.metadata.get("file_type"),
+                        "uploaded_at": item.metadata.get("uploaded_at"),
+                        "created_at": item.metadata.get("created_at"),
+                        "page": item.page,
+                        "rank": item.rank,
+                        "block_type": item.metadata.get("block_type"),
+                        "ocr": bool(item.metadata.get("ocr")),
+                        "score": item.score,
+                        "dense_score": item.dense_score,
+                        "sparse_score": item.sparse_score,
+                    }
+                    for item in pipeline.retrieved
+                ],
+                "applied_filters": pipeline.retrieval_debug.get("applied_filters", {}),
+                "candidate_count_before_filter": pipeline.retrieval_debug.get(
+                    "candidate_count_before_filter",
+                    len(pipeline.retrieved),
+                ),
+                "candidate_count_after_filter": pipeline.retrieval_debug.get(
+                    "candidate_count_after_filter",
+                    len(pipeline.retrieved),
+                ),
             },
             {
                 "step": "rerank",
-                "provider": getattr(self.reranker, "name", self.reranker.__class__.__name__),
+                "provider": getattr(
+                    self.reranker, "name", self.reranker.__class__.__name__
+                ),
                 "top_k": self.hybrid_top_k,
                 "rerank_top_n": self.rerank_top_k,
                 "count": len(pipeline.reranked),
@@ -320,6 +549,15 @@ class StandardWorkflow:
                     {
                         "chunk_id": item.chunk_id,
                         "doc_id": item.doc_id,
+                        "source": item.source,
+                        "title": item.title,
+                        "section": item.section,
+                        "file_name": item.metadata.get("file_name")
+                        or item.metadata.get("filename"),
+                        "file_type": item.metadata.get("file_type"),
+                        "uploaded_at": item.metadata.get("uploaded_at"),
+                        "created_at": item.metadata.get("created_at"),
+                        "page": item.page,
                         "rank": item.rank,
                         "block_type": item.metadata.get("block_type"),
                         "ocr": bool(item.metadata.get("ocr")),
@@ -340,6 +578,15 @@ class StandardWorkflow:
                     {
                         "chunk_id": item.chunk_id,
                         "doc_id": item.doc_id,
+                        "source": item.source,
+                        "title": item.title,
+                        "section": item.section,
+                        "file_name": item.metadata.get("file_name")
+                        or item.metadata.get("filename"),
+                        "file_type": item.metadata.get("file_type"),
+                        "uploaded_at": item.metadata.get("uploaded_at"),
+                        "created_at": item.metadata.get("created_at"),
+                        "page": item.page,
                         "block_type": item.metadata.get("block_type"),
                         "ocr": bool(item.metadata.get("ocr")),
                         "content": item.content,
@@ -354,6 +601,7 @@ class StandardWorkflow:
                 "response_language": resolved_language,
                 "language_mismatch": language_mismatch,
                 "grounded_score": grounded_score,
+                "grounding_reason": grounding_reason,
                 "hallucination_detected": hallucination_detected,
                 "llm_fallback_used": llm_fallback_used,
             },
@@ -371,6 +619,7 @@ class StandardWorkflow:
                 {
                     "step": "grounding_check",
                     "grounded_score": grounded_score,
+                    "grounding_reason": grounding_reason,
                     "hallucination_detected": hallucination_detected,
                     "citation_count": citation_count,
                     "llm_fallback_used": llm_fallback_used,
@@ -380,7 +629,7 @@ class StandardWorkflow:
         return StandardQueryResponse(
             mode="standard",
             answer=final_answer,
-            citations=pipeline.generated.citations,
+            citations=final_citations,
             confidence=pipeline.generated.confidence,
             stop_reason=stop_reason,
             status=pipeline.generated.status,
@@ -388,13 +637,37 @@ class StandardWorkflow:
             response_language=resolved_language,
             language_mismatch=language_mismatch,
             grounded_score=grounded_score,
+            grounding_reason=grounding_reason,
             citation_count=citation_count,
             hallucination_detected=hallucination_detected,
             llm_fallback_used=llm_fallback_used,
             trace=trace,
         )
 
-    def _rewrite_answer_language(
+    def run(
+        self,
+        query: str,
+        chat_history: list[dict[str, str]] | None = None,
+        model: str | None = None,
+        response_language: str | None = None,
+        query_filters: dict[str, Any] | None = None,
+        event_handler: StreamEventHandler | None = None,
+        event_context: dict[str, Any] | None = None,
+    ) -> StandardQueryResponse:
+        """Sync wrapper for CLI/tests."""
+        return run_coro_sync(
+            self.run_async(
+                query=query,
+                chat_history=chat_history,
+                model=model,
+                response_language=response_language,
+                query_filters=query_filters,
+                event_handler=event_handler,
+                event_context=event_context,
+            )
+        )
+
+    async def _rewrite_answer_language(
         self,
         *,
         query: str,
@@ -418,7 +691,7 @@ class StandardWorkflow:
             response_language_name=response_language_name(response_language),
         )
         try:
-            raw = complete_with_model(
+            raw = await complete_with_model(
                 self.llm_client,
                 prompt,
                 system_prompt=build_language_system_prompt(response_language),
@@ -441,3 +714,7 @@ class StandardWorkflow:
         if fallback and not fallback.startswith("{"):
             return fallback
         return None
+
+    async def aclose(self) -> None:
+        """Release async resources held by the workflow."""
+        await close_llm_client(self.llm_client)

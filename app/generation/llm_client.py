@@ -2,11 +2,15 @@
 
 from __future__ import annotations
 
+import inspect
+import json
 import logging
-from collections.abc import Callable
+from collections.abc import Awaitable, Callable
 from typing import Any, Protocol
 
 import httpx
+
+from app.core.async_utils import await_if_needed
 
 logger = logging.getLogger(__name__)
 
@@ -18,9 +22,7 @@ class LLMClient(Protocol):
         self,
         prompt: str,
         system_prompt: str | None = None,
-        model: str | None = None,
-        max_tokens: int | None = None,
-    ) -> str:
+    ) -> str | Awaitable[str]:
         """Return completion text for prompt/system_prompt."""
 
 
@@ -29,7 +31,7 @@ class StubLLMClient:
 
     def __init__(
         self,
-        responder: Callable[..., str] | None = None,
+        responder: Callable[..., str | Awaitable[str]] | None = None,
     ) -> None:
         self._responder = responder or self._default_responder
         self.last_call_used_fallback = False
@@ -40,69 +42,145 @@ class StubLLMClient:
         system_prompt: str | None = None,
         model: str | None = None,
         max_tokens: int | None = None,
+        **kwargs: Any,
     ) -> str:
+        _ = kwargs
         _ = system_prompt
         _ = prompt
         _ = model
         _ = max_tokens
         return '{"answer":"Stub grounded answer.","confidence":0.5,"status":"answered"}'
 
-    def complete(
+    @staticmethod
+    def _supported_kwargs(
+        function: Callable[..., Any], candidates: dict[str, Any]
+    ) -> dict[str, Any]:
+        try:
+            signature = inspect.signature(function)
+        except (TypeError, ValueError):
+            return dict(candidates)
+
+        supports_var_keywords = False
+        selected: dict[str, Any] = {}
+        for parameter in signature.parameters.values():
+            if parameter.kind == inspect.Parameter.VAR_KEYWORD:
+                supports_var_keywords = True
+                continue
+            if parameter.kind not in (
+                inspect.Parameter.POSITIONAL_OR_KEYWORD,
+                inspect.Parameter.KEYWORD_ONLY,
+            ):
+                continue
+            if parameter.name in candidates:
+                selected[parameter.name] = candidates[parameter.name]
+
+        if supports_var_keywords:
+            for key, value in candidates.items():
+                selected.setdefault(key, value)
+        return selected
+
+    async def complete(
         self,
         prompt: str,
         system_prompt: str | None = None,
         model: str | None = None,
         max_tokens: int | None = None,
+        **kwargs: Any,
     ) -> str:
-        try:
-            return self._responder(prompt, system_prompt, model, max_tokens)
-        except TypeError:
-            # Backward compatibility for existing two-arg responder lambdas in tests.
-            try:
-                return self._responder(prompt, system_prompt, model)
-            except TypeError:
-                return self._responder(prompt, system_prompt)
+        on_delta = kwargs.pop("on_delta", None)
+        candidates: dict[str, Any] = {
+            "prompt": prompt,
+            "system_prompt": system_prompt,
+            # Keep backward compatibility for legacy responder lambdas: (prompt, system, ...)
+            "system": system_prompt,
+            "model": model,
+            "max_tokens": max_tokens,
+        }
+        candidates.update(kwargs)
+        selected = self._supported_kwargs(self._responder, candidates)
+        output = await await_if_needed(self._responder(**selected))
+        if callable(on_delta) and isinstance(output, str) and output:
+            await await_if_needed(on_delta(output))
+        return output
 
 
-def complete_with_model(
+def _normalize_complete_args(
+    *,
+    prompt: str,
+    system_prompt: str | None,
+    model: str | None,
+    max_tokens: int | None,
+) -> dict[str, Any]:
+    if not isinstance(prompt, str):
+        raise TypeError("prompt must be a string")
+    if system_prompt is not None and not isinstance(system_prompt, str):
+        raise TypeError("system_prompt must be a string or None")
+
+    payload: dict[str, Any] = {"prompt": prompt, "system_prompt": system_prompt}
+    normalized_model = model.strip() if isinstance(model, str) else ""
+    if normalized_model:
+        payload["model"] = normalized_model
+
+    if isinstance(max_tokens, bool):
+        return payload
+    if isinstance(max_tokens, int) and max_tokens > 0:
+        payload["max_tokens"] = max_tokens
+    return payload
+
+
+def _supported_complete_kwargs(
+    llm_client: LLMClient, payload: dict[str, Any]
+) -> dict[str, Any]:
+    complete_fn = llm_client.complete
+    try:
+        signature = inspect.signature(complete_fn)
+    except (TypeError, ValueError):
+        return dict(payload)
+
+    supports_var_keywords = False
+    selected: dict[str, Any] = {}
+    for parameter in signature.parameters.values():
+        if parameter.kind == inspect.Parameter.VAR_KEYWORD:
+            supports_var_keywords = True
+            continue
+        if parameter.kind not in (
+            inspect.Parameter.POSITIONAL_OR_KEYWORD,
+            inspect.Parameter.KEYWORD_ONLY,
+        ):
+            continue
+        if parameter.name in payload:
+            selected[parameter.name] = payload[parameter.name]
+
+    if supports_var_keywords:
+        for key, value in payload.items():
+            selected.setdefault(key, value)
+    return selected
+
+
+async def complete_with_model(
     llm_client: LLMClient,
     prompt: str,
     *,
     system_prompt: str | None = None,
     model: str | None = None,
     max_tokens: int | None = None,
+    **kwargs: Any,
 ) -> str:
     """Invoke completion while safely supporting optional per-call model override."""
-    normalized_model = model.strip() if isinstance(model, str) else ""
-
-    if normalized_model:
-        try:
-            return llm_client.complete(
-                prompt=prompt,
-                system_prompt=system_prompt,
-                model=normalized_model,
-                max_tokens=max_tokens,
-            )
-        except TypeError:
-            try:
-                return llm_client.complete(
-                    prompt=prompt,
-                    system_prompt=system_prompt,
-                    model=normalized_model,
-                )
-            except TypeError:
-                return llm_client.complete(
-                    prompt=prompt,
-                    system_prompt=system_prompt,
-                )
-    try:
-        return llm_client.complete(
-            prompt=prompt,
-            system_prompt=system_prompt,
-            max_tokens=max_tokens,
-        )
-    except TypeError:
-        return llm_client.complete(prompt=prompt, system_prompt=system_prompt)
+    payload = _normalize_complete_args(
+        prompt=prompt,
+        system_prompt=system_prompt,
+        model=model,
+        max_tokens=max_tokens,
+    )
+    if kwargs:
+        payload.update(kwargs)
+    selected = _supported_complete_kwargs(llm_client, payload)
+    output: str | Awaitable[str] = llm_client.complete(**selected)
+    output = await await_if_needed(output)
+    if not isinstance(output, str):
+        raise TypeError("LLM completion output must be a string.")
+    return output
 
 
 class OpenAICompatibleLLMClient:
@@ -117,7 +195,7 @@ class OpenAICompatibleLLMClient:
         temperature: float,
         max_tokens: int,
         timeout_seconds: int,
-        client: httpx.Client | None = None,
+        client: httpx.AsyncClient | None = None,
     ) -> None:
         if not model.strip():
             raise ValueError("model must not be empty")
@@ -135,7 +213,8 @@ class OpenAICompatibleLLMClient:
         self.max_tokens = int(max_tokens)
         self.timeout_seconds = int(timeout_seconds)
         self.last_call_used_fallback = False
-        self._client = client or httpx.Client(
+        self._owns_client = client is None
+        self._client = client or httpx.AsyncClient(
             base_url=f"{self.api_base}/",
             timeout=httpx.Timeout(self.timeout_seconds),
         )
@@ -177,28 +256,124 @@ class OpenAICompatibleLLMClient:
 
         raise RuntimeError("Invalid response content type from OpenAI-compatible API.")
 
-    def complete(
+    @staticmethod
+    def _extract_delta(body: dict[str, Any]) -> str:
+        choices = body.get("choices")
+        if not isinstance(choices, list) or not choices:
+            return ""
+
+        first = choices[0]
+        if not isinstance(first, dict):
+            return ""
+
+        delta = first.get("delta")
+        if not isinstance(delta, dict):
+            return ""
+
+        content = delta.get("content")
+        if isinstance(content, str):
+            return content
+
+        if isinstance(content, list):
+            parts: list[str] = []
+            for item in content:
+                if isinstance(item, dict):
+                    text_part = item.get("text")
+                    if isinstance(text_part, str):
+                        parts.append(text_part)
+            return "".join(parts)
+        return ""
+
+    async def _complete_streaming(
+        self,
+        *,
+        messages: list[dict[str, str]],
+        selected_model: str,
+        max_tokens: int,
+        on_delta: Callable[[str], Awaitable[None] | None],
+    ) -> str:
+        payload: dict[str, object] = {
+            "model": selected_model,
+            "messages": messages,
+            "temperature": self.temperature,
+            "max_tokens": max_tokens,
+            "stream": True,
+        }
+        collected: list[str] = []
+        async with self._client.stream(
+            "POST",
+            "chat/completions",
+            headers=self._build_headers(),
+            json=payload,
+        ) as response:
+            response.raise_for_status()
+            async for line in response.aiter_lines():
+                stripped = line.strip()
+                if not stripped or not stripped.startswith("data:"):
+                    continue
+                data = stripped.removeprefix("data:").strip()
+                if data == "[DONE]":
+                    break
+                try:
+                    body = json.loads(data)
+                except json.JSONDecodeError:
+                    continue
+                if not isinstance(body, dict):
+                    continue
+                delta_text = self._extract_delta(body)
+                if not delta_text:
+                    continue
+                collected.append(delta_text)
+                await await_if_needed(on_delta(delta_text))
+        return "".join(collected)
+
+    async def complete(
         self,
         prompt: str,
         system_prompt: str | None = None,
         model: str | None = None,
         max_tokens: int | None = None,
+        **kwargs: Any,
     ) -> str:
+        on_delta = kwargs.pop("on_delta", None)
         messages: list[dict[str, str]] = []
         if system_prompt and system_prompt.strip():
             messages.append({"role": "system", "content": system_prompt.strip()})
         messages.append({"role": "user", "content": prompt})
-        selected_model = model.strip() if isinstance(model, str) and model.strip() else self.model
+        selected_model = (
+            model.strip() if isinstance(model, str) and model.strip() else self.model
+        )
+        resolved_max_tokens = (
+            int(max_tokens)
+            if isinstance(max_tokens, int) and max_tokens > 0
+            else self.max_tokens
+        )
+
+        if callable(on_delta):
+            try:
+                streamed = await self._complete_streaming(
+                    messages=messages,
+                    selected_model=selected_model,
+                    max_tokens=resolved_max_tokens,
+                    on_delta=on_delta,
+                )
+                if streamed:
+                    return streamed
+            except Exception:
+                logger.debug(
+                    "Streaming completion path failed; falling back to non-streaming completion.",
+                    exc_info=True,
+                )
 
         payload: dict[str, object] = {
             "model": selected_model,
             "messages": messages,
             "temperature": self.temperature,
-            "max_tokens": int(max_tokens) if isinstance(max_tokens, int) and max_tokens > 0 else self.max_tokens,
+            "max_tokens": resolved_max_tokens,
         }
 
         try:
-            response = self._client.post(
+            response = await self._client.post(
                 "chat/completions",
                 headers=self._build_headers(),
                 json=payload,
@@ -207,9 +382,17 @@ class OpenAICompatibleLLMClient:
             body = response.json()
             if not isinstance(body, dict):
                 raise RuntimeError("OpenAI-compatible response is not a JSON object.")
-            return self._extract_content(body)
+            content = self._extract_content(body)
+            if callable(on_delta) and content:
+                await await_if_needed(on_delta(content))
+            return content
         except Exception as exc:
             raise RuntimeError("OpenAI-compatible completion request failed.") from exc
+
+    async def aclose(self) -> None:
+        """Close owned async HTTP resources."""
+        if self._owns_client:
+            await self._client.aclose()
 
 
 class FallbackLLMClient:
@@ -220,21 +403,23 @@ class FallbackLLMClient:
         self.fallback = fallback
         self.last_call_used_fallback = False
 
-    def complete(
+    async def complete(
         self,
         prompt: str,
         system_prompt: str | None = None,
         model: str | None = None,
         max_tokens: int | None = None,
+        **kwargs: Any,
     ) -> str:
         self.last_call_used_fallback = False
         try:
-            return complete_with_model(
+            return await complete_with_model(
                 self.primary,
                 prompt,
                 system_prompt=system_prompt,
                 model=model,
                 max_tokens=max_tokens,
+                **kwargs,
             )
         except Exception as exc:
             self.last_call_used_fallback = True
@@ -242,19 +427,37 @@ class FallbackLLMClient:
                 "Primary LLM client failed; falling back to stub client.",
                 exc_info=exc,
             )
-            return complete_with_model(
+            return await complete_with_model(
                 self.fallback,
                 prompt,
                 system_prompt=system_prompt,
                 model=model,
                 max_tokens=max_tokens,
+                **kwargs,
             )
+
+    async def aclose(self) -> None:
+        """Close underlying clients when they expose async close hooks."""
+        await close_llm_client(self.primary)
+        await close_llm_client(self.fallback)
 
 
 def did_use_fallback(llm_client: LLMClient) -> bool:
     """Best-effort flag indicating whether the latest call used fallback."""
     value = getattr(llm_client, "last_call_used_fallback", False)
     return bool(value)
+
+
+async def close_llm_client(llm_client: LLMClient) -> None:
+    """Close optional client resources when supported."""
+    async_closer = getattr(llm_client, "aclose", None)
+    if callable(async_closer):
+        await await_if_needed(async_closer())
+        return
+
+    sync_closer = getattr(llm_client, "close", None)
+    if callable(sync_closer):
+        sync_closer()
 
 
 OPENAI_COMPATIBLE_PROVIDER_NAMES = {
@@ -301,11 +504,15 @@ def create_llm_client(
     if normalized in STUB_PROVIDER_NAMES:
         return fallback
 
-    logger.warning("Unknown LLM provider '%s'. Falling back to stub client.", provider_name)
+    logger.warning(
+        "Unknown LLM provider '%s'. Falling back to stub client.", provider_name
+    )
     return fallback
 
 
-def create_llm_client_from_settings(settings: Any, fallback_client: LLMClient | None = None) -> LLMClient:
+def create_llm_client_from_settings(
+    settings: Any, fallback_client: LLMClient | None = None
+) -> LLMClient:
     """Create a runtime LLM client from application settings."""
     return create_llm_client(
         provider_name=getattr(settings, "llm_provider"),

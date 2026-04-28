@@ -5,12 +5,24 @@ from pathlib import Path
 
 import pytest
 
-from app.evaluation.reporting import build_comparative_summary, report_to_markdown, write_report_artifacts
-from app.evaluation.schemas import ComparativeSummary, EvalMetrics, EvalReport, ModeEvalOutput
+from app.evaluation.reporting import (
+    build_comparative_summary,
+    report_to_markdown,
+    write_report_artifacts,
+)
+from app.evaluation.schemas import (
+    ComparativeSummary,
+    EvalMetrics,
+    EvalReport,
+    ModeEvalOutput,
+    RetrievalModeMetrics,
+)
 from app.schemas.common import Mode
 
 
-def _build_mode_output(example_id: str, mode: Mode, latency_ms: int, confidence: float, retry: bool) -> ModeEvalOutput:
+def _build_mode_output(
+    example_id: str, mode: Mode, latency_ms: int, confidence: float, retry: bool
+) -> ModeEvalOutput:
     return ModeEvalOutput(
         example_id=example_id,
         mode=mode,
@@ -42,6 +54,12 @@ def _build_mode_output(example_id: str, mode: Mode, latency_ms: int, confidence:
             cited_gold_source_overlap=None,
             groundedness_proxy=0.2,
             groundedness_proxy_note="proxy",
+            retrieval_by_mode={
+                "dense": RetrievalModeMetrics(hit=True, mrr=0.5, ndcg=0.5),
+                "bm25": RetrievalModeMetrics(hit=True, mrr=0.5, ndcg=0.5),
+                "hybrid": RetrievalModeMetrics(hit=True, mrr=0.5, ndcg=0.5),
+                "hybrid_rerank": RetrievalModeMetrics(hit=True, mrr=1.0, ndcg=1.0),
+            },
         ),
         trace=[],
         run_source="direct",
@@ -50,8 +68,12 @@ def _build_mode_output(example_id: str, mode: Mode, latency_ms: int, confidence:
 
 def test_build_comparative_summary_and_markdown() -> None:
     mode_outputs = [
-        _build_mode_output("e1", Mode.STANDARD, latency_ms=100, confidence=0.5, retry=False),
-        _build_mode_output("e1", Mode.ADVANCED, latency_ms=180, confidence=0.7, retry=True),
+        _build_mode_output(
+            "e1", Mode.STANDARD, latency_ms=100, confidence=0.5, retry=False
+        ),
+        _build_mode_output(
+            "e1", Mode.ADVANCED, latency_ms=180, confidence=0.7, retry=True
+        ),
     ]
     summary = build_comparative_summary(mode_outputs, compare_outputs=[])
 
@@ -77,6 +99,39 @@ def test_build_comparative_summary_and_markdown() -> None:
     assert "Evaluation Report" in markdown
     assert "Standard vs Advanced" in markdown
     assert "Per-Category Summary" in markdown
+
+
+def test_report_includes_hybrid_rerank_mode_metrics() -> None:
+    mode_outputs = [
+        _build_mode_output(
+            "e1", Mode.STANDARD, latency_ms=100, confidence=0.5, retry=False
+        ),
+        _build_mode_output(
+            "e1", Mode.ADVANCED, latency_ms=180, confidence=0.7, retry=True
+        ),
+    ]
+    summary = build_comparative_summary(mode_outputs, compare_outputs=[])
+
+    assert "hybrid_rerank" in summary.retrieval_by_mode
+    hybrid_rerank = summary.retrieval_by_mode["hybrid_rerank"]
+    assert hybrid_rerank.count == 2
+    assert hybrid_rerank.hit_rate == 1.0
+    assert hybrid_rerank.avg_mrr == 1.0
+    assert hybrid_rerank.avg_ndcg == 1.0
+    markdown = report_to_markdown(
+        EvalReport(
+            dataset_path="data/eval/golden_dataset.jsonl",
+            generated_at=datetime.now(timezone.utc),
+            modes=[Mode.STANDARD, Mode.ADVANCED],
+            dataset_size=1,
+            output_count=2,
+            standard_advanced_summary=summary,
+            mode_outputs=mode_outputs,
+            compare_outputs=[],
+            artifacts={},
+        )
+    )
+    assert "hybrid_rerank" in markdown
 
 
 def test_write_report_artifacts(tmp_path: Path) -> None:

@@ -11,6 +11,19 @@
 4. Khởi chạy backend:
    `uvicorn app.main:app --reload`
 
+## Cập Nhật Dependency Lock
+
+1. Chỉnh dependency ranges trong:
+   - `requirements.in`
+   - `requirements-dev.in`
+2. Tạo lại lock file:
+   `python scripts/lock_requirements.py`
+3. Commit đầy đủ cả input và lock:
+   - `requirements.in`
+   - `requirements-dev.in`
+   - `requirements.txt`
+   - `requirements-dev.txt`
+
 ## Thiết Lập Frontend Local
 
 1. Vào thư mục frontend:

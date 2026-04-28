@@ -17,7 +17,12 @@ class DirectoryIngestor:
     """Ingest supported files from a directory tree into normalized documents."""
 
     def __init__(self, loaders: list[BaseLoader] | None = None) -> None:
-        self.loaders = loaders or [MarkdownLoader(), TextLoader(), PdfLoader(), DocxLoader()]
+        self.loaders = loaders or [
+            MarkdownLoader(),
+            TextLoader(),
+            PdfLoader(),
+            DocxLoader(),
+        ]
 
     def _resolve_loader(self, path: Path) -> BaseLoader | None:
         for loader in self.loaders:
@@ -44,7 +49,9 @@ class DirectoryIngestor:
         root = Path(root_dir)
         supported_files = self.iter_supported_files(root)
         if not supported_files:
-            raise ValueError(f"No supported documents found in corpus directory: {root}")
+            raise ValueError(
+                f"No supported documents found in corpus directory: {root}"
+            )
 
         base_metadata = dict(metadata or {})
         loaded_documents: list[LoadedDocument] = []
@@ -66,6 +73,8 @@ class DirectoryIngestor:
             loaded_documents.extend(loader.load(file_path, metadata=doc_metadata))
 
         if not loaded_documents:
-            raise ValueError(f"No documents could be loaded from corpus directory: {root}")
+            raise ValueError(
+                f"No documents could be loaded from corpus directory: {root}"
+            )
 
         return loaded_documents

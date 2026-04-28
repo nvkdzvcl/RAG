@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from datetime import datetime, timezone
 from enum import Enum
+from pathlib import Path
 from typing import Literal
 
 from pydantic import BaseModel, Field, model_validator
@@ -25,6 +26,8 @@ class StoredDocumentRecord(BaseModel):
 
     document_id: str
     filename: str
+    original_filename: str | None = None
+    file_type: str | None = None
     stored_path: str
     status: DocumentProcessingStatus
     chunk_count: int | None = None
@@ -38,13 +41,21 @@ class StoredDocumentRecord(BaseModel):
         *,
         document_id: str,
         filename: str,
+        original_filename: str | None = None,
+        file_type: str | None = None,
         stored_path: str,
         status: DocumentProcessingStatus = DocumentProcessingStatus.UPLOADED,
     ) -> "StoredDocumentRecord":
         now = datetime.now(timezone.utc)
+        resolved_original_filename = original_filename or filename
+        resolved_file_type = (
+            file_type or Path(filename).suffix.lower().lstrip(".") or None
+        )
         return cls(
             document_id=document_id,
             filename=filename,
+            original_filename=resolved_original_filename,
+            file_type=resolved_file_type,
             stored_path=stored_path,
             status=status,
             chunk_count=None,
@@ -63,7 +74,9 @@ class StoredDocumentRecord(BaseModel):
         return self.model_copy(
             update={
                 "status": status,
-                "chunk_count": chunk_count if chunk_count is not None else self.chunk_count,
+                "chunk_count": chunk_count
+                if chunk_count is not None
+                else self.chunk_count,
                 "message": message,
                 "updated_at": datetime.now(timezone.utc),
             }
@@ -76,6 +89,8 @@ class DocumentResponse(BaseModel):
     document_id: str
     id: str
     filename: str
+    original_filename: str | None = None
+    file_type: str | None = None
     status: DocumentProcessingStatus
     stage: DocumentProcessingStatus
     chunk_count: int | None = None
@@ -87,6 +102,7 @@ class DocumentResponse(BaseModel):
     total_chunks: int | None = None
     ocr_chunks: int | None = None
     created_at: datetime
+    uploaded_at: datetime
     message: str | None = None
 
     @classmethod
@@ -97,10 +113,16 @@ class DocumentResponse(BaseModel):
         debug_stats: dict[str, int] | None = None,
     ) -> "DocumentResponse":
         stats = debug_stats or {}
+        resolved_file_type = (
+            record.file_type or Path(record.filename).suffix.lower().lstrip(".") or None
+        )
+        resolved_original_filename = record.original_filename or record.filename
         return cls(
             document_id=record.document_id,
             id=record.document_id,
             filename=record.filename,
+            original_filename=resolved_original_filename,
+            file_type=resolved_file_type,
             status=record.status,
             stage=record.status,
             chunk_count=record.chunk_count,
@@ -112,6 +134,7 @@ class DocumentResponse(BaseModel):
             total_chunks=stats.get("total_chunks"),
             ocr_chunks=stats.get("ocr_chunks"),
             created_at=record.created_at,
+            uploaded_at=record.created_at,
             message=record.message,
         )
 
@@ -171,11 +194,17 @@ class ChunkingSettingsRequest(BaseModel):
             return self
 
         if self.chunk_size is None or self.chunk_overlap is None:
-            raise ValueError("chunk_size and chunk_overlap are required when mode=custom.")
+            raise ValueError(
+                "chunk_size and chunk_overlap are required when mode=custom."
+            )
         if self.chunk_size < 100 or self.chunk_size > 4000:
-            raise ValueError("chunk_size must be between 100 and 4000 when mode=custom.")
+            raise ValueError(
+                "chunk_size must be between 100 and 4000 when mode=custom."
+            )
         if self.chunk_overlap < 0 or self.chunk_overlap > 1000:
-            raise ValueError("chunk_overlap must be between 0 and 1000 when mode=custom.")
+            raise ValueError(
+                "chunk_overlap must be between 0 and 1000 when mode=custom."
+            )
         if self.chunk_overlap >= self.chunk_size:
             raise ValueError("chunk_overlap must be smaller than chunk_size.")
         return self

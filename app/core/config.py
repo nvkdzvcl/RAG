@@ -2,14 +2,16 @@
 
 from functools import lru_cache
 
-from pydantic import Field
+from pydantic import Field, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
 class Settings(BaseSettings):
     """Runtime configuration for backend services."""
 
-    model_config = SettingsConfigDict(env_file=".env", env_file_encoding="utf-8", extra="ignore")
+    model_config = SettingsConfigDict(
+        env_file=".env", env_file_encoding="utf-8", extra="ignore"
+    )
 
     app_name: str = "Self-RAG"
     app_version: str = "0.1.0"
@@ -31,16 +33,24 @@ class Settings(BaseSettings):
     chunk_overlap: int = Field(default=100, alias="CHUNK_OVERLAP")
     retrieval_mode: str = Field(default="preset", alias="RETRIEVAL_MODE")
     retrieval_top_k: int = Field(default=8, alias="RETRIEVAL_TOP_K")
-    embedding_provider: str = Field(default="sentence_transformers", alias="EMBEDDING_PROVIDER")
-    embedding_model: str = Field(default="intfloat/multilingual-e5-base", alias="EMBEDDING_MODEL")
+    embedding_provider: str = Field(
+        default="sentence_transformers", alias="EMBEDDING_PROVIDER"
+    )
+    embedding_model: str = Field(
+        default="intfloat/multilingual-e5-base", alias="EMBEDDING_MODEL"
+    )
     embedding_device: str = Field(default="cpu", alias="EMBEDDING_DEVICE")
     embedding_batch_size: int = Field(default=16, alias="EMBEDDING_BATCH_SIZE")
     embedding_normalize: bool = Field(default=True, alias="EMBEDDING_NORMALIZE")
     embedding_hash_dimension: int = Field(default=64, alias="EMBEDDING_HASH_DIMENSION")
+    reranker_enabled: bool = Field(default=True, alias="RERANKER_ENABLED")
     reranker_provider: str = Field(default="cross_encoder", alias="RERANKER_PROVIDER")
-    reranker_model: str = Field(default="BAAI/bge-reranker-v2-m3", alias="RERANKER_MODEL")
+    reranker_model: str = Field(
+        default="BAAI/bge-reranker-v2-m3", alias="RERANKER_MODEL"
+    )
     reranker_device: str = Field(default="cpu", alias="RERANKER_DEVICE")
     reranker_batch_size: int = Field(default=8, alias="RERANKER_BATCH_SIZE")
+    reranker_top_k: int = Field(default=6, alias="RERANKER_TOP_K")
     reranker_top_n: int = Field(default=6, alias="RERANKER_TOP_N")
 
     ocr_enabled: bool = Field(default=False, alias="OCR_ENABLED")
@@ -48,7 +58,9 @@ class Settings(BaseSettings):
     ocr_min_text_chars: int = Field(default=100, alias="OCR_MIN_TEXT_CHARS")
     ocr_render_dpi: int = Field(default=216, alias="OCR_RENDER_DPI")
     tesseract_cmd: str = Field(default="", alias="TESSERACT_CMD")
-    ocr_confidence_threshold: float = Field(default=40.0, alias="OCR_CONFIDENCE_THRESHOLD")
+    ocr_confidence_threshold: float = Field(
+        default=40.0, alias="OCR_CONFIDENCE_THRESHOLD"
+    )
 
     llm_provider: str = Field(default="stub", alias="LLM_PROVIDER")
     llm_model: str = Field(default="qwen2.5:3b", alias="LLM_MODEL")
@@ -63,6 +75,28 @@ class Settings(BaseSettings):
 
     max_advanced_loops: int = Field(default=1, alias="MAX_ADVANCED_LOOPS")
     memory_window: int = Field(default=3, alias="MEMORY_WINDOW")
+
+    cache_enabled: bool = Field(default=True, alias="CACHE_ENABLED")
+    cache_embedding_maxsize: int = Field(default=256, alias="CACHE_EMBEDDING_MAXSIZE")
+    cache_retrieval_maxsize: int = Field(default=128, alias="CACHE_RETRIEVAL_MAXSIZE")
+    cache_llm_maxsize: int = Field(default=64, alias="CACHE_LLM_MAXSIZE")
+
+    @model_validator(mode="after")
+    def _sync_reranker_top_k_legacy_alias(self) -> "Settings":
+        """Keep `RERANKER_TOP_K` and legacy `RERANKER_TOP_N` in sync."""
+        fields_set = self.model_fields_set
+        has_top_k = "reranker_top_k" in fields_set
+        has_top_n = "reranker_top_n" in fields_set
+
+        if has_top_k and not has_top_n:
+            self.reranker_top_n = int(self.reranker_top_k)
+        elif has_top_n and not has_top_k:
+            self.reranker_top_k = int(self.reranker_top_n)
+        elif has_top_k and has_top_n:
+            # Prefer the new top_k field when both env vars are explicitly set.
+            self.reranker_top_n = int(self.reranker_top_k)
+
+        return self
 
 
 @lru_cache(maxsize=1)

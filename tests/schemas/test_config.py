@@ -1,5 +1,7 @@
 """Configuration and schema smoke tests."""
 
+from datetime import datetime, timezone
+
 from app.core.config import Settings
 from app.schemas.api import QueryRequest
 from app.schemas.common import Mode
@@ -27,10 +29,12 @@ def test_settings_defaults(monkeypatch) -> None:
         "EMBEDDING_BATCH_SIZE",
         "EMBEDDING_NORMALIZE",
         "EMBEDDING_HASH_DIMENSION",
+        "RERANKER_ENABLED",
         "RERANKER_PROVIDER",
         "RERANKER_MODEL",
         "RERANKER_DEVICE",
         "RERANKER_BATCH_SIZE",
+        "RERANKER_TOP_K",
         "RERANKER_TOP_N",
         "OCR_ENABLED",
         "OCR_LANGUAGE",
@@ -50,10 +54,18 @@ def test_settings_defaults(monkeypatch) -> None:
         "LLM_CRITIQUE_MAX_TOKENS",
         "MAX_ADVANCED_LOOPS",
         "MEMORY_WINDOW",
+        "GROUNDING_SEMANTIC_ENABLED",
+        "GROUNDING_SEMANTIC_MODEL",
+        "GROUNDING_SEMANTIC_DEVICE",
+        "GROUNDING_SEMANTIC_LOCAL_FILES_ONLY",
+        "GROUNDING_SEMANTIC_MAX_CONTEXT_CHUNKS",
+        "GROUNDING_SEMANTIC_MIN_SIMILARITY",
+        "GROUNDING_SEMANTIC_WEIGHT",
     ]:
         monkeypatch.delenv(key, raising=False)
 
-    settings = Settings(_env_file=None)
+    # Pydantic BaseSettings accepts `_env_file` at runtime; mypy stubs do not expose it.
+    settings = Settings(_env_file=None)  # type: ignore[call-arg]
     assert settings.app_name == "Self-RAG"
     assert settings.max_advanced_loops == 1
     assert settings.chunk_mode == "preset"
@@ -66,10 +78,12 @@ def test_settings_defaults(monkeypatch) -> None:
     assert settings.embedding_device == "cpu"
     assert settings.embedding_batch_size == 16
     assert settings.embedding_normalize is True
+    assert settings.reranker_enabled is True
     assert settings.reranker_provider == "cross_encoder"
     assert settings.reranker_model == "BAAI/bge-reranker-v2-m3"
     assert settings.reranker_device == "cpu"
     assert settings.reranker_batch_size == 8
+    assert settings.reranker_top_k == 6
     assert settings.reranker_top_n == 6
     assert settings.ocr_enabled is False
     assert settings.ocr_language == "vie+eng"
@@ -102,6 +116,34 @@ def test_query_request_accepts_optional_model_override() -> None:
     assert payload.model == "qwen2.5:7b"
 
 
+def test_query_request_filters_default_to_none() -> None:
+    payload = QueryRequest(query="What is Self-RAG?")
+    assert payload.doc_ids is None
+    assert payload.filenames is None
+    assert payload.file_types is None
+    assert payload.uploaded_after is None
+    assert payload.uploaded_before is None
+    assert payload.include_ocr is None
+
+
+def test_query_request_accepts_optional_filters_payload() -> None:
+    payload = QueryRequest(
+        query="What is Self-RAG?",
+        doc_ids=["doc_a", "doc_b"],
+        filenames=["policy.pdf"],
+        file_types=["pdf"],
+        uploaded_after=datetime(2026, 1, 1, tzinfo=timezone.utc),
+        uploaded_before=datetime(2026, 1, 31, tzinfo=timezone.utc),
+        include_ocr=True,
+    )
+    assert payload.doc_ids == ["doc_a", "doc_b"]
+    assert payload.filenames == ["policy.pdf"]
+    assert payload.file_types == ["pdf"]
+    assert payload.uploaded_after is not None
+    assert payload.uploaded_before is not None
+    assert payload.include_ocr is True
+
+
 def test_workflow_state_schema() -> None:
     state = WorkflowState(
         mode=Mode.STANDARD,
@@ -123,3 +165,18 @@ def test_critique_schema() -> None:
         note="ok",
     )
     assert critique.grounded is True
+
+
+def test_settings_supports_reranker_top_k_and_legacy_top_n(monkeypatch) -> None:
+    monkeypatch.setenv("RERANKER_TOP_K", "9")
+    monkeypatch.delenv("RERANKER_TOP_N", raising=False)
+    # Keep tests isolated from local `.env`.
+    settings_top_k = Settings(_env_file=None)  # type: ignore[call-arg]
+    assert settings_top_k.reranker_top_k == 9
+    assert settings_top_k.reranker_top_n == 9
+
+    monkeypatch.delenv("RERANKER_TOP_K", raising=False)
+    monkeypatch.setenv("RERANKER_TOP_N", "7")
+    settings_top_n = Settings(_env_file=None)  # type: ignore[call-arg]
+    assert settings_top_n.reranker_top_k == 7
+    assert settings_top_n.reranker_top_n == 7

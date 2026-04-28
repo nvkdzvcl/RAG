@@ -184,6 +184,7 @@ export function SettingsModal({
   const retrievalChanged = selectedRetrievalKey !== retrievalMode || localTopK !== topK;
   const hasChanges = chunkChanged || retrievalChanged;
   const hasValidationError = chunkValidationError !== null || retrievalValidationError !== null;
+  const effectiveRerankTopN = Math.min(Math.max(1, rerankTopN), Math.max(1, localTopK));
   const showPerformanceWarning = localChunkSize >= 1500 || localTopK >= 8;
 
   useEffect(() => {
@@ -270,6 +271,19 @@ export function SettingsModal({
 
           <CardContent className="flex min-h-0 flex-1 flex-col p-0">
             <div className="min-h-0 flex-1 space-y-6 overflow-y-auto px-4 pb-4 pt-4 sm:px-6 sm:pr-5">
+              <div className="rounded-xl border border-blue-200 bg-blue-50 px-3 py-3">
+                <p className="text-xs font-medium text-slate-700">
+                  Pipeline hiện tại: Chunk → Retrieve top_k=<strong>{localTopK}</strong> → Rerank giữ{" "}
+                  <strong>{effectiveRerankTopN}</strong> → Context chọn <strong>{contextTopK}</strong> → Generate
+                </p>
+                <div className="mt-2 space-y-1 text-xs text-slate-600">
+                  <p>chunk_size nhỏ: chi tiết hơn, dễ thiếu ngữ cảnh</p>
+                  <p>chunk_size lớn: nhiều ngữ cảnh hơn, dễ nhiễu</p>
+                  <p>top_k nhỏ: nhanh, ít nhiễu</p>
+                  <p>top_k lớn: tăng recall, có thể chậm hơn</p>
+                </div>
+              </div>
+
               <div className="space-y-4">
                 <h3 className="text-base font-semibold text-slate-900">Cài đặt Chunking</h3>
 
@@ -342,12 +356,10 @@ export function SettingsModal({
                   </div>
                 ) : null}
 
-                <div className="rounded-lg border border-slate-200 bg-slate-50 px-3 py-2">
-                  <p className="text-xs text-slate-600">
-                    Cấu hình hiện tại (áp dụng cho truy vấn mới): chunk size <strong>{chunkSize}</strong>,
-                    overlap <strong>{chunkOverlap}</strong>.
-                  </p>
-                </div>
+                <p className="text-xs text-slate-500">
+                  Cấu hình đang chọn: chunk size <strong>{localChunkSize}</strong>, overlap{" "}
+                  <strong>{localChunkOverlap}</strong>.
+                </p>
               </div>
 
               <div className="space-y-4">
@@ -405,27 +417,21 @@ export function SettingsModal({
                   </div>
                 ) : null}
 
-                <div className="rounded-lg border border-slate-200 bg-slate-50 px-3 py-2">
-                  <p className="text-xs text-slate-600">
-                    Pipeline hiện tại: Retrieve top_k=<strong>{topK}</strong> → Rerank giữ{" "}
-                    <strong>{rerankTopN}</strong> → Context chọn <strong>{contextTopK}</strong>
-                  </p>
-                  <p className="mt-1 text-xs text-slate-500">
-                    Top-k càng lớn giúp tăng khả năng tìm thấy thông tin, nhưng có thể làm chậm và tăng nhiễu.
-                  </p>
-                </div>
+                <p className="text-xs text-slate-500">
+                  Cấu hình đang chọn: top_k=<strong>{localTopK}</strong>.
+                </p>
               </div>
 
               {showPerformanceWarning ? (
                 <div className="rounded-lg border border-amber-200 bg-amber-50 px-3 py-2">
                   <p className="text-xs text-amber-800">
-                    Cấu hình lớn có thể làm chậm quá trình re-index hoặc truy vấn.
+                    Cấu hình lớn có thể làm chậm re-index hoặc truy vấn.
                   </p>
                 </div>
               ) : null}
             </div>
 
-            <div className="shrink-0 border-t border-slate-200 bg-white px-4 py-4 sm:px-6">
+            <div className="sticky bottom-0 z-10 shrink-0 border-t border-slate-200 bg-white px-4 py-4 sm:px-6">
               <p className="mb-3 text-xs text-slate-500">
                 Khi áp dụng, hệ thống có thể re-index toàn bộ tài liệu đã tải nếu cấu hình thay đổi.
               </p>

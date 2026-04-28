@@ -34,4 +34,6 @@ def configure_logging(level: str = "INFO", json_logs: bool = False) -> None:
         }
     )
 
-    logging.getLogger(__name__).debug("Logging configured", extra={"json_logs": json_logs})
+    logging.getLogger(__name__).debug(
+        "Logging configured", extra={"json_logs": json_logs}
+    )

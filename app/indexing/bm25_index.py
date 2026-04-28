@@ -9,11 +9,69 @@ from typing import Any
 
 from app.schemas.ingestion import DocumentChunk
 
+_LEGACY_TOKEN_PATTERN = re.compile(r"\w+")
+
+try:
+    from underthesea import word_tokenize as _UNDERTHESEA_WORD_TOKENIZE
+except Exception:  # pragma: no cover - optional dependency
+    _UNDERTHESEA_WORD_TOKENIZE = None
+
+
+def _legacy_tokenize(text: str) -> list[str]:
+    return _LEGACY_TOKEN_PATTERN.findall(text.lower())
+
+
+def _split_segmented_text(segmented_text: str) -> list[str]:
+    tokens: list[str] = []
+    for raw_token in segmented_text.strip().split():
+        pieces = _LEGACY_TOKEN_PATTERN.findall(raw_token.lower())
+        if not pieces:
+            continue
+        tokens.extend(pieces)
+    return tokens
+
+
+def _tokenize_with_underthesea(text: str) -> list[str]:
+    if _UNDERTHESEA_WORD_TOKENIZE is None:
+        return []
+
+    try:
+        segmented = _UNDERTHESEA_WORD_TOKENIZE(text, format="text")
+    except TypeError:
+        segmented = _UNDERTHESEA_WORD_TOKENIZE(text)
+    except Exception:
+        return []
+
+    if isinstance(segmented, str):
+        return _split_segmented_text(segmented)
+
+    tokens: list[str] = []
+    for raw in segmented:
+        if not isinstance(raw, str):
+            continue
+        token = raw.strip().lower()
+        if not token:
+            continue
+        tokens.append(token.replace(" ", "_"))
+    return tokens
+
+
+def tokenize_bm25(text: str) -> list[str]:
+    """Tokenize text for BM25, preferring Vietnamese word segmentation when available."""
+    normalized = text.strip().lower()
+    if not normalized:
+        return []
+
+    segmented = _tokenize_with_underthesea(normalized)
+    if segmented:
+        return segmented
+    return _legacy_tokenize(normalized)
+
 
 class BM25Index:
     """Pure-Python BM25 index for chunk-level sparse retrieval."""
 
-    token_pattern = re.compile(r"\w+")
+    token_pattern = _LEGACY_TOKEN_PATTERN
 
     def __init__(self, k1: float = 1.5, b: float = 0.75) -> None:
         self.k1 = k1
@@ -54,7 +112,7 @@ class BM25Index:
         return self._avg_doc_len
 
     def _tokenize(self, text: str) -> list[str]:
-        return self.token_pattern.findall(text.lower())
+        return tokenize_bm25(text)
 
     def build(self, chunks: list[DocumentChunk]) -> None:
         if not chunks:
@@ -76,7 +134,9 @@ class BM25Index:
                 document_frequency[term] += 1
 
         total_length = sum(self._doc_lengths)
-        self._avg_doc_len = total_length / len(self._doc_lengths) if self._doc_lengths else 0.0
+        self._avg_doc_len = (
+            total_length / len(self._doc_lengths) if self._doc_lengths else 0.0
+        )
 
         doc_count = len(self._chunks)
         self._idf = {}
@@ -98,9 +158,13 @@ class BM25Index:
     @classmethod
     def from_dict(cls, payload: dict[str, Any]) -> "BM25Index":
         index = cls(k1=float(payload.get("k1", 1.5)), b=float(payload.get("b", 0.75)))
-        index._chunks = [DocumentChunk.model_validate(item) for item in payload.get("chunks", [])]
+        index._chunks = [
+            DocumentChunk.model_validate(item) for item in payload.get("chunks", [])
+        ]
         index._term_freqs = [dict(freq) for freq in payload.get("term_freqs", [])]
         index._doc_lengths = [int(length) for length in payload.get("doc_lengths", [])]
-        index._idf = {str(key): float(value) for key, value in payload.get("idf", {}).items()}
+        index._idf = {
+            str(key): float(value) for key, value in payload.get("idf", {}).items()
+        }
         index._avg_doc_len = float(payload.get("avg_doc_len", 0.0))
         return index

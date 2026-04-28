@@ -6,7 +6,9 @@ import json
 import re
 from typing import Any
 
-_FENCED_BLOCK_PATTERN = re.compile(r"```(?:json)?\s*(.*?)\s*```", flags=re.IGNORECASE | re.DOTALL)
+_FENCED_BLOCK_PATTERN = re.compile(
+    r"```(?:json)?\s*(.*?)\s*```", flags=re.IGNORECASE | re.DOTALL
+)
 
 
 def _collect_candidates(raw_text: str) -> list[str]:

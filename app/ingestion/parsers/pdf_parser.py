@@ -18,7 +18,9 @@ from app.schemas.ingestion import DocumentBlock
 
 try:
     import pdfplumber
-except ModuleNotFoundError:  # pragma: no cover - dependency validation tested elsewhere.
+except (
+    ModuleNotFoundError
+):  # pragma: no cover - dependency validation tested elsewhere.
     pdfplumber = None  # type: ignore[assignment]
 
 
@@ -39,13 +41,23 @@ class PDFParser(BaseDocumentParser):
         ocr_confidence_threshold: float | None = None,
     ) -> None:
         settings = get_settings()
-        self.ocr_enabled = ocr_enabled if ocr_enabled is not None else settings.ocr_enabled
-        self.ocr_language = ocr_language if ocr_language is not None else settings.ocr_language
-        self.ocr_min_text_chars = (
-            ocr_min_text_chars if ocr_min_text_chars is not None else settings.ocr_min_text_chars
+        self.ocr_enabled = (
+            ocr_enabled if ocr_enabled is not None else settings.ocr_enabled
         )
-        self.ocr_render_dpi = ocr_render_dpi if ocr_render_dpi is not None else settings.ocr_render_dpi
-        self.tesseract_cmd = tesseract_cmd if tesseract_cmd is not None else settings.tesseract_cmd
+        self.ocr_language = (
+            ocr_language if ocr_language is not None else settings.ocr_language
+        )
+        self.ocr_min_text_chars = (
+            ocr_min_text_chars
+            if ocr_min_text_chars is not None
+            else settings.ocr_min_text_chars
+        )
+        self.ocr_render_dpi = (
+            ocr_render_dpi if ocr_render_dpi is not None else settings.ocr_render_dpi
+        )
+        self.tesseract_cmd = (
+            tesseract_cmd if tesseract_cmd is not None else settings.tesseract_cmd
+        )
         self.ocr_confidence_threshold = (
             ocr_confidence_threshold
             if ocr_confidence_threshold is not None
@@ -74,10 +86,9 @@ class PDFParser(BaseDocumentParser):
         top = image.get("top")
         x1 = image.get("x1")
         bottom = image.get("bottom")
-        coords = [x0, top, x1, bottom]
-        if any(value is None for value in coords):
+        if x0 is None or top is None or x1 is None or bottom is None:
             return None
-        return [float(value) for value in coords]
+        return [float(x0), float(top), float(x1), float(bottom)]
 
     def _extract_ocr_block(
         self,
@@ -206,10 +217,7 @@ class PDFParser(BaseDocumentParser):
                     )
 
                 page_text_chars = len(page_text.strip())
-                should_try_ocr = (
-                    ocr_ready
-                    and page_text_chars < self.ocr_min_text_chars
-                )
+                should_try_ocr = ocr_ready and page_text_chars < self.ocr_min_text_chars
                 logger.info(
                     (
                         "PDF page extraction stats | path=%s | page=%s | extracted_text_length=%s "
@@ -254,7 +262,9 @@ class PDFParser(BaseDocumentParser):
                         page_idx,
                     )
 
-        ocr_blocks = sum(1 for block in blocks if block.metadata.get("block_type") == "ocr_text")
+        ocr_blocks = sum(
+            1 for block in blocks if block.metadata.get("block_type") == "ocr_text"
+        )
         logger.info(
             "PDF parse summary | path=%s | total_blocks=%s | ocr_blocks=%s",
             str(path),

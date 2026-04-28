@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import os
-from collections.abc import Iterable
+from collections.abc import Generator, Iterable
 
 import pytest
 
@@ -30,7 +30,9 @@ SLOW_NODEIDS: set[str] = {
 TEST_ENV_DEFAULTS: dict[str, str] = {
     "EMBEDDING_PROVIDER": "hash",
     "EMBEDDING_HASH_DIMENSION": "64",
+    "RERANKER_ENABLED": "true",
     "RERANKER_PROVIDER": "score_only",
+    "RERANKER_TOP_K": "6",
     "RERANKER_TOP_N": "6",
     "OCR_ENABLED": "false",
     "OCR_LANGUAGE": "vie+eng",
@@ -39,6 +41,7 @@ TEST_ENV_DEFAULTS: dict[str, str] = {
     "TESSERACT_CMD": "",
     "OCR_CONFIDENCE_THRESHOLD": "40",
     "LLM_PROVIDER": "stub",
+    "GROUNDING_SEMANTIC_ENABLED": "false",
 }
 
 
@@ -61,7 +64,7 @@ def _starts_with_any(value: str, prefixes: Iterable[str]) -> bool:
 
 
 @pytest.fixture(autouse=True)
-def _fast_runtime_defaults() -> None:
+def _fast_runtime_defaults() -> Generator[None, None, None]:
     """Keep local tests deterministic and avoid loading heavy model backends by default."""
     _apply_test_env_defaults()
     get_settings.cache_clear()

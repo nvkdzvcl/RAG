@@ -5,7 +5,11 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any
 
-from app.ingestion.base_loader import BaseLoader, blocks_to_loaded_documents, build_doc_id
+from app.ingestion.base_loader import (
+    BaseLoader,
+    blocks_to_loaded_documents,
+    build_doc_id,
+)
 from app.ingestion.parsers import TextParser
 from app.schemas.ingestion import DocumentBlock, LoadedDocument
 
@@ -40,7 +44,12 @@ class TextLoader(BaseLoader):
                 DocumentBlock(
                     type="text",
                     content=path.read_text(encoding="utf-8"),
-                    metadata={"page": None, "section": None, "bbox": None, "parser_fallback": True},
+                    metadata={
+                        "page": None,
+                        "section": None,
+                        "bbox": None,
+                        "parser_fallback": True,
+                    },
                 )
             ]
 

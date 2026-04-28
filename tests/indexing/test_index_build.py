@@ -4,7 +4,12 @@ from pathlib import Path
 
 import pytest
 
-from app.indexing import HashEmbeddingProvider, IndexBuilder, LocalIndexStore
+from app.indexing import (
+    HashEmbeddingProvider,
+    InMemoryVectorIndex,
+    IndexBuilder,
+    LocalIndexStore,
+)
 from app.ingestion.chunker import Chunker
 from app.ingestion.cleaner import TextCleaner
 from app.schemas.ingestion import DocumentChunk, LoadedDocument
@@ -83,3 +88,19 @@ def test_local_persistence_roundtrip_for_indexes(tmp_path: Path) -> None:
 
     assert loaded_bm25.doc_count == built.bm25_index.doc_count
     assert loaded_bm25.chunk_ids == built.bm25_index.chunk_ids
+
+
+def test_inmemory_vector_index_revision_increments_on_successful_build() -> None:
+    chunks = _build_test_chunks()
+    provider = HashEmbeddingProvider(dimension=16)
+    vectors = provider.embed_documents([chunk.content for chunk in chunks])
+
+    index = InMemoryVectorIndex()
+    assert index.revision == 0
+
+    index.build(chunks, vectors)
+    first_revision = index.revision
+    assert first_revision == 1
+
+    index.build(chunks, vectors)
+    assert index.revision == first_revision + 1

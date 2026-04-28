@@ -18,12 +18,55 @@ class BaseReranker(ABC):
     name: str
 
     @abstractmethod
-    def rerank(self, query: str, docs: list[RetrievalResult], top_k: int | None = None) -> list[RetrievalResult]:
+    def rerank(
+        self, query: str, docs: list[RetrievalResult], top_k: int | None = None
+    ) -> list[RetrievalResult]:
         """Return reranked docs with updated scores."""
 
 
+class PassThroughReranker(BaseReranker):
+    """No-op reranker that preserves original retrieval order."""
+
+    name = "pass-through-reranker"
+
+    def __init__(self, *, reason: str | None = None) -> None:
+        self.reason = reason
+
+    def rerank(
+        self, query: str, docs: list[RetrievalResult], top_k: int | None = None
+    ) -> list[RetrievalResult]:
+        _ = query
+        if not docs:
+            return []
+        limit = len(docs) if top_k is None else max(0, top_k)
+        if limit == 0:
+            return []
+
+        reranked: list[RetrievalResult] = []
+        for rank, doc in enumerate(docs[:limit], start=1):
+            metadata = dict(doc.metadata)
+            metadata.update(
+                {
+                    "pre_rerank_score": doc.score,
+                    "pre_rerank_score_type": doc.score_type,
+                    "pre_rerank_rank": doc.rank,
+                }
+            )
+            if self.reason:
+                metadata["rerank_fallback_reason"] = self.reason
+            reranked.append(
+                doc.model_copy(
+                    update={
+                        "metadata": metadata,
+                        "rank": rank,
+                    }
+                )
+            )
+        return reranked
+
+
 class ScoreOnlyReranker(BaseReranker):
-    """Fallback reranker that preserves retrieval-score ordering."""
+    """Deterministic reranker that orders candidates by retrieval score."""
 
     name = "score-only-reranker"
 
@@ -46,7 +89,9 @@ class ScoreOnlyReranker(BaseReranker):
             }
         )
 
-    def rerank(self, query: str, docs: list[RetrievalResult], top_k: int | None = None) -> list[RetrievalResult]:
+    def rerank(
+        self, query: str, docs: list[RetrievalResult], top_k: int | None = None
+    ) -> list[RetrievalResult]:
         _ = query
         if not docs:
             return []
@@ -95,13 +140,15 @@ class CrossEncoderReranker(BaseReranker):
         self.device = device
         self.batch_size = batch_size
         self._model = model or self._load_model(model_name=model_name, device=device)
-        self._fallback = ScoreOnlyReranker()
+        self._fallback = PassThroughReranker(reason="runtime_failure")
 
     @staticmethod
     def _load_model(*, model_name: str, device: str) -> _CrossEncoderLike:
         try:
             from sentence_transformers import CrossEncoder
-        except ModuleNotFoundError as exc:  # pragma: no cover - covered via factory fallback tests.
+        except (
+            ModuleNotFoundError
+        ) as exc:  # pragma: no cover - covered via factory fallback tests.
             raise RuntimeError(
                 "sentence-transformers is not installed. Install dependencies or use score-only reranking."
             ) from exc
@@ -125,7 +172,9 @@ class CrossEncoderReranker(BaseReranker):
             normalized.append(0.0)
         return normalized
 
-    def rerank(self, query: str, docs: list[RetrievalResult], top_k: int | None = None) -> list[RetrievalResult]:
+    def rerank(
+        self, query: str, docs: list[RetrievalResult], top_k: int | None = None
+    ) -> list[RetrievalResult]:
         if not docs:
             return []
         limit = len(docs) if top_k is None else max(0, top_k)
@@ -145,14 +194,19 @@ class CrossEncoderReranker(BaseReranker):
                 raise ValueError("Cross-encoder returned mismatched score count.")
         except Exception as exc:
             logger.warning(
-                "Cross-encoder reranking failed at runtime. Falling back to score-only reranker.",
+                (
+                    "Cross-encoder reranking failed at runtime. "
+                    "Falling back to pass-through retrieval order."
+                ),
                 exc_info=exc,
             )
             return self._fallback.rerank(query, docs, top_k=top_k)
 
         scored: list[tuple[float, RetrievalResult]] = []
         for doc, rerank_score in zip(candidates, scores):
-            updated = ScoreOnlyReranker._to_reranked(doc, rerank_score=float(rerank_score))
+            updated = ScoreOnlyReranker._to_reranked(
+                doc, rerank_score=float(rerank_score)
+            )
             scored.append((float(rerank_score), updated))
 
         scored.sort(key=lambda row: row[0], reverse=True)
@@ -175,7 +229,7 @@ def create_reranker(
     device: str = "cpu",
     batch_size: int = 8,
 ) -> BaseReranker:
-    """Create reranker with safe fallback to score-only behavior."""
+    """Create reranker with safe fallback to pass-through behavior."""
     normalized = provider_name.strip().lower() if provider_name else ""
 
     if normalized in CROSS_ENCODER_PROVIDER_NAMES:
@@ -189,13 +243,13 @@ def create_reranker(
             logger.warning(
                 (
                     "Failed to initialize cross-encoder reranker model '%s' on device '%s'. "
-                    "Falling back to score-only reranker."
+                    "Falling back to pass-through retrieval order."
                 ),
                 model,
                 device,
                 exc_info=exc,
             )
-            return ScoreOnlyReranker()
+            return PassThroughReranker(reason="load_failure")
 
     if normalized in SCORE_ONLY_PROVIDER_NAMES:
         return ScoreOnlyReranker()
