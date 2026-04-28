@@ -91,20 +91,53 @@ cp .env.example .env
 ```
 
 ### 2. Khởi Động Backend API
-Khởi chạy server FastAPI (mặc định tại cổng `8000`):
+#### 1. Windows: chạy Ollama bằng GPU
+Mở PowerShell Admin:
+```powershell
+Get-Process ollama | Stop-Process -Force
+$env:OLLAMA_HOST="0.0.0.0:11434"
+ollama serve
+```
+Giữ cửa sổ này mở.
+
+Thấy log kiểu này là đúng:
+```text
+inference compute ... CUDA ... NVIDIA GeForce RTX 3060
+Listening on [::]:11434
+```
+
+#### 2. WSL: đảm bảo không chạy Ollama trong WSL
 ```bash
+sudo snap stop ollama
+curl http://127.0.0.1:11434/api/tags
+```
+Nếu `connection refused` là đúng.
+
+#### 3. WSL: kiểm tra gọi được Ollama Windows
+Dùng IP Windows WSL của bạn:
+```bash
+curl http://172.25.80.1:11434/api/tags
+```
+Nếu ra JSON model list là OK.
+
+#### 4. `.env` trong repo
+```env
+OLLAMA_BASE_URL=http://172.25.80.1:11434
+
+LLM_PROVIDER=openai_compatible
+LLM_MODEL=qwen2.5:latest
+LLM_API_BASE=http://172.25.80.1:11434/v1
+LLM_API_KEY=ollama
+```
+
+#### 5. WSL: chạy backend
+```bash
+cd ~/RAG
+source .venv/bin/activate
 uvicorn app.main:app --reload
 ```
 
-### 3. Cung Cấp Nguồn Cấp LLM
-Dự án được kết nối tự do với mọi LLM sử dụng format API của OpenAI (vLLM, Groq, Ollama v.v...). Thiết lập trên local dễ nhất:
-```bash
-ollama serve
-ollama pull qwen2.5:3b
-```
-*(Cần cập nhật `.env`: cấu hình biến `LLM_API_BASE=http://localhost:11434/v1` và `LLM_PROVIDER=openai_compatible`)*
-
-### 4. Bơm Dữ Liệu & Hỏi Đáp (Ingest & Query)
+### 3. Bơm Dữ Liệu & Hỏi Đáp (Ingest & Query)
 Upload một tài liệu vào kho:
 ```bash
 curl -X POST http://127.0.0.1:8000/api/v1/documents/upload -F "file=@./data/sample.pdf"
