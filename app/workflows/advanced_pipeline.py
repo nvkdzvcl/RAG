@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import time
 from dataclasses import dataclass, field
 from typing import Any, Protocol, TYPE_CHECKING
 
@@ -14,7 +15,7 @@ from app.workflows.shared import (
     is_language_mismatch,
     localized_insufficient_evidence,
 )
-from app.workflows.streaming import StreamEventHandler
+from app.workflows.streaming import StreamEventHandler, emit_stream_event
 from app.workflows.standard import StandardPipelineResult
 
 if TYPE_CHECKING:
@@ -34,6 +35,7 @@ class AdvancedPipelineContext:
     event_handler: StreamEventHandler | None = None
     event_context: dict[str, Any] = field(default_factory=dict)
     trace: list[dict[str, Any]] = field(default_factory=list)
+    timings: dict[str, int] = field(default_factory=dict)
 
     current_query: str = ""
     pipeline: StandardPipelineResult | None = None
@@ -95,25 +97,65 @@ class RetrievalGateStage(BasePipelineStage):
         if context.terminal_response is not None:
             return state
         workflow = context.workflow
+        gate_started = time.perf_counter()
         need_retrieval, gate_reason = await workflow.retrieval_gate.decide_async(
             state.normalized_query,
             chat_history=context.normalized_history,
             model=context.model,
             response_language=context.resolved_language,
         )
+        retrieval_gate_ms = int((time.perf_counter() - gate_started) * 1000)
+        context.timings["retrieval_gate_ms"] = retrieval_gate_ms
         state.need_retrieval = need_retrieval
         context.trace.append(
             {
                 "step": "retrieval_gate",
                 "need_retrieval": need_retrieval,
                 "reason": gate_reason,
+                "retrieval_gate_ms": retrieval_gate_ms,
                 "response_language": context.resolved_language,
                 "memory_window": workflow.memory_window,
                 "memory_messages": len(context.normalized_history),
             }
         )
+        await emit_stream_event(
+            context.event_handler,
+            {
+                "type": "advanced_stage",
+                "stage": "retrieval_gate",
+                "stage_ms": retrieval_gate_ms,
+                "need_retrieval": need_retrieval,
+                "reason": gate_reason,
+                **context.event_context,
+            },
+        )
 
         if not need_retrieval:
+            total_ms = int((time.perf_counter() - context.start_time) * 1000)
+            context.timings.setdefault("standard_pipeline_ms", 0)
+            context.timings.setdefault("critique_ms", 0)
+            context.timings.setdefault("refine_ms", 0)
+            context.timings.setdefault("language_guard_ms", 0)
+            context.timings.setdefault("hallucination_guard_ms", 0)
+            context.timings.setdefault("final_grounding_ms", 0)
+            context.timings["total_ms"] = total_ms
+            context.trace.append(
+                {
+                    "step": "timing_summary",
+                    "retrieval_gate_ms": context.timings.get("retrieval_gate_ms", 0),
+                    "standard_pipeline_ms": context.timings.get(
+                        "standard_pipeline_ms", 0
+                    ),
+                    "critique_ms": context.timings.get("critique_ms", 0),
+                    "refine_ms": context.timings.get("refine_ms", 0),
+                    "language_guard_ms": context.timings.get("language_guard_ms", 0),
+                    "hallucination_guard_ms": context.timings.get(
+                        "hallucination_guard_ms", 0
+                    ),
+                    "final_grounding_ms": context.timings.get("final_grounding_ms", 0),
+                    "total_ms": total_ms,
+                }
+            )
             answer, confidence, status, stop_reason = (
                 workflow._direct_answer_without_retrieval(
                     state.normalized_query,
@@ -159,11 +201,15 @@ class CritiqueLoopStage(BasePipelineStage):
         current_query = context.current_query or state.normalized_query
         pipeline: StandardPipelineResult | None = None
         critique_result: CritiqueResult | None = None
+        standard_pipeline_total_ms = 0
+        critique_total_ms = 0
+        query_rewrite_total_ms = 0
 
         for loop in range(1, workflow.max_loops + 1):
             state.loop_count = loop
 
             if loop > 1:
+                rewrite_started = time.perf_counter()
                 rewrites = await workflow.query_rewriter.rewrite_async(
                     current_query,
                     critique=critique_result,
@@ -172,14 +218,19 @@ class CritiqueLoopStage(BasePipelineStage):
                     model=context.model,
                     response_language=context.resolved_language,
                 )
+                rewrite_ms = int((time.perf_counter() - rewrite_started) * 1000)
+                query_rewrite_total_ms += rewrite_ms
                 if rewrites:
                     current_query = rewrites[0]
                     for candidate in rewrites:
                         if candidate not in state.rewritten_queries:
                             state.rewritten_queries.append(candidate)
+            else:
+                rewrite_ms = 0
 
             loop_event_context = dict(context.event_context)
             loop_event_context["loop"] = loop
+            pipeline_started = time.perf_counter()
             pipeline = await workflow.standard_workflow.run_pipeline(
                 query=current_query,
                 mode=state.mode,
@@ -190,6 +241,8 @@ class CritiqueLoopStage(BasePipelineStage):
                 event_handler=context.event_handler,
                 event_context=loop_event_context,
             )
+            standard_pipeline_ms = int((time.perf_counter() - pipeline_started) * 1000)
+            standard_pipeline_total_ms += standard_pipeline_ms
 
             state.retrieved_docs = [item.model_dump() for item in pipeline.retrieved]
             state.reranked_docs = [item.model_dump() for item in pipeline.reranked]
@@ -198,6 +251,7 @@ class CritiqueLoopStage(BasePipelineStage):
             ]
             state.draft_answer = pipeline.generated.answer
 
+            critique_started = time.perf_counter()
             critique_result = await workflow.critic.critique_async(
                 query=state.normalized_query,
                 draft_answer=pipeline.generated.answer,
@@ -208,6 +262,8 @@ class CritiqueLoopStage(BasePipelineStage):
                 model=context.model,
                 response_language=context.resolved_language,
             )
+            critique_ms = int((time.perf_counter() - critique_started) * 1000)
+            critique_total_ms += critique_ms
             state.critique = critique_result
             state.confidence = critique_result.confidence
 
@@ -300,13 +356,32 @@ class CritiqueLoopStage(BasePipelineStage):
                     "generated_stop_reason": pipeline.generated.stop_reason,
                     "generated_confidence": pipeline.generated.confidence,
                     "critique": critique_result.model_dump(),
+                    "query_rewrite_ms": rewrite_ms,
+                    "standard_pipeline_ms": standard_pipeline_ms,
+                    "critique_ms": critique_ms,
+                    "pipeline_step_timings_ms": dict(pipeline.timings),
                 }
+            )
+            await emit_stream_event(
+                context.event_handler,
+                {
+                    "type": "advanced_stage",
+                    "stage": "critique_loop",
+                    "loop": loop,
+                    "standard_pipeline_ms": standard_pipeline_ms,
+                    "critique_ms": critique_ms,
+                    "query_rewrite_ms": rewrite_ms,
+                    **loop_event_context,
+                },
             )
 
             if critique_result.should_retry_retrieval and loop < workflow.max_loops:
                 continue
             break
 
+        context.timings["standard_pipeline_ms"] = standard_pipeline_total_ms
+        context.timings["critique_ms"] = critique_total_ms
+        context.timings["query_rewrite_ms"] = query_rewrite_total_ms
         context.current_query = current_query
         context.pipeline = pipeline
         context.critique_result = critique_result
@@ -409,6 +484,8 @@ class RefineStage(BasePipelineStage):
         if context.pipeline is None or context.critique_result is None:
             return state
 
+        stage_started = time.perf_counter()
+        refine_ms_total = 0
         workflow = context.workflow
         pipeline = context.pipeline
         critique_result = context.critique_result
@@ -457,6 +534,7 @@ class RefineStage(BasePipelineStage):
             and has_relevant_context
             and final_status != "insufficient_evidence"
         ):
+            refine_started = time.perf_counter()
             final_answer = await self._refine_with_compat(
                 workflow,
                 query=state.normalized_query,
@@ -467,6 +545,7 @@ class RefineStage(BasePipelineStage):
                 model=context.model,
                 response_language=context.resolved_language,
             )
+            refine_ms_total += int((time.perf_counter() - refine_started) * 1000)
             if stop_reason != "max_loop_reached":
                 stop_reason = "refined_with_context"
 
@@ -475,6 +554,7 @@ class RefineStage(BasePipelineStage):
             and has_relevant_context
             and final_citations
         ):
+            strict_refine_started = time.perf_counter()
             refined_from_insufficient = (
                 await self._refine_strict_grounded_with_compat(
                     workflow,
@@ -486,6 +566,7 @@ class RefineStage(BasePipelineStage):
                     response_language=context.resolved_language,
                 )
             ).strip()
+            refine_ms_total += int((time.perf_counter() - strict_refine_started) * 1000)
             refined_is_insufficient = refined_from_insufficient == insufficient_answer
             if refined_from_insufficient and not refined_is_insufficient:
                 final_answer = refined_from_insufficient
@@ -512,6 +593,10 @@ class RefineStage(BasePipelineStage):
                 )
             stop_reason = "conflict_detected"
 
+        stage_ms = int((time.perf_counter() - stage_started) * 1000)
+        context.timings["refine_ms"] = refine_ms_total
+        context.timings["refine_stage_ms"] = stage_ms
+
         context.final_answer = final_answer
         context.final_citations = final_citations
         context.final_status = final_status
@@ -526,6 +611,16 @@ class RefineStage(BasePipelineStage):
         state.final_answer = final_answer
         state.citations = final_citations
         state.stop_reason = stop_reason
+        await emit_stream_event(
+            context.event_handler,
+            {
+                "type": "advanced_stage",
+                "stage": "refine",
+                "stage_ms": stage_ms,
+                "refine_ms": refine_ms_total,
+                **context.event_context,
+            },
+        )
         return state
 
 
@@ -539,6 +634,7 @@ class LanguageGuardStage(BasePipelineStage):
         if context.pipeline is None:
             return state
 
+        stage_started = time.perf_counter()
         final_answer = context.final_answer
         final_status = context.final_status
         stop_reason = context.stop_reason
@@ -569,6 +665,18 @@ class LanguageGuardStage(BasePipelineStage):
         state.final_answer = final_answer
         state.stop_reason = stop_reason
         state.language_mismatch = language_mismatch
+        stage_ms = int((time.perf_counter() - stage_started) * 1000)
+        context.timings["language_guard_ms"] = stage_ms
+        await emit_stream_event(
+            context.event_handler,
+            {
+                "type": "advanced_stage",
+                "stage": "language_guard",
+                "stage_ms": stage_ms,
+                "language_mismatch": language_mismatch,
+                **context.event_context,
+            },
+        )
         return state
 
 
@@ -582,6 +690,7 @@ class HallucinationGuardStage(BasePipelineStage):
         if context.pipeline is None:
             return state
 
+        stage_started = time.perf_counter()
         workflow = context.workflow
         pipeline = context.pipeline
         citation_count = len(context.final_citations)
@@ -735,6 +844,18 @@ class HallucinationGuardStage(BasePipelineStage):
         state.citations = context.final_citations
         state.stop_reason = context.stop_reason
         state.language_mismatch = context.language_mismatch
+        stage_ms = int((time.perf_counter() - stage_started) * 1000)
+        context.timings["hallucination_guard_ms"] = stage_ms
+        await emit_stream_event(
+            context.event_handler,
+            {
+                "type": "advanced_stage",
+                "stage": "hallucination_guard",
+                "stage_ms": stage_ms,
+                "status": context.final_status,
+                **context.event_context,
+            },
+        )
         return state
 
 
@@ -748,6 +869,7 @@ class FinalGroundingStage(BasePipelineStage):
         if context.pipeline is None:
             return state
 
+        stage_started = time.perf_counter()
         citation_count = len(context.final_citations)
         final_grounding = assess_grounding(
             context.final_answer,
@@ -799,5 +921,46 @@ class FinalGroundingStage(BasePipelineStage):
                 "citation_count": context.citation_count,
                 "llm_fallback_used": context.llm_fallback_used,
             }
+        )
+        stage_ms = int((time.perf_counter() - stage_started) * 1000)
+        context.timings["final_grounding_ms"] = stage_ms
+        context.timings["total_ms"] = int((time.perf_counter() - context.start_time) * 1000)
+        context.trace.append(
+            {
+                "step": "timing_summary",
+                "retrieval_gate_ms": context.timings.get("retrieval_gate_ms", 0),
+                "standard_pipeline_ms": context.timings.get("standard_pipeline_ms", 0),
+                "critique_ms": context.timings.get("critique_ms", 0),
+                "refine_ms": context.timings.get("refine_ms", 0),
+                "language_guard_ms": context.timings.get("language_guard_ms", 0),
+                "hallucination_guard_ms": context.timings.get(
+                    "hallucination_guard_ms", 0
+                ),
+                "final_grounding_ms": stage_ms,
+                "total_ms": context.timings.get("total_ms", 0),
+            }
+        )
+        await emit_stream_event(
+            context.event_handler,
+            {
+                "type": "advanced_stage",
+                "stage": "final_grounding",
+                "stage_ms": stage_ms,
+                "timings_ms": {
+                    "retrieval_gate_ms": context.timings.get("retrieval_gate_ms", 0),
+                    "standard_pipeline_ms": context.timings.get(
+                        "standard_pipeline_ms", 0
+                    ),
+                    "critique_ms": context.timings.get("critique_ms", 0),
+                    "refine_ms": context.timings.get("refine_ms", 0),
+                    "language_guard_ms": context.timings.get("language_guard_ms", 0),
+                    "hallucination_guard_ms": context.timings.get(
+                        "hallucination_guard_ms", 0
+                    ),
+                    "final_grounding_ms": stage_ms,
+                    "total_ms": context.timings.get("total_ms", 0),
+                },
+                **context.event_context,
+            },
         )
         return state

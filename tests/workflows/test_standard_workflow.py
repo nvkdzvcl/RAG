@@ -22,6 +22,78 @@ def test_standard_workflow_run_path() -> None:
     assert response.status in {"answered", "partial", "insufficient_evidence"}
 
 
+def test_standard_workflow_trace_contains_timing_metrics() -> None:
+    class _TimingRetriever:
+        def retrieve(self, query: str, top_k: int = 5) -> list[RetrievalResult]:
+            _ = query
+            _ = top_k
+            return [
+                RetrievalResult(
+                    chunk_id="timing_std_001",
+                    doc_id="timing_doc_001",
+                    source="seeded://timing",
+                    content="Timing metadata should appear in trace.",
+                    score=0.91,
+                    score_type="hybrid",
+                    rank=1,
+                )
+            ]
+
+        def get_last_timing(self) -> dict[str, int]:
+            return {
+                "dense_retrieve_ms": 3,
+                "sparse_retrieve_ms": 2,
+                "hybrid_merge_ms": 1,
+            }
+
+    class _FakeIndexManager:
+        def get_retriever(self) -> _TimingRetriever:
+            return _TimingRetriever()
+
+        def get_active_source(self) -> str:
+            return "seeded"
+
+    class _StubLLM:
+        def complete(
+            self,
+            prompt: str,
+            system_prompt: str | None = None,
+            model: str | None = None,
+        ) -> str:
+            _ = prompt
+            _ = system_prompt
+            _ = model
+            return '{"answer":"Timing answer.","confidence":0.8,"status":"answered"}'
+
+    workflow = StandardWorkflow(index_manager=_FakeIndexManager(), llm_client=_StubLLM())
+    response = workflow.run(query="timing test")
+
+    retrieve_step = response.trace[0]
+    assert isinstance(retrieve_step["normalize_query_ms"], int)
+    assert isinstance(retrieve_step["retrieval_total_ms"], int)
+    assert isinstance(retrieve_step["dense_retrieve_ms"], int)
+    assert isinstance(retrieve_step["sparse_retrieve_ms"], int)
+    assert isinstance(retrieve_step["hybrid_merge_ms"], int)
+
+    timing_summary = next(
+        step for step in response.trace if step.get("step") == "timing_summary"
+    )
+    for key in (
+        "normalize_query_ms",
+        "retrieval_total_ms",
+        "dense_retrieve_ms",
+        "sparse_retrieve_ms",
+        "hybrid_merge_ms",
+        "rerank_ms",
+        "context_select_ms",
+        "llm_generate_ms",
+        "grounding_ms",
+        "total_ms",
+    ):
+        assert key in timing_summary
+        assert isinstance(timing_summary[key], int)
+
+
 def test_standard_workflow_uses_ingested_files_instead_of_memory_corpus() -> None:
     workflow = StandardWorkflow()
 

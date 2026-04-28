@@ -13,6 +13,7 @@ from app.core.async_utils import run_coro_sync
 from app.core.cache import create_cache_group_from_settings
 from app.core.config import get_settings
 from app.core.json_utils import parse_json_object
+from app.core.timing import StepTimer
 from app.generation import (
     BaselineGenerator,
     LLMClient,
@@ -71,6 +72,7 @@ class StandardPipelineResult:
     selected_context: list[RetrievalResult]
     generated: GeneratedAnswer
     retrieval_debug: dict[str, Any] = field(default_factory=dict)
+    timings: dict[str, int] = field(default_factory=dict)
 
 
 class RetrieverLike(Protocol):
@@ -297,35 +299,63 @@ class StandardWorkflow:
         """Run one retrieval-generation pass and return intermediate artifacts."""
         self._sync_chunk_settings_from_runtime()
         context_payload = dict(event_context or {})
-        normalized_query = normalize_query(query)
+        timer = StepTimer()
+        with timer.measure("normalize_query_ms"):
+            normalized_query = normalize_query(query)
         retrieval_top_k = max(1, self.hybrid_top_k)
         retriever = self._get_retriever(query_filters=query_filters)
         retrieve_async = getattr(retriever, "retrieve_async", None)
         if callable(retrieve_async):
-            retrieved = await retrieve_async(normalized_query, top_k=retrieval_top_k)
+            async with timer.measure_async("retrieval_total_ms"):
+                retrieved = await retrieve_async(normalized_query, top_k=retrieval_top_k)
         else:
-            retrieved = await asyncio.to_thread(
-                retriever.retrieve,
-                normalized_query,
-                retrieval_top_k,
-            )
+            async with timer.measure_async("retrieval_total_ms"):
+                retrieved = await asyncio.to_thread(
+                    retriever.retrieve,
+                    normalized_query,
+                    retrieval_top_k,
+                )
         retrieval_debug: dict[str, Any] = {}
         debug_getter = getattr(retriever, "get_last_filter_debug", None)
         if callable(debug_getter):
             debug_payload = debug_getter()
             if isinstance(debug_payload, dict):
                 retrieval_debug = debug_payload
-        reranked = await asyncio.to_thread(
-            self.reranker.rerank,
-            normalized_query,
-            retrieved,
-            self.rerank_top_k,
+        retrieval_timing_payload: dict[str, int] = {}
+        timing_getter = getattr(retriever, "get_last_timing", None)
+        if callable(timing_getter):
+            raw_timing = timing_getter()
+            if isinstance(raw_timing, dict):
+                retrieval_timing_payload = {
+                    key: int(value)
+                    for key, value in raw_timing.items()
+                    if isinstance(value, (int, float))
+                }
+        timer.record_ms(
+            "dense_retrieve_ms",
+            retrieval_timing_payload.get("dense_retrieve_ms", -1),
         )
-        selected_context = await asyncio.to_thread(
-            self.context_selector.select,
-            reranked,
-            self.context_top_k,
+        timer.record_ms(
+            "sparse_retrieve_ms",
+            retrieval_timing_payload.get("sparse_retrieve_ms", -1),
         )
+        timer.record_ms(
+            "hybrid_merge_ms",
+            retrieval_timing_payload.get("hybrid_merge_ms", -1),
+        )
+        with timer.measure("rerank_ms"):
+            reranked = await asyncio.to_thread(
+                self.reranker.rerank,
+                normalized_query,
+                retrieved,
+                self.rerank_top_k,
+            )
+        with timer.measure("context_select_ms"):
+            selected_context = await asyncio.to_thread(
+                self.context_selector.select,
+                reranked,
+                self.context_top_k,
+            )
         await emit_stream_event(
             event_handler,
             {
@@ -336,10 +366,20 @@ class StandardWorkflow:
                 "reranked_count": len(reranked),
                 "selected_count": len(selected_context),
                 "chunk_ids": [item.chunk_id for item in selected_context],
+                "timings_ms": {
+                    "normalize_query_ms": timer.get_ms("normalize_query_ms", 0),
+                    "retrieval_total_ms": timer.get_ms("retrieval_total_ms", 0),
+                    "dense_retrieve_ms": timer.get_ms("dense_retrieve_ms", -1),
+                    "sparse_retrieve_ms": timer.get_ms("sparse_retrieve_ms", -1),
+                    "hybrid_merge_ms": timer.get_ms("hybrid_merge_ms", -1),
+                    "rerank_ms": timer.get_ms("rerank_ms", 0),
+                    "context_select_ms": timer.get_ms("context_select_ms", 0),
+                },
                 **context_payload,
             },
         )
         if not selected_context:
+            timer.record_ms("llm_generate_ms", 0)
             generated = GeneratedAnswer(
                 answer=localized_insufficient_evidence(response_language),
                 citations=[],
@@ -355,6 +395,9 @@ class StandardWorkflow:
                     "mode": mode.value,
                     "phase": "skipped",
                     "reason": "no_context",
+                    "timings_ms": {
+                        "llm_generate_ms": timer.get_ms("llm_generate_ms", 0)
+                    },
                     **context_payload,
                 },
             )
@@ -385,15 +428,16 @@ class StandardWorkflow:
                     },
                 )
 
-            generated = await self.generator.generate_answer_async(
-                query=normalized_query,
-                context=selected_context,
-                mode=mode,
-                model=model,
-                response_language=response_language,
-                chat_history_context=history_context,
-                on_llm_delta=_on_llm_delta if event_handler is not None else None,
-            )
+            async with timer.measure_async("llm_generate_ms"):
+                generated = await self.generator.generate_answer_async(
+                    query=normalized_query,
+                    context=selected_context,
+                    mode=mode,
+                    model=model,
+                    response_language=response_language,
+                    chat_history_context=history_context,
+                    on_llm_delta=_on_llm_delta if event_handler is not None else None,
+                )
             await emit_stream_event(
                 event_handler,
                 {
@@ -404,6 +448,9 @@ class StandardWorkflow:
                     "stop_reason": generated.stop_reason,
                     "answer": generated.answer,
                     "citation_count": len(generated.citations),
+                    "timings_ms": {
+                        "llm_generate_ms": timer.get_ms("llm_generate_ms", 0)
+                    },
                     **context_payload,
                 },
             )
@@ -424,6 +471,7 @@ class StandardWorkflow:
             selected_context=selected_context,
             generated=generated,
             retrieval_debug=retrieval_debug,
+            timings=timer.metrics(),
         )
 
     async def run_async(
@@ -453,6 +501,11 @@ class StandardWorkflow:
             event_handler=event_handler,
             event_context=event_context,
         )
+        timings = {
+            key: int(value)
+            for key, value in pipeline.timings.items()
+            if isinstance(value, (int, float))
+        }
         final_answer = pipeline.generated.answer
         language_mismatch = is_language_mismatch(final_answer, resolved_language)
         stop_reason = pipeline.generated.stop_reason
@@ -461,11 +514,15 @@ class StandardWorkflow:
         ]
 
         if language_mismatch and pipeline.generated.status != "insufficient_evidence":
+            language_guard_started = time.perf_counter()
             rewritten = await self._rewrite_answer_language(
                 query=pipeline.normalized_query,
                 answer=final_answer,
                 response_language=resolved_language,
                 model=model,
+            )
+            timings["language_guard_ms"] = int(
+                (time.perf_counter() - language_guard_started) * 1000
             )
             if rewritten:
                 final_answer = rewritten
@@ -474,9 +531,12 @@ class StandardWorkflow:
                 )
                 if not language_mismatch:
                     stop_reason = "language_refined"
+        else:
+            timings.setdefault("language_guard_ms", 0)
 
         final_citations = list(pipeline.generated.citations)
         citation_count = len(final_citations)
+        grounding_started = time.perf_counter()
         grounding = assess_grounding(
             final_answer,
             context_texts,
@@ -484,12 +544,22 @@ class StandardWorkflow:
             has_selected_context=bool(pipeline.selected_context),
             status=pipeline.generated.status,
         )
+        timings["grounding_ms"] = int((time.perf_counter() - grounding_started) * 1000)
         grounded_score = grounding.grounded_score
         grounding_reason = grounding.grounding_reason
         hallucination_detected = grounding.hallucination_detected
         llm_fallback_used = bool(pipeline.generated.llm_fallback_used)
 
         elapsed_ms = int((time.perf_counter() - start_time) * 1000)
+        timings["total_ms"] = elapsed_ms
+        timings.setdefault("normalize_query_ms", 0)
+        timings.setdefault("retrieval_total_ms", 0)
+        timings.setdefault("dense_retrieve_ms", -1)
+        timings.setdefault("sparse_retrieve_ms", -1)
+        timings.setdefault("hybrid_merge_ms", -1)
+        timings.setdefault("rerank_ms", 0)
+        timings.setdefault("context_select_ms", 0)
+        timings.setdefault("llm_generate_ms", 0)
         trace = [
             {
                 "step": "retrieve",
@@ -535,6 +605,11 @@ class StandardWorkflow:
                     "candidate_count_after_filter",
                     len(pipeline.retrieved),
                 ),
+                "normalize_query_ms": timings.get("normalize_query_ms", 0),
+                "retrieval_total_ms": timings.get("retrieval_total_ms", 0),
+                "dense_retrieve_ms": timings.get("dense_retrieve_ms", -1),
+                "sparse_retrieve_ms": timings.get("sparse_retrieve_ms", -1),
+                "hybrid_merge_ms": timings.get("hybrid_merge_ms", -1),
             },
             {
                 "step": "rerank",
@@ -568,6 +643,7 @@ class StandardWorkflow:
                     }
                     for item in pipeline.reranked
                 ],
+                "rerank_ms": timings.get("rerank_ms", 0),
             },
             {
                 "step": "context_select",
@@ -593,6 +669,7 @@ class StandardWorkflow:
                     }
                     for item in pipeline.selected_context
                 ],
+                "context_select_ms": timings.get("context_select_ms", 0),
             },
             {
                 "step": "generate",
@@ -604,6 +681,7 @@ class StandardWorkflow:
                 "grounding_reason": grounding_reason,
                 "hallucination_detected": hallucination_detected,
                 "llm_fallback_used": llm_fallback_used,
+                "llm_generate_ms": timings.get("llm_generate_ms", 0),
             },
         ]
 
@@ -623,8 +701,25 @@ class StandardWorkflow:
                     "hallucination_detected": hallucination_detected,
                     "citation_count": citation_count,
                     "llm_fallback_used": llm_fallback_used,
+                    "grounding_ms": timings.get("grounding_ms", 0),
                 }
             )
+
+        trace.append(
+            {
+                "step": "timing_summary",
+                "normalize_query_ms": timings.get("normalize_query_ms", 0),
+                "retrieval_total_ms": timings.get("retrieval_total_ms", 0),
+                "dense_retrieve_ms": timings.get("dense_retrieve_ms", -1),
+                "sparse_retrieve_ms": timings.get("sparse_retrieve_ms", -1),
+                "hybrid_merge_ms": timings.get("hybrid_merge_ms", -1),
+                "rerank_ms": timings.get("rerank_ms", 0),
+                "context_select_ms": timings.get("context_select_ms", 0),
+                "llm_generate_ms": timings.get("llm_generate_ms", 0),
+                "grounding_ms": timings.get("grounding_ms", 0),
+                "total_ms": timings.get("total_ms", elapsed_ms),
+            }
+        )
 
         return StandardQueryResponse(
             mode="standard",

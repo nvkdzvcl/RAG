@@ -90,6 +90,67 @@ def test_advanced_mode_run_path() -> None:
     assert parsed.answer
 
 
+def test_advanced_workflow_trace_contains_timing_metrics() -> None:
+    class _FakeRetriever:
+        def retrieve(self, query: str, top_k: int = 5) -> list[RetrievalResult]:
+            _ = query
+            _ = top_k
+            return [
+                RetrievalResult(
+                    chunk_id="adv_timing_001",
+                    doc_id="adv_timing_doc_001",
+                    source="seeded://adv-timing",
+                    content="Advanced timing trace should include stage metrics.",
+                    score=0.93,
+                    score_type="hybrid",
+                    rank=1,
+                )
+            ]
+
+        def get_last_timing(self) -> dict[str, int]:
+            return {
+                "dense_retrieve_ms": 2,
+                "sparse_retrieve_ms": 1,
+                "hybrid_merge_ms": 1,
+            }
+
+    class _FakeIndexManager:
+        def get_retriever(self) -> _FakeRetriever:
+            return _FakeRetriever()
+
+        def get_active_source(self) -> str:
+            return "seeded"
+
+    llm = StubLLMClient(
+        responder=lambda prompt, system, model=None: (
+            '{"answer":"Advanced timing answer.","confidence":0.84,"status":"answered"}'
+        )
+    )
+    standard = StandardWorkflow(
+        index_manager=_FakeIndexManager(),
+        llm_client=llm,
+        reranker=ScoreOnlyReranker(),
+    )
+    workflow = AdvancedWorkflow(standard_workflow=standard, max_loops=1)
+
+    response = workflow.run("force retrieval timing instrumentation check")
+    timing_summary = next(
+        step for step in response.trace if step.get("step") == "timing_summary"
+    )
+    for key in (
+        "retrieval_gate_ms",
+        "standard_pipeline_ms",
+        "critique_ms",
+        "refine_ms",
+        "language_guard_ms",
+        "hallucination_guard_ms",
+        "final_grounding_ms",
+        "total_ms",
+    ):
+        assert key in timing_summary
+        assert isinstance(timing_summary[key], int)
+
+
 def test_query_rewriter_malformed_json_falls_back_to_heuristic() -> None:
     rewriter = QueryRewriter(
         llm_client=StubLLMClient(

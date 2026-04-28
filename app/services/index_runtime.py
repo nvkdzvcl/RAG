@@ -6,6 +6,7 @@ import asyncio
 import hashlib
 import json
 import logging
+import time
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
@@ -269,9 +270,20 @@ class _ResultFilteringRetriever:
             "candidate_count_before_filter": 0,
             "candidate_count_after_filter": 0,
         }
+        self._last_timing_debug: dict[str, int] = {
+            "retrieval_total_ms": 0,
+            "dense_retrieve_ms": 0,
+            "sparse_retrieve_ms": 0,
+            "hybrid_merge_ms": 0,
+            "filter_ms": 0,
+            "filter_wrapper_ms": 0,
+        }
 
     def get_last_filter_debug(self) -> dict[str, Any]:
         return dict(self._last_filter_debug)
+
+    def get_last_timing(self) -> dict[str, int]:
+        return dict(self._last_timing_debug)
 
     @staticmethod
     def _compute_candidate_k(top_k: int, needs_filtering: bool) -> int:
@@ -281,12 +293,21 @@ class _ResultFilteringRetriever:
         return max(top_k * 8, top_k)
 
     def retrieve(self, query: str, top_k: int = 5) -> list[RetrievalResult]:
+        started = time.perf_counter()
         applied_filters = self._query_filters.as_debug_payload()
         if top_k <= 0:
             self._last_filter_debug = {
                 "applied_filters": applied_filters,
                 "candidate_count_before_filter": 0,
                 "candidate_count_after_filter": 0,
+            }
+            self._last_timing_debug = {
+                "retrieval_total_ms": 0,
+                "dense_retrieve_ms": 0,
+                "sparse_retrieve_ms": 0,
+                "hybrid_merge_ms": 0,
+                "filter_ms": 0,
+                "filter_wrapper_ms": int((time.perf_counter() - started) * 1000),
             }
             return []
 
@@ -301,6 +322,14 @@ class _ResultFilteringRetriever:
                 "candidate_count_after_filter": 0,
                 "filtered_source": self._active_source,
             }
+            self._last_timing_debug = {
+                "retrieval_total_ms": 0,
+                "dense_retrieve_ms": 0,
+                "sparse_retrieve_ms": 0,
+                "hybrid_merge_ms": 0,
+                "filter_ms": 0,
+                "filter_wrapper_ms": int((time.perf_counter() - started) * 1000),
+            }
             return []
 
         candidate_k = self._compute_candidate_k(
@@ -309,6 +338,11 @@ class _ResultFilteringRetriever:
         )
 
         results = self._retriever.retrieve(query, top_k=candidate_k)
+        timing_getter = getattr(self._retriever, "get_last_timing", None)
+        base_timing: dict[str, int] = (
+            timing_getter() if callable(timing_getter) else {}
+        )
+        filter_started = time.perf_counter()
         filtered = list(results)
         if self._allowed_doc_ids:
             # Keep stale-index safety first: only active uploaded doc IDs are allowed.
@@ -323,15 +357,33 @@ class _ResultFilteringRetriever:
             "candidate_count_before_filter": len(results),
             "candidate_count_after_filter": len(filtered),
         }
+        filter_ms = int((time.perf_counter() - filter_started) * 1000)
+        self._last_timing_debug = {
+            "retrieval_total_ms": int(base_timing.get("retrieval_total_ms", 0)),
+            "dense_retrieve_ms": int(base_timing.get("dense_retrieve_ms", 0)),
+            "sparse_retrieve_ms": int(base_timing.get("sparse_retrieve_ms", 0)),
+            "hybrid_merge_ms": int(base_timing.get("hybrid_merge_ms", 0)),
+            "filter_ms": filter_ms,
+            "filter_wrapper_ms": int((time.perf_counter() - started) * 1000),
+        }
         return filtered[:top_k]
 
     async def retrieve_async(self, query: str, top_k: int = 5) -> list[RetrievalResult]:
+        started = time.perf_counter()
         applied_filters = self._query_filters.as_debug_payload()
         if top_k <= 0:
             self._last_filter_debug = {
                 "applied_filters": applied_filters,
                 "candidate_count_before_filter": 0,
                 "candidate_count_after_filter": 0,
+            }
+            self._last_timing_debug = {
+                "retrieval_total_ms": 0,
+                "dense_retrieve_ms": 0,
+                "sparse_retrieve_ms": 0,
+                "hybrid_merge_ms": 0,
+                "filter_ms": 0,
+                "filter_wrapper_ms": int((time.perf_counter() - started) * 1000),
             }
             return []
 
@@ -344,6 +396,14 @@ class _ResultFilteringRetriever:
                 "candidate_count_before_filter": 0,
                 "candidate_count_after_filter": 0,
                 "filtered_source": self._active_source,
+            }
+            self._last_timing_debug = {
+                "retrieval_total_ms": 0,
+                "dense_retrieve_ms": 0,
+                "sparse_retrieve_ms": 0,
+                "hybrid_merge_ms": 0,
+                "filter_ms": 0,
+                "filter_wrapper_ms": int((time.perf_counter() - started) * 1000),
             }
             return []
 
@@ -361,7 +421,12 @@ class _ResultFilteringRetriever:
                 query,
                 candidate_k,
             )
+        timing_getter = getattr(self._retriever, "get_last_timing", None)
+        base_timing: dict[str, int] = (
+            timing_getter() if callable(timing_getter) else {}
+        )
 
+        filter_started = time.perf_counter()
         filtered = list(results)
         if self._allowed_doc_ids:
             filtered = [
@@ -374,6 +439,15 @@ class _ResultFilteringRetriever:
             "applied_filters": applied_filters,
             "candidate_count_before_filter": len(results),
             "candidate_count_after_filter": len(filtered),
+        }
+        filter_ms = int((time.perf_counter() - filter_started) * 1000)
+        self._last_timing_debug = {
+            "retrieval_total_ms": int(base_timing.get("retrieval_total_ms", 0)),
+            "dense_retrieve_ms": int(base_timing.get("dense_retrieve_ms", 0)),
+            "sparse_retrieve_ms": int(base_timing.get("sparse_retrieve_ms", 0)),
+            "hybrid_merge_ms": int(base_timing.get("hybrid_merge_ms", 0)),
+            "filter_ms": filter_ms,
+            "filter_wrapper_ms": int((time.perf_counter() - started) * 1000),
         }
         return filtered[:top_k]
 

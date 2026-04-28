@@ -184,6 +184,41 @@ class AdvancedWorkflow:
         trace: list[dict[str, Any]],
     ) -> AdvancedQueryResponse:
         elapsed_ms = int((time.perf_counter() - start_time) * 1000)
+        response_trace = list(trace)
+        timing_step_index = next(
+            (
+                idx
+                for idx, step in reversed(list(enumerate(response_trace)))
+                if step.get("step") == "timing_summary"
+            ),
+            None,
+        )
+        if timing_step_index is None:
+            response_trace.append(
+                {
+                    "step": "timing_summary",
+                    "retrieval_gate_ms": 0,
+                    "standard_pipeline_ms": 0,
+                    "critique_ms": 0,
+                    "refine_ms": 0,
+                    "language_guard_ms": 0,
+                    "hallucination_guard_ms": 0,
+                    "final_grounding_ms": 0,
+                    "total_ms": elapsed_ms,
+                }
+            )
+        else:
+            summary = dict(response_trace[timing_step_index])
+            summary.setdefault("retrieval_gate_ms", 0)
+            summary.setdefault("standard_pipeline_ms", 0)
+            summary.setdefault("critique_ms", 0)
+            summary.setdefault("refine_ms", 0)
+            summary.setdefault("language_guard_ms", 0)
+            summary.setdefault("hallucination_guard_ms", 0)
+            summary.setdefault("final_grounding_ms", 0)
+            summary["total_ms"] = elapsed_ms
+            response_trace[timing_step_index] = summary
+
         return AdvancedQueryResponse(
             mode="advanced",
             answer=answer,
@@ -200,7 +235,7 @@ class AdvancedWorkflow:
             citation_count=citation_count,
             hallucination_detected=hallucination_detected,
             llm_fallback_used=llm_fallback_used,
-            trace=trace,
+            trace=response_trace,
         )
 
     def _build_pipeline_executor(self, context: AdvancedPipelineContext) -> Pipeline:

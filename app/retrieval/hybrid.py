@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 from dataclasses import dataclass
 import logging
+import time
 
 from app.core.async_utils import run_coro_sync
 from app.core.cache import QueryCache, make_cache_key
@@ -163,6 +164,16 @@ class HybridRetriever:
         self.sparse_retriever = sparse_retriever
         self.fusion_config = fusion_config or FusionConfig()
         self._retrieval_cache = retrieval_cache
+        self._last_timing: dict[str, int] = {
+            "retrieval_total_ms": 0,
+            "dense_retrieve_ms": 0,
+            "sparse_retrieve_ms": 0,
+            "hybrid_merge_ms": 0,
+        }
+
+    def get_last_timing(self) -> dict[str, int]:
+        """Return timing for the most recent retrieval call."""
+        return dict(self._last_timing)
 
     def _resolve_candidate_k(self, top_k: int) -> int:
         multiplier = max(1, int(self.fusion_config.candidate_multiplier))
@@ -171,7 +182,15 @@ class HybridRetriever:
 
     async def retrieve_async(self, query: str, top_k: int = 5) -> list[RetrievalResult]:
         if top_k <= 0:
+            self._last_timing = {
+                "retrieval_total_ms": 0,
+                "dense_retrieve_ms": 0,
+                "sparse_retrieve_ms": 0,
+                "hybrid_merge_ms": 0,
+            }
             return []
+
+        total_started = time.perf_counter()
 
         # Check retrieval cache.
         cache_key: str | None = None
@@ -179,20 +198,35 @@ class HybridRetriever:
             cache_key = make_cache_key(query, top_k)
             hit, cached = self._retrieval_cache.get(cache_key)
             if hit:
+                self._last_timing = {
+                    "retrieval_total_ms": int(
+                        (time.perf_counter() - total_started) * 1000
+                    ),
+                    "dense_retrieve_ms": 0,
+                    "sparse_retrieve_ms": 0,
+                    "hybrid_merge_ms": 0,
+                }
                 return cached
 
         candidate_k = self._resolve_candidate_k(top_k)
-        dense_task = asyncio.to_thread(
-            self.dense_retriever.retrieve,
-            query,
-            candidate_k,
-        )
-        sparse_task = asyncio.to_thread(
-            self.sparse_retriever.retrieve,
-            query,
-            candidate_k,
-        )
-        dense, sparse = await asyncio.gather(dense_task, sparse_task)
+        dense_ms = 0
+        sparse_ms = 0
+
+        def _timed_dense() -> tuple[list[RetrievalResult], int]:
+            started = time.perf_counter()
+            result = self.dense_retriever.retrieve(query, candidate_k)
+            return result, int((time.perf_counter() - started) * 1000)
+
+        def _timed_sparse() -> tuple[list[RetrievalResult], int]:
+            started = time.perf_counter()
+            result = self.sparse_retriever.retrieve(query, candidate_k)
+            return result, int((time.perf_counter() - started) * 1000)
+
+        dense_task = asyncio.to_thread(_timed_dense)
+        sparse_task = asyncio.to_thread(_timed_sparse)
+        dense_payload, sparse_payload = await asyncio.gather(dense_task, sparse_task)
+        dense, dense_ms = dense_payload
+        sparse, sparse_ms = sparse_payload
         logger.debug(
             "Hybrid dense results | query=%s | candidate_k=%s | results=%s",
             query,
@@ -205,18 +239,26 @@ class HybridRetriever:
             candidate_k,
             _debug_results(sparse),
         )
+        merge_started = time.perf_counter()
         merged = reciprocal_rank_fusion(
             dense,
             sparse,
             top_k=top_k,
             config=self.fusion_config,
         )
+        merge_ms = int((time.perf_counter() - merge_started) * 1000)
         logger.debug(
             "Hybrid merged results | query=%s | top_k=%s | results=%s",
             query,
             top_k,
             _debug_results(merged),
         )
+        self._last_timing = {
+            "retrieval_total_ms": int((time.perf_counter() - total_started) * 1000),
+            "dense_retrieve_ms": dense_ms,
+            "sparse_retrieve_ms": sparse_ms,
+            "hybrid_merge_ms": merge_ms,
+        }
 
         # Store in retrieval cache.
         if self._retrieval_cache is not None and cache_key is not None:
