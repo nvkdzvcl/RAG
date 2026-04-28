@@ -24,16 +24,22 @@ def run_benchmark() -> dict[str, Any]:
     corpus = [DocumentChunk(**item) for item in data["corpus"]]
 
     provider = HashEmbeddingProvider()
+
+    try:
+        vectors = provider.embed_documents([chunk.content for chunk in corpus])
+    except AttributeError:
+        vectors = [provider.embed_query(chunk.content) for chunk in corpus]
+
     vector_index = InMemoryVectorIndex()
     bm25_index = BM25Index()
 
-    vector_index.build(corpus)
+    vector_index.build(corpus, vectors)
     bm25_index.build(corpus)
 
     dense_retriever = DenseRetriever(
         vector_index=vector_index, embedding_provider=provider
     )
-    sparse_retriever = SparseRetriever(sparse_index=bm25_index)
+    sparse_retriever = SparseRetriever(bm25_index=bm25_index)
 
     retriever = HybridRetriever(
         dense_retriever=dense_retriever,
