@@ -59,14 +59,14 @@ def run_benchmark() -> dict[str, Any]:
         retrieved_ids = []
         retrieved_sources = []
         for sc in scored_chunks:
-            retrieved_ids.append(sc.chunk.chunk_id)
+            retrieved_ids.append(sc.chunk_id)
             retrieved_sources.append(
                 RetrievedSourceTrace(
-                    chunk_id=sc.chunk.chunk_id,
-                    doc_id=sc.chunk.doc_id,
-                    source=sc.chunk.source,
-                    title=sc.chunk.title,
-                    section=sc.chunk.section,
+                    chunk_id=sc.chunk_id,
+                    doc_id=sc.doc_id,
+                    source=sc.source,
+                    title=sc.title,
+                    section=sc.section,
                 )
             )
 
