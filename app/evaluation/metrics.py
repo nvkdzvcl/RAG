@@ -30,28 +30,195 @@ _GOLD_FIELD_ALIASES = {
 }
 
 
-def _normalize_text(value: str | None) -> str:
-    if not value:
+def _safe_normalize(value: str | None, *, is_path: bool = False) -> str:
+    if value is None:
         return ""
-    return " ".join(value.strip().lower().split())
+    normalized = value.strip().lower()
+    if not normalized:
+        return ""
+    normalized = " ".join(normalized.split())
+    if is_path:
+        normalized = normalized.replace("\\", "/")
+        while "//" in normalized:
+            normalized = normalized.replace("//", "/")
+        if normalized.startswith("./"):
+            normalized = normalized[2:]
+    return normalized
+
+
+def _normalize_text(value: str | None) -> str:
+    return _safe_normalize(value)
 
 
 def _normalize_path(value: str | None) -> str:
-    normalized = _normalize_text(value)
-    if not normalized:
-        return ""
-    normalized = normalized.replace("\\", "/")
-    while "//" in normalized:
-        normalized = normalized.replace("//", "/")
-    if normalized.startswith("./"):
-        normalized = normalized[2:]
-    return normalized
+    return _safe_normalize(value, is_path=True)
 
 
 def _basename(path: str) -> str:
     if not path:
         return ""
     return path.rsplit("/", 1)[-1]
+
+
+def _basename_stem(path: str) -> str:
+    basename = _basename(path)
+    if "." not in basename:
+        return basename
+    return basename.rsplit(".", 1)[0]
+
+
+def _looks_like_path(text: str) -> bool:
+    candidate = _normalize_path(text)
+    return "/" in candidate or "\\" in text or "." in candidate
+
+
+def _split_hash(text: str) -> tuple[str, str] | None:
+    if "#" not in text:
+        return None
+    left, right = text.split("#", 1)
+    left_norm = _normalize_text(left)
+    right_norm = _normalize_text(right)
+    if not left_norm or not right_norm:
+        return None
+    return left_norm, right_norm
+
+
+def _candidate_chunk_id(candidate: RetrievedSourceTrace) -> str:
+    return _normalize_text(candidate.chunk_id)
+
+
+def _candidate_doc_id(candidate: RetrievedSourceTrace) -> str:
+    return _normalize_text(candidate.doc_id)
+
+
+def _candidate_title(candidate: RetrievedSourceTrace) -> str:
+    return _normalize_text(candidate.title)
+
+
+def _candidate_section(candidate: RetrievedSourceTrace) -> str:
+    return _normalize_text(candidate.section)
+
+
+def _candidate_paths(candidate: RetrievedSourceTrace) -> list[str]:
+    values: list[str] = []
+    for value in (candidate.source, candidate.path):
+        normalized = _normalize_path(value)
+        if normalized and normalized not in values:
+            values.append(normalized)
+    return values
+
+
+def _candidate_path_basenames(candidate: RetrievedSourceTrace) -> set[str]:
+    basenames: set[str] = set()
+    for path in _candidate_paths(candidate):
+        base = _basename(path)
+        if base:
+            basenames.add(base)
+    return basenames
+
+
+def _candidate_source_tokens(candidate: RetrievedSourceTrace) -> set[str]:
+    tokens = {
+        token
+        for token in (
+            _candidate_doc_id(candidate),
+            _candidate_title(candidate),
+            _candidate_section(candidate),
+            _candidate_chunk_id(candidate),
+        )
+        if token
+    }
+    for path in _candidate_paths(candidate):
+        tokens.add(path)
+        basename = _basename(path)
+        if basename:
+            tokens.add(basename)
+            stem = _basename_stem(path)
+            if stem:
+                tokens.add(stem)
+    return tokens
+
+
+def _path_basename_is_unambiguous(
+    basename: str, candidates: list[RetrievedSourceTrace]
+) -> bool:
+    if not basename:
+        return False
+    matches = 0
+    for candidate in candidates:
+        if basename in _candidate_path_basenames(candidate):
+            matches += 1
+            if matches > 1:
+                return False
+    return matches == 1
+
+
+def _match_path_value(
+    expected: str,
+    candidate: RetrievedSourceTrace,
+    candidates: list[RetrievedSourceTrace],
+) -> bool:
+    expected_path = _normalize_path(expected)
+    if not expected_path:
+        return False
+    candidate_paths = _candidate_paths(candidate)
+    if expected_path in candidate_paths:
+        return True
+
+    expected_base = _basename(expected_path)
+    if not expected_base:
+        return False
+    candidate_bases = _candidate_path_basenames(candidate)
+    if expected_base not in candidate_bases:
+        return False
+
+    # Only allow basename fallback when one side is basename-only.
+    expected_is_base_only = expected_path == expected_base
+    candidate_has_base_only = any(path == _basename(path) for path in candidate_paths)
+    if not (expected_is_base_only or candidate_has_base_only):
+        return False
+
+    return _path_basename_is_unambiguous(expected_base, candidates)
+
+
+def _is_title_unambiguous(
+    title: str, candidates: list[RetrievedSourceTrace]
+) -> bool:
+    expected = _normalize_text(title)
+    if not expected:
+        return False
+    matches = sum(
+        1 for candidate in candidates if _candidate_title(candidate) == expected
+    )
+    return matches == 1
+
+
+def _is_section_unambiguous(
+    section: str, candidates: list[RetrievedSourceTrace]
+) -> bool:
+    expected = _normalize_text(section)
+    if not expected:
+        return False
+    matches = sum(
+        1 for candidate in candidates if _candidate_section(candidate) == expected
+    )
+    return matches == 1
+
+
+def _is_title_section_unambiguous(
+    title: str, section: str, candidates: list[RetrievedSourceTrace]
+) -> bool:
+    expected_title = _normalize_text(title)
+    expected_section = _normalize_text(section)
+    if not expected_title or not expected_section:
+        return False
+    matches = sum(
+        1
+        for candidate in candidates
+        if _candidate_title(candidate) == expected_title
+        and _candidate_section(candidate) == expected_section
+    )
+    return matches == 1
 
 
 def _derive_doc_id_from_chunk_id(chunk_id: str | None) -> str | None:
@@ -136,72 +303,129 @@ def _parse_gold_source_fields(gold: str) -> dict[str, str]:
 
 
 def _match_structured_gold_source(
-    fields: dict[str, str], candidate: RetrievedSourceTrace
+    fields: dict[str, str],
+    candidate: RetrievedSourceTrace,
+    candidates: list[RetrievedSourceTrace],
 ) -> bool:
-    for key, expected in fields.items():
-        if key == "chunk_id":
-            if _normalize_text(candidate.chunk_id) != _normalize_text(expected):
-                return False
-            continue
-        if key == "doc_id":
-            if _normalize_text(candidate.doc_id) != _normalize_text(expected):
-                return False
-            continue
-        if key == "source":
-            if _normalize_path(candidate.source) != _normalize_path(expected):
-                return False
-            continue
-        if key == "path":
-            candidate_path = candidate.path or candidate.source
-            if _normalize_path(candidate_path) != _normalize_path(expected):
-                return False
-            continue
-        if key == "title":
-            if _normalize_text(candidate.title) != _normalize_text(expected):
-                return False
-            continue
-        if key == "section":
-            if _normalize_text(candidate.section) != _normalize_text(expected):
-                return False
-            continue
-    return True
+    # 1) exact chunk_id
+    if "chunk_id" in fields:
+        return _candidate_chunk_id(candidate) == _normalize_text(fields["chunk_id"])
 
+    # 2) exact doc_id
+    if "doc_id" in fields:
+        return _candidate_doc_id(candidate) == _normalize_text(fields["doc_id"])
 
-def _build_candidate_match_space(candidate: RetrievedSourceTrace) -> tuple[set[str], list[str]]:
-    chunk_id = _normalize_text(candidate.chunk_id)
-    doc_id = _normalize_text(candidate.doc_id)
-    source = _normalize_path(candidate.source)
-    path = _normalize_path(candidate.path or candidate.source)
-    title = _normalize_text(candidate.title)
-    section = _normalize_text(candidate.section)
+    # 3) source/path match
+    if "source" in fields or "path" in fields:
+        source_ok = True
+        path_ok = True
+        if "source" in fields:
+            source_ok = _match_path_value(fields["source"], candidate, candidates)
+        if "path" in fields:
+            path_ok = _match_path_value(fields["path"], candidate, candidates)
+        return source_ok and path_ok
 
-    tokens = {
-        token
-        for token in (
-            chunk_id,
-            doc_id,
-            source,
-            path,
-            _basename(source),
-            _basename(path),
-            title,
-            section,
+    title_value = fields.get("title")
+    section_value = fields.get("section")
+
+    # 4) title + section combined
+    if title_value and section_value:
+        return (
+            _candidate_title(candidate) == _normalize_text(title_value)
+            and _candidate_section(candidate) == _normalize_text(section_value)
+            and _is_title_section_unambiguous(title_value, section_value, candidates)
         )
-        if token
-    }
-    compounds = [
-        value
-        for value in (
-            f"{source}#{chunk_id}" if source and chunk_id else "",
-            f"{path}#{chunk_id}" if path and chunk_id else "",
-            f"{doc_id}#{chunk_id}" if doc_id and chunk_id else "",
-            f"{source}#{section}" if source and section else "",
-            f"{path}#{section}" if path and section else "",
-            f"{title}#{section}" if title and section else "",
+
+    # 5) title-only / section-only if unambiguous
+    if title_value:
+        return (
+            _candidate_title(candidate) == _normalize_text(title_value)
+            and _is_title_unambiguous(title_value, candidates)
         )
-        if value
-    ]
-    return tokens, compounds
+    if section_value:
+        return (
+            _candidate_section(candidate) == _normalize_text(section_value)
+            and _is_section_unambiguous(section_value, candidates)
+        )
+
+    return False
+
+
+def _match_legacy_fallback(gold: str, candidate: RetrievedSourceTrace) -> bool:
+    normalized_gold = _normalize_text(gold)
+    if not normalized_gold:
+        return False
+
+    source_tokens = _candidate_source_tokens(candidate)
+    if normalized_gold in source_tokens:
+        return True
+
+    normalized_gold_path = _normalize_path(gold)
+    if normalized_gold_path and normalized_gold_path in source_tokens:
+        return True
+
+    chunk_id = _candidate_chunk_id(candidate)
+    split = _split_hash(gold)
+    if split is None:
+        return False
+
+    left, right = split
+    left_match = left in source_tokens or _normalize_path(left) in source_tokens
+    if not left_match:
+        return False
+    if not chunk_id:
+        return False
+
+    return chunk_id == right or chunk_id.startswith(right)
+
+
+def _match_legacy_gold_source(
+    gold: str,
+    candidate: RetrievedSourceTrace,
+    candidates: list[RetrievedSourceTrace],
+) -> bool:
+    normalized_gold = _normalize_text(gold)
+    if not normalized_gold:
+        return False
+
+    # 1) exact chunk_id
+    if normalized_gold == _candidate_chunk_id(candidate):
+        return True
+
+    # 2) exact doc_id
+    if normalized_gold == _candidate_doc_id(candidate):
+        return True
+
+    # 3) source/path match
+    if _looks_like_path(gold) and _match_path_value(gold, candidate, candidates):
+        return True
+
+    split = _split_hash(gold)
+    if split is not None:
+        left, right = split
+        # 4) title + section combined
+        if "chunk" not in right and not _looks_like_path(left):
+            if (
+                _candidate_title(candidate) == left
+                and _candidate_section(candidate) == right
+                and _is_title_section_unambiguous(left, right, candidates)
+            ):
+                return True
+
+    # 5) title-only / section-only if unambiguous
+    if (
+        _candidate_title(candidate) == normalized_gold
+        and _is_title_unambiguous(normalized_gold, candidates)
+    ):
+        return True
+    if (
+        _candidate_section(candidate) == normalized_gold
+        and _is_section_unambiguous(normalized_gold, candidates)
+    ):
+        return True
+
+    # 6) backward-compatible fallback string match
+    return _match_legacy_fallback(gold, candidate)
 
 
 def tokenize_terms(text: str) -> set[str]:
@@ -345,28 +569,19 @@ def extract_trace_fields(trace: list[dict]) -> TraceExtraction:
     )
 
 
-def _match_gold_source(gold: str, candidate: RetrievedSourceTrace) -> bool:
+def _match_gold_source(
+    gold: str,
+    candidate: RetrievedSourceTrace,
+    candidates: list[RetrievedSourceTrace],
+) -> bool:
     normalized_gold = _normalize_text(gold)
     if not normalized_gold:
         return False
 
     structured_fields = _parse_gold_source_fields(gold)
     if structured_fields:
-        return _match_structured_gold_source(structured_fields, candidate)
-
-    tokens, compounds = _build_candidate_match_space(candidate)
-    if normalized_gold in tokens:
-        return True
-
-    normalized_gold_path = _normalize_path(gold)
-    if normalized_gold_path and normalized_gold_path in tokens:
-        return True
-
-    return any(
-        normalized_gold in item
-        or (normalized_gold_path and normalized_gold_path in item)
-        for item in compounds
-    )
+        return _match_structured_gold_source(structured_fields, candidate, candidates)
+    return _match_legacy_gold_source(gold, candidate, candidates)
 
 
 def cited_gold_source_overlap(
@@ -392,7 +607,7 @@ def cited_gold_source_overlap(
 
     matched = sum(
         1 for source in expected if any(
-            _match_gold_source(source, citation)
+            _match_gold_source(source, citation, citation_sources)
             for citation in citation_sources
         )
     )
@@ -445,7 +660,7 @@ def compute_retrieval_metrics(
         newly_matched = False
         for gold in expected:
             if gold not in matched_golds:
-                if _match_gold_source(gold, source):
+                if _match_gold_source(gold, source, ranked_sources):
                     matched_golds.add(gold)
                     newly_matched = True
                     break

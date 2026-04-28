@@ -109,7 +109,7 @@ def test_compute_retrieval_metrics_matches_doc_id_when_structured() -> None:
 def test_compute_retrieval_metrics_matches_source_or_path_when_structured() -> None:
     hit, mrr, ndcg = compute_retrieval_metrics(
         ["docmodes_chunk_0003_hash"],
-        ["path=docs/MODES.md"],
+        ["source=docs/MODES.md"],
         [
             RetrievedSourceTrace(
                 chunk_id="docmodes_chunk_0003_hash",
@@ -126,12 +126,13 @@ def test_compute_retrieval_metrics_matches_source_or_path_when_structured() -> N
 def test_compute_retrieval_metrics_matches_section_when_structured() -> None:
     hit, mrr, ndcg = compute_retrieval_metrics(
         ["docmodes_chunk_0004_hash"],
-        ["section=Advanced Mode"],
+        ["title=Modes Guide|section=Advanced Mode"],
         [
             RetrievedSourceTrace(
                 chunk_id="docmodes_chunk_0004_hash",
                 doc_id="docmodes",
                 source="docs/MODES.md",
+                title="modes guide",
                 section="advanced mode",
             )
         ],
@@ -139,6 +140,47 @@ def test_compute_retrieval_metrics_matches_section_when_structured() -> None:
     assert hit is True
     assert math.isclose(mrr, 1.0)
     assert math.isclose(ndcg, 1.0)
+
+
+def test_compute_retrieval_metrics_matches_source_basename_path() -> None:
+    hit, mrr, ndcg = compute_retrieval_metrics(
+        ["docpdf_chunk_0001_hash"],
+        ["path=foo.pdf"],
+        [
+            RetrievedSourceTrace(
+                chunk_id="docpdf_chunk_0001_hash",
+                doc_id="docpdf",
+                source="docs/foo.pdf",
+            )
+        ],
+    )
+    assert hit is True
+    assert math.isclose(mrr, 1.0)
+    assert math.isclose(ndcg, 1.0)
+
+
+def test_compute_retrieval_metrics_section_only_ambiguous_does_not_match() -> None:
+    hit, mrr, ndcg = compute_retrieval_metrics(
+        ["doca_chunk_0001_hash", "docb_chunk_0001_hash"],
+        ["section=overview"],
+        [
+            RetrievedSourceTrace(
+                chunk_id="doca_chunk_0001_hash",
+                doc_id="doca",
+                source="docs/a.md",
+                section="overview",
+            ),
+            RetrievedSourceTrace(
+                chunk_id="docb_chunk_0001_hash",
+                doc_id="docb",
+                source="docs/b.md",
+                section="overview",
+            ),
+        ],
+    )
+    assert hit is False
+    assert math.isclose(mrr, 0.0)
+    assert math.isclose(ndcg, 0.0)
 
 
 def test_compute_retrieval_metrics_keeps_legacy_fallback_string_match() -> None:
@@ -156,6 +198,44 @@ def test_compute_retrieval_metrics_keeps_legacy_fallback_string_match() -> None:
     assert hit is True
     assert math.isclose(mrr, 1.0)
     assert math.isclose(ndcg, 1.0)
+
+
+def test_compute_retrieval_metrics_rechunk_stability_with_same_source_metadata() -> None:
+    hit, mrr, ndcg = compute_retrieval_metrics(
+        ["docguide_chunk_0042_newhash"],
+        ["docs/guide.md"],
+        [
+            RetrievedSourceTrace(
+                chunk_id="docguide_chunk_0042_newhash",
+                doc_id="docguide",
+                source="docs/guide.md",
+                title="Guide",
+                section="Intro",
+            )
+        ],
+    )
+    assert hit is True
+    assert math.isclose(mrr, 1.0)
+    assert math.isclose(ndcg, 1.0)
+
+
+def test_compute_retrieval_metrics_similar_title_section_different_source_no_match() -> None:
+    hit, mrr, ndcg = compute_retrieval_metrics(
+        ["docwrong_chunk_0001_hash"],
+        ["source=docs/correct.md,title=guide,section=intro"],
+        [
+            RetrievedSourceTrace(
+                chunk_id="docwrong_chunk_0001_hash",
+                doc_id="docwrong",
+                source="docs/wrong.md",
+                title="guide",
+                section="intro",
+            )
+        ],
+    )
+    assert hit is False
+    assert math.isclose(mrr, 0.0)
+    assert math.isclose(ndcg, 0.0)
 
 
 def test_extract_trace_fields_collects_retrieved_source_metadata() -> None:
