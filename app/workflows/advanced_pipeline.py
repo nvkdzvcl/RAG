@@ -230,11 +230,36 @@ class CritiqueLoopStage(BasePipelineStage):
                         "candidate_count_after_filter",
                         len(pipeline.retrieved),
                     ),
+                    "retrieved_docs": [
+                        {
+                            "chunk_id": item.chunk_id,
+                            "doc_id": item.doc_id,
+                            "source": item.source,
+                            "title": item.title,
+                            "section": item.section,
+                            "file_name": item.metadata.get("file_name")
+                            or item.metadata.get("filename"),
+                            "file_type": item.metadata.get("file_type"),
+                            "uploaded_at": item.metadata.get("uploaded_at"),
+                            "created_at": item.metadata.get("created_at"),
+                            "page": item.page,
+                            "rank": item.rank,
+                            "block_type": item.metadata.get("block_type"),
+                            "ocr": bool(item.metadata.get("ocr")),
+                            "score": item.score,
+                            "dense_score": item.dense_score,
+                            "sparse_score": item.sparse_score,
+                        }
+                        for item in pipeline.retrieved
+                    ],
                     "reranked_count": len(pipeline.reranked),
                     "reranked_docs": [
                         {
                             "chunk_id": item.chunk_id,
                             "doc_id": item.doc_id,
+                            "source": item.source,
+                            "title": item.title,
+                            "section": item.section,
                             "file_name": item.metadata.get("file_name")
                             or item.metadata.get("filename"),
                             "file_type": item.metadata.get("file_type"),
@@ -256,6 +281,9 @@ class CritiqueLoopStage(BasePipelineStage):
                         {
                             "chunk_id": item.chunk_id,
                             "doc_id": item.doc_id,
+                            "source": item.source,
+                            "title": item.title,
+                            "section": item.section,
                             "file_name": item.metadata.get("file_name")
                             or item.metadata.get("filename"),
                             "file_type": item.metadata.get("file_type"),

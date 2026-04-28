@@ -32,10 +32,22 @@ class EvalExample(BaseModel):
     notes: str | None = None
 
 
+class RetrievedSourceTrace(BaseModel):
+    """Normalized source metadata from retrieved trace documents."""
+
+    chunk_id: str | None = None
+    doc_id: str | None = None
+    source: str | None = None
+    path: str | None = None
+    title: str | None = None
+    section: str | None = None
+
+
 class TraceExtraction(BaseModel):
     """Retrieval/rerank trace fields extracted from mode trace."""
 
     retrieved_chunk_ids: list[str] = Field(default_factory=list)
+    retrieved_sources: list[RetrievedSourceTrace] = Field(default_factory=list)
     rerank_scores: dict[str, float] = Field(default_factory=dict)
     retrieved_count: int = 0
     selected_context_count: int = 0
@@ -84,6 +96,7 @@ class ModeEvalOutput(BaseModel):
     confidence: float | None = None
     status: str | None = None
     retrieved_chunk_ids: list[str] = Field(default_factory=list)
+    retrieved_sources: list[RetrievedSourceTrace] = Field(default_factory=list)
     rerank_scores: dict[str, float] = Field(default_factory=dict)
     loop_count: int | None = None
     stop_reason: str | None = None

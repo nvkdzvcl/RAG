@@ -22,6 +22,12 @@ Mỗi dòng JSONL gồm:
 - `expected_behavior` (bắt buộc): `answer`, `abstain`, hoặc `retry`
 - `reference_answer` (tùy chọn)
 - `gold_sources` (tùy chọn)
+  - hỗ trợ chuỗi legacy như `docs/MODES.md`
+  - hỗ trợ selector có key để match ổn định hơn:
+    - `chunk_id=...`
+    - `doc_id=...`
+    - `source=...` hoặc `path=...`
+    - `title=...`, `section=...`
 - `category` (bắt buộc): `simple`, `multi_hop`, `ambiguous`, `insufficient_context`, `conflicting_sources`, `vietnamese`
 - `notes` (tùy chọn)
 

@@ -2,15 +2,206 @@
 
 from __future__ import annotations
 
+import json
 import math
 import re
 from collections.abc import Iterable
 
-from app.evaluation.schemas import EvalExpectedBehavior, EvalMetrics, TraceExtraction
+from app.evaluation.schemas import (
+    EvalExpectedBehavior,
+    EvalMetrics,
+    RetrievedSourceTrace,
+    TraceExtraction,
+)
 from app.schemas.common import Citation
 
 _TERM_PATTERN = re.compile(r"\w+")
 _ABSTAIN_STATUSES = {"abstained", "insufficient_evidence"}
+_GOLD_FIELD_PATTERN = re.compile(r"^\s*([a-zA-Z_]+)\s*[:=]\s*(.+?)\s*$")
+_GOLD_FIELD_ALIASES = {
+    "chunk_id": "chunk_id",
+    "chunk": "chunk_id",
+    "doc_id": "doc_id",
+    "doc": "doc_id",
+    "source": "source",
+    "path": "path",
+    "title": "title",
+    "section": "section",
+}
+
+
+def _normalize_text(value: str | None) -> str:
+    if not value:
+        return ""
+    return " ".join(value.strip().lower().split())
+
+
+def _normalize_path(value: str | None) -> str:
+    normalized = _normalize_text(value)
+    if not normalized:
+        return ""
+    normalized = normalized.replace("\\", "/")
+    while "//" in normalized:
+        normalized = normalized.replace("//", "/")
+    if normalized.startswith("./"):
+        normalized = normalized[2:]
+    return normalized
+
+
+def _basename(path: str) -> str:
+    if not path:
+        return ""
+    return path.rsplit("/", 1)[-1]
+
+
+def _derive_doc_id_from_chunk_id(chunk_id: str | None) -> str | None:
+    if not isinstance(chunk_id, str) or not chunk_id:
+        return None
+    if "_chunk_" not in chunk_id:
+        return None
+    return chunk_id.split("_chunk_", 1)[0]
+
+
+def _source_fingerprint(source: RetrievedSourceTrace) -> tuple[str, str, str, str, str, str]:
+    return (
+        _normalize_text(source.chunk_id),
+        _normalize_text(source.doc_id),
+        _normalize_path(source.source),
+        _normalize_path(source.path),
+        _normalize_text(source.title),
+        _normalize_text(source.section),
+    )
+
+
+def _to_retrieved_source(doc: dict) -> RetrievedSourceTrace | None:
+    chunk_id = doc.get("chunk_id") if isinstance(doc.get("chunk_id"), str) else None
+    doc_id = doc.get("doc_id") if isinstance(doc.get("doc_id"), str) else None
+    source = doc.get("source") if isinstance(doc.get("source"), str) else None
+    title = doc.get("title") if isinstance(doc.get("title"), str) else None
+    section = doc.get("section") if isinstance(doc.get("section"), str) else None
+    path = doc.get("path") if isinstance(doc.get("path"), str) else None
+
+    if doc_id is None:
+        doc_id = _derive_doc_id_from_chunk_id(chunk_id)
+    if path is None:
+        path = source
+
+    candidate = RetrievedSourceTrace(
+        chunk_id=chunk_id,
+        doc_id=doc_id,
+        source=source,
+        path=path,
+        title=title,
+        section=section,
+    )
+    if not any(_source_fingerprint(candidate)):
+        return None
+    return candidate
+
+
+def _parse_gold_source_fields(gold: str) -> dict[str, str]:
+    raw = gold.strip()
+    if not raw:
+        return {}
+
+    if raw.startswith("{") and raw.endswith("}"):
+        try:
+            payload = json.loads(raw)
+        except json.JSONDecodeError:
+            payload = None
+        if isinstance(payload, dict):
+            parsed: dict[str, str] = {}
+            for key, value in payload.items():
+                if not isinstance(key, str) or not isinstance(value, str):
+                    continue
+                alias = _GOLD_FIELD_ALIASES.get(key.strip().lower())
+                if alias:
+                    parsed[alias] = value.strip()
+            if parsed:
+                return parsed
+
+    parsed: dict[str, str] = {}
+    for part in re.split(r"[|,]", raw):
+        match = _GOLD_FIELD_PATTERN.match(part)
+        if match is None:
+            continue
+        raw_key, raw_value = match.groups()
+        key = _GOLD_FIELD_ALIASES.get(raw_key.strip().lower())
+        if key is None:
+            continue
+        value = raw_value.strip()
+        if value:
+            parsed[key] = value
+    return parsed
+
+
+def _match_structured_gold_source(
+    fields: dict[str, str], candidate: RetrievedSourceTrace
+) -> bool:
+    for key, expected in fields.items():
+        if key == "chunk_id":
+            if _normalize_text(candidate.chunk_id) != _normalize_text(expected):
+                return False
+            continue
+        if key == "doc_id":
+            if _normalize_text(candidate.doc_id) != _normalize_text(expected):
+                return False
+            continue
+        if key == "source":
+            if _normalize_path(candidate.source) != _normalize_path(expected):
+                return False
+            continue
+        if key == "path":
+            candidate_path = candidate.path or candidate.source
+            if _normalize_path(candidate_path) != _normalize_path(expected):
+                return False
+            continue
+        if key == "title":
+            if _normalize_text(candidate.title) != _normalize_text(expected):
+                return False
+            continue
+        if key == "section":
+            if _normalize_text(candidate.section) != _normalize_text(expected):
+                return False
+            continue
+    return True
+
+
+def _build_candidate_match_space(candidate: RetrievedSourceTrace) -> tuple[set[str], list[str]]:
+    chunk_id = _normalize_text(candidate.chunk_id)
+    doc_id = _normalize_text(candidate.doc_id)
+    source = _normalize_path(candidate.source)
+    path = _normalize_path(candidate.path or candidate.source)
+    title = _normalize_text(candidate.title)
+    section = _normalize_text(candidate.section)
+
+    tokens = {
+        token
+        for token in (
+            chunk_id,
+            doc_id,
+            source,
+            path,
+            _basename(source),
+            _basename(path),
+            title,
+            section,
+        )
+        if token
+    }
+    compounds = [
+        value
+        for value in (
+            f"{source}#{chunk_id}" if source and chunk_id else "",
+            f"{path}#{chunk_id}" if path and chunk_id else "",
+            f"{doc_id}#{chunk_id}" if doc_id and chunk_id else "",
+            f"{source}#{section}" if source and section else "",
+            f"{path}#{section}" if path and section else "",
+            f"{title}#{section}" if title and section else "",
+        )
+        if value
+    ]
+    return tokens, compounds
 
 
 def tokenize_terms(text: str) -> set[str]:
@@ -21,16 +212,30 @@ def tokenize_terms(text: str) -> set[str]:
 def extract_trace_fields(trace: list[dict]) -> TraceExtraction:
     """Extract retrieval/rerank details from workflow traces."""
     retrieved_chunk_ids: list[str] = []
+    retrieved_sources: list[RetrievedSourceTrace] = []
     rerank_scores: dict[str, float] = {}
     retrieved_count = 0
     selected_count = 0
     selected_context_texts: list[str] = []
     chunk_size: int | None = None
     chunk_overlap: int | None = None
+    source_fingerprints: set[tuple[str, str, str, str, str, str]] = set()
 
     def _push_chunk_id(chunk_id: str) -> None:
         if chunk_id and chunk_id not in retrieved_chunk_ids:
             retrieved_chunk_ids.append(chunk_id)
+
+    def _push_source_doc(doc: dict) -> None:
+        source = _to_retrieved_source(doc)
+        if source is None:
+            return
+        fingerprint = _source_fingerprint(source)
+        if fingerprint in source_fingerprints:
+            return
+        source_fingerprints.add(fingerprint)
+        retrieved_sources.append(source)
+        if source.chunk_id:
+            _push_chunk_id(source.chunk_id)
 
     for step in trace:
         if not isinstance(step, dict):
@@ -43,6 +248,11 @@ def extract_trace_fields(trace: list[dict]) -> TraceExtraction:
                 for value in chunk_ids:
                     if isinstance(value, str):
                         _push_chunk_id(value)
+            docs = step.get("docs", [])
+            if isinstance(docs, list):
+                for doc in docs:
+                    if isinstance(doc, dict):
+                        _push_source_doc(doc)
             count = step.get("count")
             if isinstance(count, int):
                 retrieved_count = count
@@ -59,6 +269,7 @@ def extract_trace_fields(trace: list[dict]) -> TraceExtraction:
                 for doc in docs:
                     if not isinstance(doc, dict):
                         continue
+                    _push_source_doc(doc)
                     chunk_id = doc.get("chunk_id")
                     if isinstance(chunk_id, str):
                         _push_chunk_id(chunk_id)
@@ -73,8 +284,10 @@ def extract_trace_fields(trace: list[dict]) -> TraceExtraction:
             docs = step.get("docs", [])
             if isinstance(docs, list):
                 for doc in docs:
-                    if isinstance(doc, dict) and isinstance(doc.get("content"), str):
-                        selected_context_texts.append(doc["content"])
+                    if isinstance(doc, dict):
+                        _push_source_doc(doc)
+                        if isinstance(doc.get("content"), str):
+                            selected_context_texts.append(doc["content"])
 
         if step_name == "loop":
             loop_chunk_size = step.get("chunk_size")
@@ -90,11 +303,18 @@ def extract_trace_fields(trace: list[dict]) -> TraceExtraction:
             if isinstance(loop_selected_count, int):
                 selected_count = loop_selected_count
 
+            retrieved_docs = step.get("retrieved_docs", [])
+            if isinstance(retrieved_docs, list):
+                for doc in retrieved_docs:
+                    if isinstance(doc, dict):
+                        _push_source_doc(doc)
+
             reranked_docs = step.get("reranked_docs", [])
             if isinstance(reranked_docs, list):
                 for doc in reranked_docs:
                     if not isinstance(doc, dict):
                         continue
+                    _push_source_doc(doc)
                     chunk_id = doc.get("chunk_id")
                     if isinstance(chunk_id, str):
                         _push_chunk_id(chunk_id)
@@ -105,14 +325,17 @@ def extract_trace_fields(trace: list[dict]) -> TraceExtraction:
             selected_docs = step.get("selected_context_docs", [])
             if isinstance(selected_docs, list):
                 for doc in selected_docs:
-                    if isinstance(doc, dict) and isinstance(doc.get("content"), str):
-                        selected_context_texts.append(doc["content"])
+                    if isinstance(doc, dict):
+                        _push_source_doc(doc)
+                        if isinstance(doc.get("content"), str):
+                            selected_context_texts.append(doc["content"])
 
     if retrieved_count == 0 and retrieved_chunk_ids:
         retrieved_count = len(retrieved_chunk_ids)
 
     return TraceExtraction(
         retrieved_chunk_ids=retrieved_chunk_ids,
+        retrieved_sources=retrieved_sources,
         rerank_scores=rerank_scores,
         retrieved_count=retrieved_count,
         selected_context_count=selected_count,
@@ -122,15 +345,28 @@ def extract_trace_fields(trace: list[dict]) -> TraceExtraction:
     )
 
 
-def _match_gold_source(
-    gold: str, citation_tokens: set[str], citation_compound: list[str]
-) -> bool:
-    normalized_gold = gold.strip().lower()
+def _match_gold_source(gold: str, candidate: RetrievedSourceTrace) -> bool:
+    normalized_gold = _normalize_text(gold)
     if not normalized_gold:
         return False
-    if normalized_gold in citation_tokens:
+
+    structured_fields = _parse_gold_source_fields(gold)
+    if structured_fields:
+        return _match_structured_gold_source(structured_fields, candidate)
+
+    tokens, compounds = _build_candidate_match_space(candidate)
+    if normalized_gold in tokens:
         return True
-    return any(normalized_gold in item for item in citation_compound)
+
+    normalized_gold_path = _normalize_path(gold)
+    if normalized_gold_path and normalized_gold_path in tokens:
+        return True
+
+    return any(
+        normalized_gold in item
+        or (normalized_gold_path and normalized_gold_path in item)
+        for item in compounds
+    )
 
 
 def cited_gold_source_overlap(
@@ -141,51 +377,75 @@ def cited_gold_source_overlap(
     if not expected:
         return None
 
-    citation_tokens: set[str] = set()
-    citation_compound: list[str] = []
+    citation_sources: list[RetrievedSourceTrace] = []
     for citation in citations:
-        citation_tokens.update(
-            {
-                citation.chunk_id.lower(),
-                citation.doc_id.lower(),
-                citation.source.lower(),
-            }
+        citation_sources.append(
+            RetrievedSourceTrace(
+                chunk_id=citation.chunk_id,
+                doc_id=citation.doc_id,
+                source=citation.source,
+                path=citation.source,
+                title=citation.title,
+                section=citation.section,
+            )
         )
-        citation_compound.append(f"{citation.source}#{citation.chunk_id}".lower())
-        citation_compound.append(f"{citation.doc_id}#{citation.chunk_id}".lower())
 
     matched = sum(
-        1
-        for source in expected
-        if _match_gold_source(source, citation_tokens, citation_compound)
+        1 for source in expected if any(
+            _match_gold_source(source, citation)
+            for citation in citation_sources
+        )
     )
     return matched / len(expected)
 
 
 def compute_retrieval_metrics(
-    retrieved_chunk_ids: list[str], gold_sources: list[str]
+    retrieved_chunk_ids: list[str],
+    gold_sources: list[str],
+    retrieved_sources: list[RetrievedSourceTrace] | None = None,
 ) -> tuple[bool, float, float]:
     """Compute Hit@K, MRR@K, and nDCG@K against gold sources."""
     expected = [source for source in gold_sources if source and source.strip()]
-    if not expected or not retrieved_chunk_ids:
+    if not expected:
+        return False, 0.0, 0.0
+
+    ranked_sources: list[RetrievedSourceTrace] = []
+    source_by_chunk_id: dict[str, RetrievedSourceTrace] = {}
+    for source in retrieved_sources or []:
+        chunk_id = _normalize_text(source.chunk_id)
+        if chunk_id and chunk_id not in source_by_chunk_id:
+            source_by_chunk_id[chunk_id] = source
+
+    seen_chunk_ids: set[str] = set()
+    for chunk_id in retrieved_chunk_ids:
+        normalized_chunk_id = _normalize_text(chunk_id)
+        if not normalized_chunk_id or normalized_chunk_id in seen_chunk_ids:
+            continue
+        seen_chunk_ids.add(normalized_chunk_id)
+        ranked_sources.append(
+            source_by_chunk_id.get(normalized_chunk_id)
+            or RetrievedSourceTrace(
+                chunk_id=chunk_id,
+                doc_id=_derive_doc_id_from_chunk_id(chunk_id),
+            )
+        )
+
+    if not ranked_sources:
+        ranked_sources = list(retrieved_sources or [])
+
+    if not ranked_sources:
         return False, 0.0, 0.0
 
     hit = False
     mrr = 0.0
     dcg = 0.0
-    matched_golds = set()
+    matched_golds: set[str] = set()
 
-    for i, chunk_id in enumerate(retrieved_chunk_ids):
-        # Extract base doc_id if chunk_id is standard deterministic format
-        doc_id = chunk_id.split("_chunk_")[0] if "_chunk_" in chunk_id else ""
-
-        citation_tokens = {chunk_id.lower(), doc_id.lower()}
-        citation_compound = [f"{doc_id}#{chunk_id}".lower()]
-
+    for i, source in enumerate(ranked_sources):
         newly_matched = False
         for gold in expected:
             if gold not in matched_golds:
-                if _match_gold_source(gold, citation_tokens, citation_compound):
+                if _match_gold_source(gold, source):
                     matched_golds.add(gold)
                     newly_matched = True
                     break
@@ -200,7 +460,7 @@ def compute_retrieval_metrics(
         return False, 0.0, 0.0
 
     idcg = 0.0
-    num_expected = min(len(expected), len(retrieved_chunk_ids))
+    num_expected = min(len(expected), len(ranked_sources))
     for i in range(num_expected):
         idcg += 1.0 / math.log2(i + 2)
 
@@ -253,7 +513,9 @@ def compute_metrics(
     gold_overlap = cited_gold_source_overlap(citations, gold_sources)
 
     hit, mrr, ndcg = compute_retrieval_metrics(
-        trace_fields.retrieved_chunk_ids, gold_sources
+        trace_fields.retrieved_chunk_ids,
+        gold_sources,
+        trace_fields.retrieved_sources,
     )
 
     groundedness_proxy: float | None = None

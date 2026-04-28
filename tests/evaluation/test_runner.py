@@ -160,6 +160,8 @@ def test_evaluation_runner_with_mocked_workflows(tmp_path: Path) -> None:
         item for item in report.mode_outputs if item.mode == Mode.STANDARD
     )
     assert "c1" in first_standard.retrieved_chunk_ids
+    assert first_standard.retrieved_sources
+    assert first_standard.retrieved_sources[0].chunk_id == "c1"
     assert first_standard.rerank_scores["c1"] == 0.88
 
 
