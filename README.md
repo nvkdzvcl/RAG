@@ -433,6 +433,30 @@ Trước khi push/release (full suite):
 make test-full
 ```
 
+## Security Audit
+
+Để quét bảo mật mã nguồn và lỗ hổng dependency tại local, sử dụng `bandit` và `pip-audit`.
+
+Cài đặt công cụ audit:
+
+```bash
+pip install pip-audit bandit
+```
+
+Chạy quét tĩnh mã nguồn (tìm lỗ hổng bảo mật trực tiếp trên code):
+
+```bash
+bandit -r app/
+```
+
+Chạy quét lỗ hổng thư viện phụ thuộc (CVE trong dependencies):
+
+```bash
+pip-audit -r requirements.txt -r requirements-dev.txt
+```
+
+> **Lưu ý:** Hiện tại CI job `Security & Dependency Audit` đã được thêm vào `.github/workflows/ci.yml` và được thiết lập chạy ở dạng không cấm push (`continue-on-error: true`). Sau khi giải quyết sạch các cảnh báo, team có thể gỡ bỏ cờ này để bắt buộc pass security gating.
+
 ## Ghi Chú
 
 - `requirements.in` và `requirements-dev.in` là file input để khai báo dải phiên bản.
