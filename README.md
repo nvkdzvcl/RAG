@@ -407,7 +407,8 @@ Cách đọc kết quả:
 Vòng lặp dev thông thường (nhanh, bỏ test nặng/e2e):
 
 ```bash
-.venv/bin/python -m pytest -m "not slow and not e2e"
+python -m pytest -m "not slow and not e2e" \
+  --cov=app --cov-report=term-missing --cov-report=xml --cov-fail-under=75
 # hoặc
 make test-fast
 ```
