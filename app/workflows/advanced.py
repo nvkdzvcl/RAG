@@ -13,6 +13,7 @@ from app.schemas.common import Citation, Mode
 from app.schemas.retrieval import RetrievalResult
 from app.schemas.workflow import WorkflowState
 from app.workflows.advanced_pipeline import (
+    ADVANCED_TIMING_KEYS,
     AdvancedPipelineContext,
     CritiqueLoopStage,
     FinalGroundingStage,
@@ -184,6 +185,28 @@ class AdvancedWorkflow:
         trace: list[dict[str, Any]],
     ) -> AdvancedQueryResponse:
         elapsed_ms = int((time.perf_counter() - start_time) * 1000)
+        response_trace = list(trace)
+        timing_step_index = next(
+            (
+                idx
+                for idx, step in reversed(list(enumerate(response_trace)))
+                if step.get("step") == "timing_summary"
+            ),
+            None,
+        )
+        if timing_step_index is None:
+            summary: dict[str, Any] = {"step": "timing_summary"}
+            for key in ADVANCED_TIMING_KEYS:
+                summary[key] = 0
+            summary["total_ms"] = elapsed_ms
+            response_trace.append(summary)
+        else:
+            summary = dict(response_trace[timing_step_index])
+            for key in ADVANCED_TIMING_KEYS:
+                summary.setdefault(key, 0)
+            summary["total_ms"] = elapsed_ms
+            response_trace[timing_step_index] = summary
+
         return AdvancedQueryResponse(
             mode="advanced",
             answer=answer,
@@ -200,7 +223,7 @@ class AdvancedWorkflow:
             citation_count=citation_count,
             hallucination_detected=hallucination_detected,
             llm_fallback_used=llm_fallback_used,
-            trace=trace,
+            trace=response_trace,
         )
 
     def _build_pipeline_executor(self, context: AdvancedPipelineContext) -> Pipeline:

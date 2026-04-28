@@ -456,6 +456,27 @@ class CompareWorkflow:
 
         return _handler
 
+    @staticmethod
+    def _inject_compare_timing_trace(
+        response: StandardQueryResponse | AdvancedQueryResponse,
+        *,
+        branch: Literal["standard", "advanced"],
+        branch_ms: int,
+        compare_total_ms: int,
+    ) -> StandardQueryResponse | AdvancedQueryResponse:
+        trace = list(response.trace or [])
+        branch_key = (
+            "standard_branch_ms" if branch == "standard" else "advanced_branch_ms"
+        )
+        trace.append(
+            {
+                "step": "compare_timing",
+                branch_key: int(branch_ms),
+                "compare_total_ms": int(compare_total_ms),
+            }
+        )
+        return response.model_copy(update={"trace": trace})
+
     async def run_async(
         self,
         query: str,
@@ -478,8 +499,10 @@ class CompareWorkflow:
             branch="advanced",
             event_context=event_context,
         )
-        standard, advanced = await asyncio.gather(
-            self._run_standard_async(
+
+        async def _run_standard_timed() -> tuple[StandardQueryResponse, int]:
+            branch_started = time.perf_counter()
+            result = await self._run_standard_async(
                 query=query,
                 chat_history=chat_history,
                 model=model,
@@ -487,8 +510,12 @@ class CompareWorkflow:
                 query_filters=query_filters,
                 event_handler=standard_event_handler,
                 event_context=event_context,
-            ),
-            self._run_advanced_async(
+            )
+            return result, int((time.perf_counter() - branch_started) * 1000)
+
+        async def _run_advanced_timed() -> tuple[AdvancedQueryResponse, int]:
+            branch_started = time.perf_counter()
+            result = await self._run_advanced_async(
                 query=query,
                 chat_history=chat_history,
                 model=model,
@@ -496,10 +523,39 @@ class CompareWorkflow:
                 query_filters=query_filters,
                 event_handler=advanced_event_handler,
                 event_context=event_context,
-            ),
+            )
+            return result, int((time.perf_counter() - branch_started) * 1000)
+
+        (standard, standard_branch_ms), (advanced, advanced_branch_ms) = (
+            await asyncio.gather(
+                _run_standard_timed(),
+                _run_advanced_timed(),
+            )
         )
 
         total_latency_ms = int((time.perf_counter() - started) * 1000)
+        standard = self._inject_compare_timing_trace(
+            standard,
+            branch="standard",
+            branch_ms=standard_branch_ms,
+            compare_total_ms=total_latency_ms,
+        )
+        advanced = self._inject_compare_timing_trace(
+            advanced,
+            branch="advanced",
+            branch_ms=advanced_branch_ms,
+            compare_total_ms=total_latency_ms,
+        )
+        await emit_stream_event(
+            event_handler,
+            {
+                "type": "compare_timing",
+                "standard_branch_ms": standard_branch_ms,
+                "advanced_branch_ms": advanced_branch_ms,
+                "compare_total_ms": total_latency_ms,
+                **dict(event_context or {}),
+            },
+        )
         summary = self._build_summary(
             standard=standard,
             advanced=advanced,

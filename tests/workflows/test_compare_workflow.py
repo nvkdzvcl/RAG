@@ -38,6 +38,79 @@ def test_compare_mode_schema_contract() -> None:
     )
 
 
+def test_compare_mode_trace_contains_branch_timing_metrics() -> None:
+    class _StandardBranch:
+        def run(
+            self,
+            query: str,
+            chat_history: list[dict[str, str]] | None = None,
+            model: str | None = None,
+            response_language: str | None = None,
+        ):
+            _ = query
+            _ = chat_history
+            _ = model
+            return validate_query_response(
+                {
+                    "mode": "standard",
+                    "answer": "standard branch",
+                    "citations": [],
+                    "confidence": 0.5,
+                    "status": "answered",
+                    "latency_ms": 11,
+                    "response_language": response_language or "en",
+                    "grounded_score": 0.3,
+                    "citation_count": 0,
+                    "hallucination_detected": False,
+                    "trace": [{"step": "timing_summary", "total_ms": 11}],
+                }
+            )
+
+    class _AdvancedBranch:
+        def run(
+            self,
+            query: str,
+            chat_history: list[dict[str, str]] | None = None,
+            model: str | None = None,
+            response_language: str | None = None,
+        ):
+            _ = query
+            _ = chat_history
+            _ = model
+            return validate_query_response(
+                {
+                    "mode": "advanced",
+                    "answer": "advanced branch",
+                    "citations": [],
+                    "confidence": 0.6,
+                    "status": "answered",
+                    "latency_ms": 13,
+                    "response_language": response_language or "en",
+                    "grounded_score": 0.35,
+                    "citation_count": 0,
+                    "hallucination_detected": False,
+                    "trace": [{"step": "timing_summary", "total_ms": 13}],
+                }
+            )
+
+    compare = CompareWorkflow(
+        standard_workflow=_StandardBranch(),  # type: ignore[arg-type]
+        advanced_workflow=_AdvancedBranch(),  # type: ignore[arg-type]
+    )
+    response = compare.run(query="compare timing")
+
+    standard_timing = next(
+        step for step in response.standard.trace if step.get("step") == "compare_timing"
+    )
+    advanced_timing = next(
+        step for step in response.advanced.trace if step.get("step") == "compare_timing"
+    )
+    assert isinstance(standard_timing["standard_branch_ms"], int)
+    assert isinstance(standard_timing["compare_total_ms"], int)
+    assert isinstance(advanced_timing["advanced_branch_ms"], int)
+    assert isinstance(advanced_timing["compare_total_ms"], int)
+
+
 def test_compare_workflow_uses_injected_qwen_backed_branches() -> None:
     class _MockQwenClient:
         def complete(self, prompt: str, system_prompt: str | None = None) -> str:

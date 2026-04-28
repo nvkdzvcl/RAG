@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from dataclasses import dataclass, field as dataclass_field
 from typing import Any, Literal
 
 from pydantic import BaseModel, Field
@@ -58,3 +59,18 @@ class RetrievalResult(BaseModel):
             rerank_score=rerank_score,
             rank=rank,
         )
+
+
+@dataclass(frozen=True)
+class RetrievalBatch:
+    """Request-scoped retrieval results plus diagnostics.
+
+    This avoids requiring callers to read mutable retriever-level
+    ``last_timing``/``last_filter_debug`` fields after a request, which is
+    unsafe when a shared retriever handles concurrent calls.
+    """
+
+    results: list[RetrievalResult]
+    timings_ms: dict[str, int] = dataclass_field(default_factory=dict)
+    timing_breakdown_available: bool = False
+    filter_debug: dict[str, Any] = dataclass_field(default_factory=dict)
