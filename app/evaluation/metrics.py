@@ -205,22 +205,6 @@ def _is_section_unambiguous(
     return matches == 1
 
 
-def _is_title_section_unambiguous(
-    title: str, section: str, candidates: list[RetrievedSourceTrace]
-) -> bool:
-    expected_title = _normalize_text(title)
-    expected_section = _normalize_text(section)
-    if not expected_title or not expected_section:
-        return False
-    matches = sum(
-        1
-        for candidate in candidates
-        if _candidate_title(candidate) == expected_title
-        and _candidate_section(candidate) == expected_section
-    )
-    return matches == 1
-
-
 def _derive_doc_id_from_chunk_id(chunk_id: str | None) -> str | None:
     if not isinstance(chunk_id, str) or not chunk_id:
         return None
@@ -333,7 +317,6 @@ def _match_structured_gold_source(
         return (
             _candidate_title(candidate) == _normalize_text(title_value)
             and _candidate_section(candidate) == _normalize_text(section_value)
-            and _is_title_section_unambiguous(title_value, section_value, candidates)
         )
 
     # 5) title-only / section-only if unambiguous
@@ -408,7 +391,6 @@ def _match_legacy_gold_source(
             if (
                 _candidate_title(candidate) == left
                 and _candidate_section(candidate) == right
-                and _is_title_section_unambiguous(left, right, candidates)
             ):
                 return True
 

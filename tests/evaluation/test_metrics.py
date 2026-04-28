@@ -183,6 +183,58 @@ def test_compute_retrieval_metrics_section_only_ambiguous_does_not_match() -> No
     assert math.isclose(ndcg, 0.0)
 
 
+def test_compute_retrieval_metrics_title_only_ambiguous_does_not_match() -> None:
+    hit, mrr, ndcg = compute_retrieval_metrics(
+        ["doca_chunk_0001_hash", "docb_chunk_0001_hash"],
+        ["title=project overview"],
+        [
+            RetrievedSourceTrace(
+                chunk_id="doca_chunk_0001_hash",
+                doc_id="doca",
+                source="docs/a.md",
+                title="project overview",
+                section="alpha",
+            ),
+            RetrievedSourceTrace(
+                chunk_id="docb_chunk_0001_hash",
+                doc_id="docb",
+                source="docs/b.md",
+                title="project overview",
+                section="beta",
+            ),
+        ],
+    )
+    assert hit is False
+    assert math.isclose(mrr, 0.0)
+    assert math.isclose(ndcg, 0.0)
+
+
+def test_compute_retrieval_metrics_section_only_unique_can_match() -> None:
+    hit, mrr, ndcg = compute_retrieval_metrics(
+        ["doca_chunk_0001_hash", "docb_chunk_0001_hash"],
+        ["section=advanced mode"],
+        [
+            RetrievedSourceTrace(
+                chunk_id="doca_chunk_0001_hash",
+                doc_id="doca",
+                source="docs/a.md",
+                title="overview",
+                section="introduction",
+            ),
+            RetrievedSourceTrace(
+                chunk_id="docb_chunk_0001_hash",
+                doc_id="docb",
+                source="docs/b.md",
+                title="details",
+                section="advanced mode",
+            ),
+        ],
+    )
+    assert hit is True
+    assert math.isclose(mrr, 1.0 / 2)
+    assert math.isclose(ndcg, 1.0 / math.log2(3))
+
+
 def test_compute_retrieval_metrics_keeps_legacy_fallback_string_match() -> None:
     hit, mrr, ndcg = compute_retrieval_metrics(
         ["docmodes_chunk_0005_abcd"],
