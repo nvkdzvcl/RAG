@@ -80,6 +80,12 @@ class HeuristicRetrievalGate:
 
         return True, "default_retrieval"
 
+    def heuristic_decide(
+        self, query: str, chat_history: list[dict[str, str]] | None = None
+    ) -> tuple[bool, str]:
+        """Public helper exposing deterministic gate decision only."""
+        return self._heuristic_decide(query, chat_history=chat_history)
+
     async def _llm_decide(
         self,
         query: str,
@@ -131,7 +137,27 @@ class HeuristicRetrievalGate:
         *,
         model: str | None = None,
         response_language: str = "en",
+        allow_llm: bool = True,
     ) -> tuple[bool, str]:
+        decision, reason, _strategy = await self.decide_with_strategy_async(
+            query,
+            chat_history=chat_history,
+            model=model,
+            response_language=response_language,
+            allow_llm=allow_llm,
+        )
+        return decision, reason
+
+    async def decide_with_strategy_async(
+        self,
+        query: str,
+        chat_history: list[dict[str, str]] | None = None,
+        *,
+        model: str | None = None,
+        response_language: str = "en",
+        allow_llm: bool = True,
+        force_llm: bool = False,
+    ) -> tuple[bool, str, str]:
         heuristic_need, heuristic_reason = self._heuristic_decide(
             query, chat_history=chat_history
         )
@@ -141,7 +167,11 @@ class HeuristicRetrievalGate:
             "small_talk",
             "small_talk_short",
         }:
-            return heuristic_need, heuristic_reason
+            return heuristic_need, heuristic_reason, "heuristic"
+
+        should_use_llm = (allow_llm and self.use_llm) or force_llm
+        if not should_use_llm:
+            return heuristic_need, heuristic_reason, "heuristic"
 
         llm_decision = await self._llm_decide(
             query,
@@ -150,8 +180,8 @@ class HeuristicRetrievalGate:
             response_language=response_language,
         )
         if llm_decision is not None:
-            return llm_decision
-        return heuristic_need, heuristic_reason
+            return llm_decision[0], llm_decision[1], "llm"
+        return heuristic_need, heuristic_reason, "heuristic"
 
     def decide(
         self,
@@ -160,6 +190,7 @@ class HeuristicRetrievalGate:
         *,
         model: str | None = None,
         response_language: str = "en",
+        allow_llm: bool = True,
     ) -> tuple[bool, str]:
         """Sync wrapper for legacy callers."""
         return run_coro_sync(
@@ -168,5 +199,6 @@ class HeuristicRetrievalGate:
                 chat_history=chat_history,
                 model=model,
                 response_language=response_language,
+                allow_llm=allow_llm,
             )
         )

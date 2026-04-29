@@ -10,9 +10,12 @@ from typing import Any, Protocol, TYPE_CHECKING
 from app.schemas.api import AdvancedQueryResponse
 from app.schemas.common import Citation
 from app.schemas.workflow import CritiqueResult, WorkflowState
+from app.workflows.advanced_policy import AdvancedPolicyInput
+from app.workflows.query_budget import classify_query_complexity
 from app.workflows.shared import (
     GroundingPolicy,
     assess_grounding_with_policy,
+    grounded_overlap_score,
     is_language_mismatch,
     localized_insufficient_evidence,
 )
@@ -143,8 +146,18 @@ class AdvancedPipelineContext:
     retrieval_cache_hit: bool = False
     rerank_cache_hit: bool = False
     llm_cache_hit: bool = False
+    query_complexity: str = "normal"
+    gate_strategy: str = "heuristic"
+    critique_strategy: str = "skipped"
+    refine_used: bool = False
+    language_rewrite_used: bool = False
+    hallucination_refine_used: bool = False
+    llm_call_count_estimate: int = 0
 
     terminal_response: AdvancedQueryResponse | None = None
+
+    def add_llm_calls(self, count: int = 1) -> None:
+        self.llm_call_count_estimate = max(0, self.llm_call_count_estimate + count)
 
     def timing_summary(self, *, total_ms: int | None = None) -> dict[str, Any]:
         """Build a trace-ready timing summary from measured stage timings."""
@@ -158,6 +171,12 @@ class AdvancedPipelineContext:
         summary["rerank_cache_hit"] = bool(self.rerank_cache_hit)
         summary["llm_cache_hit"] = bool(self.llm_cache_hit)
         summary["grounding_cache_hit"] = bool(self.grounding_cache_hit)
+        summary["gate_strategy"] = self.gate_strategy
+        summary["critique_strategy"] = self.critique_strategy
+        summary["refine_used"] = bool(self.refine_used)
+        summary["language_rewrite_used"] = bool(self.language_rewrite_used)
+        summary["hallucination_refine_used"] = bool(self.hallucination_refine_used)
+        summary["llm_call_count_estimate"] = int(self.llm_call_count_estimate)
         return summary
 
 
@@ -190,27 +209,108 @@ class BasePipelineStage:
 class RetrievalGateStage(BasePipelineStage):
     """Stage 1: decide whether retrieval is needed."""
 
+    @staticmethod
+    async def _decide_with_compat(
+        gate: Any,
+        query: str,
+        *,
+        chat_history: list[dict[str, str]],
+        model: str | None,
+        response_language: str,
+        allow_llm: bool,
+        force_llm: bool,
+    ) -> tuple[bool, str, str]:
+        decide_with_strategy = getattr(gate, "decide_with_strategy_async", None)
+        if callable(decide_with_strategy):
+            return await decide_with_strategy(
+                query,
+                chat_history=chat_history,
+                model=model,
+                response_language=response_language,
+                allow_llm=allow_llm,
+                force_llm=force_llm,
+            )
+
+        decide_async = getattr(gate, "decide_async", None)
+        if callable(decide_async):
+            try:
+                decision, reason = await decide_async(
+                    query,
+                    chat_history=chat_history,
+                    model=model,
+                    response_language=response_language,
+                    allow_llm=allow_llm,
+                )
+            except TypeError:
+                decision, reason = await decide_async(
+                    query,
+                    chat_history=chat_history,
+                    model=model,
+                    response_language=response_language,
+                )
+            return decision, reason, "heuristic"
+
+        try:
+            decision, reason = gate.decide(
+                query,
+                chat_history=chat_history,
+                model=model,
+                response_language=response_language,
+            )
+        except TypeError:
+            decision, reason = gate.decide(
+                query,
+                chat_history=chat_history,
+            )
+        return decision, reason, "heuristic"
+
     async def execute(self, state: WorkflowState) -> WorkflowState:
         context = self.context
         if context.terminal_response is not None:
             return state
         workflow = context.workflow
+        context.query_complexity = classify_query_complexity(state.normalized_query)
+        heuristic_decider = getattr(workflow.retrieval_gate, "heuristic_decide", None)
+        if callable(heuristic_decider):
+            heuristic_need, heuristic_reason = heuristic_decider(
+                state.normalized_query,
+                chat_history=context.normalized_history,
+            )
+        else:
+            heuristic_need, heuristic_reason = True, "default_retrieval"
+        allow_llm_gate = workflow.policy.should_use_llm_gate(
+            query=state.normalized_query,
+            query_complexity=context.query_complexity,
+            heuristic_reason=heuristic_reason,
+            user_selected_strictness=None,
+        )
         gate_started = time.perf_counter()
-        need_retrieval, gate_reason = await workflow.retrieval_gate.decide_async(
+        need_retrieval, gate_reason, gate_strategy = await self._decide_with_compat(
+            workflow.retrieval_gate,
             state.normalized_query,
             chat_history=context.normalized_history,
             model=context.model,
             response_language=context.resolved_language,
+            allow_llm=allow_llm_gate,
+            force_llm=workflow.force_llm_gate,
         )
         retrieval_gate_ms = int((time.perf_counter() - gate_started) * 1000)
         context.timings["retrieval_gate_ms"] = retrieval_gate_ms
+        context.gate_strategy = gate_strategy
+        if gate_strategy == "llm":
+            context.add_llm_calls(1)
         state.need_retrieval = need_retrieval
         context.trace.append(
             {
                 "step": "retrieval_gate",
                 "need_retrieval": need_retrieval,
                 "reason": gate_reason,
+                "heuristic_need_retrieval": heuristic_need,
+                "heuristic_reason": heuristic_reason,
+                "gate_strategy": gate_strategy,
+                "query_complexity": context.query_complexity,
                 "retrieval_gate_ms": retrieval_gate_ms,
+                "llm_call_count_estimate": context.llm_call_count_estimate,
                 "response_language": context.resolved_language,
                 "memory_window": workflow.memory_window,
                 "memory_messages": len(context.normalized_history),
@@ -224,6 +324,7 @@ class RetrievalGateStage(BasePipelineStage):
                 "stage_ms": retrieval_gate_ms,
                 "need_retrieval": need_retrieval,
                 "reason": gate_reason,
+                "gate_strategy": gate_strategy,
                 **context.event_context,
             },
         )
@@ -265,6 +366,89 @@ class RetrievalGateStage(BasePipelineStage):
 class CritiqueLoopStage(BasePipelineStage):
     """Stage 2: run rewrite/retrieve/generate/critique loop."""
 
+    @staticmethod
+    def _rewrite_may_use_llm(rewriter: Any) -> bool:
+        return bool(
+            getattr(rewriter, "use_llm", False)
+            and getattr(rewriter, "llm_client", None) is not None
+        )
+
+    @staticmethod
+    async def _critique_with_compat(
+        critic: Any,
+        *,
+        query: str,
+        draft_answer: str,
+        context_docs: list[Any],
+        loop_count: int,
+        max_loops: int,
+        chat_history: list[dict[str, str]],
+        model: str | None,
+        response_language: str,
+        allow_llm: bool,
+    ) -> tuple[CritiqueResult, str]:
+        critique_with_strategy = getattr(critic, "critique_with_strategy_async", None)
+        if callable(critique_with_strategy):
+            return await critique_with_strategy(
+                query=query,
+                draft_answer=draft_answer,
+                context=context_docs,
+                loop_count=loop_count,
+                max_loops=max_loops,
+                chat_history=chat_history,
+                model=model,
+                response_language=response_language,
+                allow_llm=allow_llm,
+            )
+
+        critique_async = getattr(critic, "critique_async", None)
+        if callable(critique_async):
+            try:
+                result = await critique_async(
+                    query=query,
+                    draft_answer=draft_answer,
+                    context=context_docs,
+                    loop_count=loop_count,
+                    max_loops=max_loops,
+                    chat_history=chat_history,
+                    model=model,
+                    response_language=response_language,
+                    allow_llm=allow_llm,
+                )
+            except TypeError:
+                result = await critique_async(
+                    query=query,
+                    draft_answer=draft_answer,
+                    context=context_docs,
+                    loop_count=loop_count,
+                    max_loops=max_loops,
+                    chat_history=chat_history,
+                    model=model,
+                    response_language=response_language,
+                )
+            return result, "heuristic"
+
+        try:
+            result = critic.critique(
+                query=query,
+                draft_answer=draft_answer,
+                context=context_docs,
+                loop_count=loop_count,
+                max_loops=max_loops,
+                chat_history=chat_history,
+                model=model,
+                response_language=response_language,
+            )
+        except TypeError:
+            result = critic.critique(
+                query=query,
+                draft_answer=draft_answer,
+                context=context_docs,
+                loop_count=loop_count,
+                max_loops=max_loops,
+            )
+        return result, "heuristic"
+
     async def execute(self, state: WorkflowState) -> WorkflowState:
         context = self.context
         if context.terminal_response is not None:
@@ -276,6 +460,7 @@ class CritiqueLoopStage(BasePipelineStage):
         current_query = context.current_query or state.normalized_query
         pipeline: StandardPipelineResult | None = None
         critique_result: CritiqueResult | None = None
+        critique_strategy: str = "skipped"
         standard_pipeline_total_ms = 0
         critique_total_ms = 0
         query_rewrite_total_ms = 0
@@ -293,6 +478,8 @@ class CritiqueLoopStage(BasePipelineStage):
                     model=context.model,
                     response_language=context.resolved_language,
                 )
+                if self._rewrite_may_use_llm(workflow.query_rewriter):
+                    context.add_llm_calls(1)
                 rewrite_ms = int((time.perf_counter() - rewrite_started) * 1000)
                 query_rewrite_total_ms += rewrite_ms
                 if rewrites:
@@ -325,20 +512,61 @@ class CritiqueLoopStage(BasePipelineStage):
                 item.model_dump() for item in pipeline.selected_context
             ]
             state.draft_answer = pipeline.generated.answer
+            if (
+                not pipeline.generated.fast_path
+                and pipeline.generated.stop_reason != "no_context"
+                and not bool(pipeline.generated.llm_cache_hit)
+            ):
+                context.add_llm_calls(1)
+
+            retrieval_confidence = _estimate_retrieval_confidence_from_pipeline(
+                pipeline
+            )
+            context_texts = [
+                item.content
+                for item in pipeline.selected_context
+                if item.content.strip()
+            ]
+            lexical_grounding_score = grounded_overlap_score(
+                pipeline.generated.answer,
+                context_texts,
+            )
+            policy_signal = AdvancedPolicyInput(
+                query_complexity=(
+                    pipeline.query_budget.complexity
+                    if pipeline.query_budget is not None
+                    else context.query_complexity
+                ),
+                retrieval_confidence=retrieval_confidence,
+                citation_count=len(pipeline.generated.citations),
+                grounding_lexical_score=lexical_grounding_score,
+                answer_length=len(pipeline.generated.answer.strip()),
+                fast_path_used=bool(pipeline.generated.fast_path),
+                user_selected_strictness=None,
+            )
+            allow_llm_critic = workflow.policy.should_use_llm_critic(
+                query=state.normalized_query,
+                signal=policy_signal,
+            )
 
             critique_started = time.perf_counter()
-            critique_result = await workflow.critic.critique_async(
+            critique_result, strategy = await self._critique_with_compat(
+                workflow.critic,
                 query=state.normalized_query,
                 draft_answer=pipeline.generated.answer,
-                context=pipeline.selected_context,
+                context_docs=pipeline.selected_context,
                 loop_count=loop,
                 max_loops=workflow.max_loops,
                 chat_history=context.normalized_history,
                 model=context.model,
                 response_language=context.resolved_language,
+                allow_llm=allow_llm_critic,
             )
             critique_ms = int((time.perf_counter() - critique_started) * 1000)
             critique_total_ms += critique_ms
+            critique_strategy = strategy
+            if strategy == "llm":
+                context.add_llm_calls(1)
             state.critique = critique_result
             state.confidence = critique_result.confidence
 
@@ -430,10 +658,17 @@ class CritiqueLoopStage(BasePipelineStage):
                     "generated_status": pipeline.generated.status,
                     "generated_stop_reason": pipeline.generated.stop_reason,
                     "generated_confidence": pipeline.generated.confidence,
+                    "gate_strategy": context.gate_strategy,
+                    "critique_strategy": strategy,
+                    "query_complexity": policy_signal.query_complexity,
+                    "retrieval_confidence": retrieval_confidence,
+                    "grounding_lexical_score": lexical_grounding_score,
+                    "fast_path_used": bool(pipeline.generated.fast_path),
                     "critique": critique_result.model_dump(),
                     "query_rewrite_ms": rewrite_ms,
                     "standard_pipeline_ms": standard_pipeline_ms,
                     "critique_ms": critique_ms,
+                    "llm_call_count_estimate": context.llm_call_count_estimate,
                     "retrieval_timing_breakdown_available": (
                         pipeline.retrieval_timing_breakdown_available
                     ),
@@ -452,6 +687,7 @@ class CritiqueLoopStage(BasePipelineStage):
                     "loop": loop,
                     "standard_pipeline_ms": standard_pipeline_ms,
                     "critique_ms": critique_ms,
+                    "critique_strategy": strategy,
                     "query_rewrite_ms": rewrite_ms,
                     **loop_event_context,
                 },
@@ -467,6 +703,7 @@ class CritiqueLoopStage(BasePipelineStage):
         context.current_query = current_query
         context.pipeline = pipeline
         context.critique_result = critique_result
+        context.critique_strategy = critique_strategy
         if pipeline is not None:
             context.embedding_cache_hit = pipeline.embedding_cache_hit
             context.retrieval_cache_hit = pipeline.retrieval_cache_hit
@@ -573,6 +810,7 @@ class RefineStage(BasePipelineStage):
 
         stage_started = time.perf_counter()
         refine_ms_total = 0
+        refine_used = False
         workflow = context.workflow
         pipeline = context.pipeline
         critique_result = context.critique_result
@@ -610,12 +848,7 @@ class RefineStage(BasePipelineStage):
         ):
             stop_reason = "max_loop_reached"
 
-        needs_refine_with_context = (
-            critique_result.should_refine_answer
-            or final_status == "insufficient_evidence"
-            or critique_category
-            in {"weak_evidence", "incomplete_answer", "hallucination"}
-        )
+        needs_refine_with_context = bool(critique_result.should_refine_answer)
         if (
             needs_refine_with_context
             and has_relevant_context
@@ -633,6 +866,8 @@ class RefineStage(BasePipelineStage):
                 response_language=context.resolved_language,
             )
             refine_ms_total += int((time.perf_counter() - refine_started) * 1000)
+            context.add_llm_calls(1)
+            refine_used = True
             if stop_reason != "max_loop_reached":
                 stop_reason = "refined_with_context"
 
@@ -640,6 +875,7 @@ class RefineStage(BasePipelineStage):
             final_status == "insufficient_evidence"
             and has_relevant_context
             and final_citations
+            and critique_result.should_refine_answer
         ):
             strict_refine_started = time.perf_counter()
             refined_from_insufficient = (
@@ -654,6 +890,8 @@ class RefineStage(BasePipelineStage):
                 )
             ).strip()
             refine_ms_total += int((time.perf_counter() - strict_refine_started) * 1000)
+            context.add_llm_calls(1)
+            refine_used = True
             refined_is_insufficient = refined_from_insufficient == insufficient_answer
             if refined_from_insufficient and not refined_is_insufficient:
                 final_answer = refined_from_insufficient
@@ -694,6 +932,7 @@ class RefineStage(BasePipelineStage):
         context.context_citations = context_citations
         context.critique_category = critique_category
         context.insufficient_answer = insufficient_answer
+        context.refine_used = refine_used
 
         state.final_answer = final_answer
         state.citations = final_citations
@@ -729,7 +968,10 @@ class LanguageGuardStage(BasePipelineStage):
         language_mismatch = is_language_mismatch(
             final_answer, context.resolved_language
         )
+        language_rewrite_used = False
         if language_mismatch and final_status != "insufficient_evidence":
+            language_rewrite_used = True
+            context.add_llm_calls(1)
             rewritten = (
                 await context.workflow.standard_workflow._rewrite_answer_language(
                     query=state.normalized_query,
@@ -749,6 +991,7 @@ class LanguageGuardStage(BasePipelineStage):
         context.final_answer = final_answer
         context.stop_reason = stop_reason
         context.language_mismatch = language_mismatch
+        context.language_rewrite_used = language_rewrite_used
         state.final_answer = final_answer
         state.stop_reason = stop_reason
         state.language_mismatch = language_mismatch
@@ -829,56 +1072,104 @@ class HallucinationGuardStage(BasePipelineStage):
         llm_fallback_used = bool(pipeline.generated.llm_fallback_used)
         llm_cache_hit = bool(pipeline.generated.llm_cache_hit)
         prior_stop_reason = context.stop_reason
+        hallucination_refine_used = False
 
         if hallucination_detected and context.final_status != "insufficient_evidence":
-            refined_grounded_answer = (
-                await RefineStage._refine_strict_grounded_with_compat(
-                    workflow,
-                    query=state.normalized_query,
-                    draft_answer=context.final_answer,
-                    context_docs=pipeline.selected_context,
-                    chat_history=context.normalized_history,
-                    model=context.model,
-                    response_language=context.resolved_language,
-                )
+            retrieval_confidence = _estimate_retrieval_confidence_from_pipeline(
+                pipeline
             )
-            refined_answer_text = refined_grounded_answer.strip()
-            refined_is_insufficient = refined_answer_text == context.insufficient_answer
-            refined_grounding_eval = assess_grounding_with_policy(
-                refined_answer_text,
+            lexical_grounding_score = grounded_overlap_score(
+                context.final_answer,
                 context.context_texts,
+            )
+            policy_signal = AdvancedPolicyInput(
+                query_complexity=(
+                    pipeline.query_budget.complexity
+                    if pipeline.query_budget is not None
+                    else context.query_complexity
+                ),
+                retrieval_confidence=retrieval_confidence,
                 citation_count=citation_count,
-                has_selected_context=bool(pipeline.selected_context),
-                status="insufficient_evidence"
-                if refined_is_insufficient
-                else context.final_status,
-                policy=_build_grounding_policy(
-                    pipeline=pipeline,
+                grounding_lexical_score=lexical_grounding_score,
+                answer_length=len(context.final_answer.strip()),
+                fast_path_used=bool(pipeline.generated.fast_path),
+                user_selected_strictness=None,
+            )
+            should_run_refine = workflow.policy.should_run_hallucination_refine(
+                query=state.normalized_query,
+                signal=policy_signal,
+                hallucination_detected=hallucination_detected,
+            )
+
+            refined_answer_text = ""
+            refined_is_insufficient = False
+            refined_hallucination = True
+            refined_score = 0.0
+            refined_reason = "policy_skip"
+            refined_grounding_eval = None
+            if should_run_refine:
+                hallucination_refine_used = True
+                context.add_llm_calls(1)
+                refined_grounded_answer = (
+                    await RefineStage._refine_strict_grounded_with_compat(
+                        workflow,
+                        query=state.normalized_query,
+                        draft_answer=context.final_answer,
+                        context_docs=pipeline.selected_context,
+                        chat_history=context.normalized_history,
+                        model=context.model,
+                        response_language=context.resolved_language,
+                    )
+                )
+                refined_answer_text = refined_grounded_answer.strip()
+                refined_is_insufficient = (
+                    refined_answer_text == context.insufficient_answer
+                )
+                refined_grounding_eval = assess_grounding_with_policy(
+                    refined_answer_text,
+                    context.context_texts,
+                    citation_count=citation_count,
+                    has_selected_context=bool(pipeline.selected_context),
                     status=(
                         "insufficient_evidence"
                         if refined_is_insufficient
                         else context.final_status
                     ),
-                    answer=refined_answer_text,
-                    citation_count=citation_count,
-                ),
-            )
-            refined_grounding = refined_grounding_eval.assessment
-            refined_score = refined_grounding.grounded_score
-            refined_reason = refined_grounding.grounding_reason
-            refined_hallucination = refined_grounding.hallucination_detected
+                    policy=_build_grounding_policy(
+                        pipeline=pipeline,
+                        status=(
+                            "insufficient_evidence"
+                            if refined_is_insufficient
+                            else context.final_status
+                        ),
+                        answer=refined_answer_text,
+                        citation_count=citation_count,
+                    ),
+                )
+                refined_grounding = refined_grounding_eval.assessment
+                refined_score = refined_grounding.grounded_score
+                refined_reason = refined_grounding.grounding_reason
+                refined_hallucination = refined_grounding.hallucination_detected
+
             context.trace.append(
                 {
                     "step": "hallucination_guard",
                     "triggered": True,
+                    "strategy": (
+                        "llm_refine" if should_run_refine else "skipped_by_policy"
+                    ),
                     "refined_grounded_score": refined_score,
                     "refined_grounding_reason": refined_reason,
                     "refined_hallucination_detected": refined_hallucination,
+                    "query_complexity": policy_signal.query_complexity,
+                    "retrieval_confidence": retrieval_confidence,
+                    "grounding_lexical_score": lexical_grounding_score,
+                    "citation_count": citation_count,
                     "critique_category": context.critique_category,
                 }
             )
 
-            if (
+            if should_run_refine and (
                 refined_answer_text
                 and not refined_is_insufficient
                 and not refined_hallucination
@@ -886,11 +1177,14 @@ class HallucinationGuardStage(BasePipelineStage):
                 context.final_answer = refined_answer_text
                 grounded_score = refined_score
                 grounding_reason = refined_reason
-                context.grounding_policy = refined_grounding_eval.grounding_policy
-                context.grounding_semantic_used = (
-                    refined_grounding_eval.grounding_semantic_used
-                )
-                context.grounding_cache_hit = refined_grounding_eval.grounding_cache_hit
+                if refined_grounding_eval is not None:
+                    context.grounding_policy = refined_grounding_eval.grounding_policy
+                    context.grounding_semantic_used = (
+                        refined_grounding_eval.grounding_semantic_used
+                    )
+                    context.grounding_cache_hit = (
+                        refined_grounding_eval.grounding_cache_hit
+                    )
                 if refined_score >= workflow.STRONG_GROUNDED_THRESHOLD:
                     context.final_status = "answered"
                 elif refined_score >= workflow.VERY_LOW_GROUNDED_THRESHOLD:
@@ -955,6 +1249,7 @@ class HallucinationGuardStage(BasePipelineStage):
             context.language_mismatch = is_language_mismatch(
                 context.final_answer, context.resolved_language
             )
+        context.hallucination_refine_used = hallucination_refine_used
 
         if (
             context.has_relevant_context
@@ -1045,6 +1340,12 @@ class FinalGroundingStage(BasePipelineStage):
                 "retrieval_cache_hit": context.retrieval_cache_hit,
                 "rerank_cache_hit": context.rerank_cache_hit,
                 "llm_cache_hit": context.llm_cache_hit,
+                "gate_strategy": context.gate_strategy,
+                "critique_strategy": context.critique_strategy,
+                "refine_used": context.refine_used,
+                "language_rewrite_used": context.language_rewrite_used,
+                "hallucination_refine_used": context.hallucination_refine_used,
+                "llm_call_count_estimate": context.llm_call_count_estimate,
             }
         )
 
@@ -1062,6 +1363,7 @@ class FinalGroundingStage(BasePipelineStage):
                 "step": "language_guard",
                 "response_language": context.resolved_language,
                 "language_mismatch": context.language_mismatch,
+                "language_rewrite_used": context.language_rewrite_used,
             }
         )
         context.trace.append(
@@ -1080,6 +1382,12 @@ class FinalGroundingStage(BasePipelineStage):
                 "embedding_cache_hit": context.embedding_cache_hit,
                 "retrieval_cache_hit": context.retrieval_cache_hit,
                 "rerank_cache_hit": context.rerank_cache_hit,
+                "gate_strategy": context.gate_strategy,
+                "critique_strategy": context.critique_strategy,
+                "refine_used": context.refine_used,
+                "language_rewrite_used": context.language_rewrite_used,
+                "hallucination_refine_used": context.hallucination_refine_used,
+                "llm_call_count_estimate": context.llm_call_count_estimate,
             }
         )
         stage_ms = int((time.perf_counter() - stage_started) * 1000)

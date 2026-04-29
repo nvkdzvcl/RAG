@@ -66,6 +66,9 @@ def test_settings_defaults(monkeypatch) -> None:
         "GROUNDING_SEMANTIC_STANDARD_ENABLED",
         "GROUNDING_SEMANTIC_ADVANCED_ENABLED",
         "MAX_ADVANCED_LOOPS",
+        "ADVANCED_ADAPTIVE_ENABLED",
+        "ADVANCED_FORCE_LLM_GATE",
+        "ADVANCED_FORCE_LLM_CRITIC",
         "MEMORY_WINDOW",
         "CACHE_ENABLED",
         "EMBEDDING_CACHE_ENABLED",
@@ -136,6 +139,9 @@ def test_settings_defaults(monkeypatch) -> None:
     assert settings.grounding_policy == "adaptive"
     assert settings.grounding_semantic_standard_enabled is False
     assert settings.grounding_semantic_advanced_enabled is True
+    assert settings.advanced_adaptive_enabled is True
+    assert settings.advanced_force_llm_gate is False
+    assert settings.advanced_force_llm_critic is False
     assert settings.cache_enabled is True
     assert settings.embedding_cache_enabled is True
     assert settings.retrieval_cache_enabled is True

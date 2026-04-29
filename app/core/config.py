@@ -103,6 +103,15 @@ class Settings(BaseSettings):
     )
 
     max_advanced_loops: int = Field(default=1, alias="MAX_ADVANCED_LOOPS")
+    advanced_adaptive_enabled: bool = Field(
+        default=True, alias="ADVANCED_ADAPTIVE_ENABLED"
+    )
+    advanced_force_llm_gate: bool = Field(
+        default=False, alias="ADVANCED_FORCE_LLM_GATE"
+    )
+    advanced_force_llm_critic: bool = Field(
+        default=False, alias="ADVANCED_FORCE_LLM_CRITIC"
+    )
     memory_window: int = Field(default=3, alias="MEMORY_WINDOW")
 
     cache_enabled: bool = Field(default=True, alias="CACHE_ENABLED")

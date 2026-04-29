@@ -148,9 +148,31 @@ def test_advanced_workflow_trace_contains_timing_metrics() -> None:
         "hallucination_guard_ms",
         "final_grounding_ms",
         "total_ms",
+        "gate_strategy",
+        "critique_strategy",
+        "refine_used",
+        "language_rewrite_used",
+        "hallucination_refine_used",
+        "llm_call_count_estimate",
     ):
         assert key in timing_summary
+    for key in (
+        "retrieval_gate_ms",
+        "standard_pipeline_ms",
+        "critique_ms",
+        "refine_ms",
+        "language_guard_ms",
+        "hallucination_guard_ms",
+        "final_grounding_ms",
+        "total_ms",
+        "llm_call_count_estimate",
+    ):
         assert isinstance(timing_summary[key], int)
+    assert timing_summary["gate_strategy"] in {"heuristic", "llm"}
+    assert timing_summary["critique_strategy"] in {"heuristic", "llm", "skipped"}
+    assert isinstance(timing_summary["refine_used"], bool)
+    assert isinstance(timing_summary["language_rewrite_used"], bool)
+    assert isinstance(timing_summary["hallucination_refine_used"], bool)
     grounding_step = next(
         step for step in response.trace if step.get("step") == "grounding_check"
     )
@@ -792,3 +814,341 @@ def test_advanced_preserves_citations_after_refine() -> None:
     assert any(
         citation.doc_id == "adv_doc_refine_001" for citation in response.citations
     )
+
+
+def test_advanced_adaptive_simple_query_avoids_extra_llm_calls() -> None:
+    class _FakeRetriever:
+        def retrieve(self, query: str, top_k: int = 5) -> list[RetrievalResult]:
+            _ = query
+            _ = top_k
+            return [
+                RetrievalResult(
+                    chunk_id="adv_adaptive_simple_001",
+                    doc_id="adv_adaptive_simple_doc_001",
+                    source="seeded://adaptive-simple",
+                    content="Self-RAG kết hợp retrieval và critique để tăng độ bám tài liệu.",
+                    score=0.95,
+                    score_type="hybrid",
+                    rank=1,
+                )
+            ]
+
+    class _FakeIndexManager:
+        def get_retriever(self) -> _FakeRetriever:
+            return _FakeRetriever()
+
+        def get_active_source(self) -> str:
+            return "seeded"
+
+    class _AdaptiveGate:
+        def __init__(self) -> None:
+            self.llm_calls = 0
+
+        def heuristic_decide(
+            self, query: str, chat_history: list[dict[str, str]] | None = None
+        ) -> tuple[bool, str]:
+            _ = query
+            _ = chat_history
+            return True, "default_retrieval"
+
+        async def decide_with_strategy_async(
+            self,
+            query: str,
+            chat_history: list[dict[str, str]] | None = None,
+            *,
+            model: str | None = None,
+            response_language: str = "en",
+            allow_llm: bool = True,
+            force_llm: bool = False,
+        ) -> tuple[bool, str, str]:
+            _ = query
+            _ = chat_history
+            _ = model
+            _ = response_language
+            if allow_llm or force_llm:
+                self.llm_calls += 1
+                return True, "llm_gate", "llm"
+            return True, "heuristic_gate", "heuristic"
+
+    class _AdaptiveCritic:
+        def __init__(self) -> None:
+            self.llm_calls = 0
+
+        async def critique_with_strategy_async(
+            self,
+            query: str,
+            draft_answer: str,
+            context: list[RetrievalResult],
+            *,
+            loop_count: int,
+            max_loops: int,
+            chat_history: list[dict[str, str]] | None = None,
+            model: str | None = None,
+            response_language: str = "en",
+            allow_llm: bool | None = None,
+        ) -> tuple[CritiqueResult, str]:
+            _ = query
+            _ = draft_answer
+            _ = context
+            _ = loop_count
+            _ = max_loops
+            _ = chat_history
+            _ = model
+            _ = response_language
+            if allow_llm:
+                self.llm_calls += 1
+                return (
+                    CritiqueResult(
+                        grounded=True,
+                        enough_evidence=True,
+                        has_conflict=False,
+                        missing_aspects=[],
+                        should_retry_retrieval=False,
+                        should_refine_answer=True,
+                        better_queries=[],
+                        confidence=0.78,
+                        note="incomplete_answer: use llm refine",
+                    ),
+                    "llm",
+                )
+            return (
+                CritiqueResult(
+                    grounded=True,
+                    enough_evidence=True,
+                    has_conflict=False,
+                    missing_aspects=[],
+                    should_retry_retrieval=False,
+                    should_refine_answer=False,
+                    better_queries=[],
+                    confidence=0.86,
+                    note="grounded: heuristic pass",
+                ),
+                "heuristic",
+            )
+
+    class _NoopRefiner:
+        async def refine_async(self, *args, **kwargs) -> str:
+            _ = args
+            _ = kwargs
+            return "noop"
+
+        async def refine_strict_grounded_async(self, *args, **kwargs) -> str:
+            _ = args
+            _ = kwargs
+            return "noop"
+
+        def refine(self, *args, **kwargs) -> str:
+            _ = args
+            _ = kwargs
+            return "noop"
+
+        def refine_strict_grounded(self, *args, **kwargs) -> str:
+            _ = args
+            _ = kwargs
+            return "noop"
+
+    gate = _AdaptiveGate()
+    critic = _AdaptiveCritic()
+    llm = StubLLMClient(
+        responder=lambda prompt, system, model=None: (
+            '{"answer":"Self-RAG kết hợp retrieval và critique để tăng độ bám tài liệu.",'
+            '"confidence":0.9,"status":"answered"}'
+        )
+    )
+    standard = StandardWorkflow(
+        index_manager=_FakeIndexManager(),
+        llm_client=llm,
+        reranker=ScoreOnlyReranker(),
+    )
+    workflow = AdvancedWorkflow(
+        standard_workflow=standard,
+        max_loops=1,
+        retrieval_gate=gate,  # type: ignore[arg-type]
+        critic=critic,  # type: ignore[arg-type]
+        refiner=_NoopRefiner(),  # type: ignore[arg-type]
+    )
+
+    response = workflow.run("Self-RAG hoạt động thế nào?")
+
+    timing_summary = next(
+        step for step in response.trace if step.get("step") == "timing_summary"
+    )
+    assert timing_summary["gate_strategy"] == "heuristic"
+    assert timing_summary["critique_strategy"] == "heuristic"
+    assert timing_summary["llm_call_count_estimate"] <= 1
+    assert gate.llm_calls == 0
+    assert critic.llm_calls == 0
+
+
+def test_advanced_adaptive_risky_query_keeps_safety_checks() -> None:
+    class _FakeRetriever:
+        def retrieve(self, query: str, top_k: int = 5) -> list[RetrievalResult]:
+            _ = query
+            _ = top_k
+            return [
+                RetrievalResult(
+                    chunk_id="adv_adaptive_risky_001",
+                    doc_id="adv_adaptive_risky_doc_001",
+                    source="seeded://adaptive-risky",
+                    content="Điều khoản mô tả nghĩa vụ, xử phạt và trình tự xử lý vi phạm.",
+                    score=0.91,
+                    score_type="hybrid",
+                    rank=1,
+                )
+            ]
+
+    class _FakeIndexManager:
+        def get_retriever(self) -> _FakeRetriever:
+            return _FakeRetriever()
+
+        def get_active_source(self) -> str:
+            return "seeded"
+
+    class _AdaptiveGate:
+        def __init__(self) -> None:
+            self.llm_calls = 0
+
+        def heuristic_decide(
+            self, query: str, chat_history: list[dict[str, str]] | None = None
+        ) -> tuple[bool, str]:
+            _ = query
+            _ = chat_history
+            return True, "default_retrieval"
+
+        async def decide_with_strategy_async(
+            self,
+            query: str,
+            chat_history: list[dict[str, str]] | None = None,
+            *,
+            model: str | None = None,
+            response_language: str = "en",
+            allow_llm: bool = True,
+            force_llm: bool = False,
+        ) -> tuple[bool, str, str]:
+            _ = query
+            _ = chat_history
+            _ = model
+            _ = response_language
+            if allow_llm or force_llm:
+                self.llm_calls += 1
+                return True, "llm_gate", "llm"
+            return True, "heuristic_gate", "heuristic"
+
+    class _AdaptiveCritic:
+        def __init__(self) -> None:
+            self.llm_calls = 0
+
+        async def critique_with_strategy_async(
+            self,
+            query: str,
+            draft_answer: str,
+            context: list[RetrievalResult],
+            *,
+            loop_count: int,
+            max_loops: int,
+            chat_history: list[dict[str, str]] | None = None,
+            model: str | None = None,
+            response_language: str = "en",
+            allow_llm: bool | None = None,
+        ) -> tuple[CritiqueResult, str]:
+            _ = query
+            _ = draft_answer
+            _ = context
+            _ = loop_count
+            _ = max_loops
+            _ = chat_history
+            _ = model
+            _ = response_language
+            if allow_llm:
+                self.llm_calls += 1
+                return (
+                    CritiqueResult(
+                        grounded=True,
+                        enough_evidence=True,
+                        has_conflict=False,
+                        missing_aspects=["chi tiết xử phạt"],
+                        should_retry_retrieval=False,
+                        should_refine_answer=True,
+                        better_queries=[],
+                        confidence=0.66,
+                        note="incomplete_answer: requires refinement",
+                    ),
+                    "llm",
+                )
+            return (
+                CritiqueResult(
+                    grounded=True,
+                    enough_evidence=True,
+                    has_conflict=False,
+                    missing_aspects=[],
+                    should_retry_retrieval=False,
+                    should_refine_answer=False,
+                    better_queries=[],
+                    confidence=0.84,
+                    note="grounded: heuristic pass",
+                ),
+                "heuristic",
+            )
+
+    class _CountingRefiner:
+        def __init__(self) -> None:
+            self.calls = 0
+
+        async def refine_async(self, *args, **kwargs) -> str:
+            _ = args
+            _ = kwargs
+            self.calls += 1
+            return "Theo ngữ cảnh, có quy định về nghĩa vụ và xử phạt."
+
+        async def refine_strict_grounded_async(self, *args, **kwargs) -> str:
+            _ = args
+            _ = kwargs
+            self.calls += 1
+            return "Theo ngữ cảnh, có quy định về nghĩa vụ và xử phạt."
+
+        def refine(self, *args, **kwargs) -> str:
+            _ = args
+            _ = kwargs
+            self.calls += 1
+            return "Theo ngữ cảnh, có quy định về nghĩa vụ và xử phạt."
+
+        def refine_strict_grounded(self, *args, **kwargs) -> str:
+            _ = args
+            _ = kwargs
+            self.calls += 1
+            return "Theo ngữ cảnh, có quy định về nghĩa vụ và xử phạt."
+
+    gate = _AdaptiveGate()
+    critic = _AdaptiveCritic()
+    refiner = _CountingRefiner()
+    llm = StubLLMClient(
+        responder=lambda prompt, system, model=None: (
+            '{"answer":"Có quy định chung, cần xem thêm chi tiết.",'
+            '"confidence":0.58,"status":"answered"}'
+        )
+    )
+    standard = StandardWorkflow(
+        index_manager=_FakeIndexManager(),
+        llm_client=llm,
+        reranker=ScoreOnlyReranker(),
+    )
+    workflow = AdvancedWorkflow(
+        standard_workflow=standard,
+        max_loops=1,
+        retrieval_gate=gate,  # type: ignore[arg-type]
+        critic=critic,  # type: ignore[arg-type]
+        refiner=refiner,  # type: ignore[arg-type]
+    )
+
+    response = workflow.run("Tư vấn pháp lý: điều khoản này quy định gì?")
+
+    timing_summary = next(
+        step for step in response.trace if step.get("step") == "timing_summary"
+    )
+    assert timing_summary["gate_strategy"] == "llm"
+    assert timing_summary["critique_strategy"] == "llm"
+    assert timing_summary["refine_used"] is True
+    assert timing_summary["llm_call_count_estimate"] >= 3
+    assert gate.llm_calls >= 1
+    assert critic.llm_calls >= 1
+    assert refiner.calls >= 1

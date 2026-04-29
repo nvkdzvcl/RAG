@@ -319,7 +319,34 @@ class HeuristicCritic:
         chat_history: list[dict[str, str]] | None = None,
         model: str | None = None,
         response_language: str = "en",
+        allow_llm: bool | None = None,
     ) -> CritiqueResult:
+        result, _strategy = await self.critique_with_strategy_async(
+            query=query,
+            draft_answer=draft_answer,
+            context=context,
+            loop_count=loop_count,
+            max_loops=max_loops,
+            chat_history=chat_history,
+            model=model,
+            response_language=response_language,
+            allow_llm=allow_llm,
+        )
+        return result
+
+    async def critique_with_strategy_async(
+        self,
+        query: str,
+        draft_answer: str,
+        context: list[RetrievalResult],
+        *,
+        loop_count: int,
+        max_loops: int,
+        chat_history: list[dict[str, str]] | None = None,
+        model: str | None = None,
+        response_language: str = "en",
+        allow_llm: bool | None = None,
+    ) -> tuple[CritiqueResult, str]:
         heuristic = self._heuristic_critique(
             query=query,
             draft_answer=draft_answer,
@@ -330,7 +357,13 @@ class HeuristicCritic:
 
         normalized_query = query.lower()
         if "force retry" in normalized_query or "force abstain" in normalized_query:
-            return heuristic
+            return heuristic, "heuristic"
+
+        can_use_llm = self.use_llm if allow_llm is None else bool(
+            self.use_llm and allow_llm
+        )
+        if not can_use_llm:
+            return heuristic, "heuristic"
 
         llm_result = await self._llm_critique(
             query=query,
@@ -343,7 +376,9 @@ class HeuristicCritic:
             model=model,
             response_language=response_language,
         )
-        return llm_result or heuristic
+        if llm_result is not None:
+            return llm_result, "llm"
+        return heuristic, "heuristic"
 
     def critique(
         self,
@@ -356,6 +391,7 @@ class HeuristicCritic:
         chat_history: list[dict[str, str]] | None = None,
         model: str | None = None,
         response_language: str = "en",
+        allow_llm: bool | None = None,
     ) -> CritiqueResult:
         """Sync wrapper for legacy callers."""
         return run_coro_sync(
@@ -368,5 +404,6 @@ class HeuristicCritic:
                 chat_history=chat_history,
                 model=model,
                 response_language=response_language,
+                allow_llm=allow_llm,
             )
         )

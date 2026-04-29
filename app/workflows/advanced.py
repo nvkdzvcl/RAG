@@ -23,6 +23,7 @@ from app.workflows.advanced_pipeline import (
     RefineStage,
     RetrievalGateStage,
 )
+from app.workflows.advanced_policy import AdvancedPolicy
 from app.workflows.critique import HeuristicCritic
 from app.workflows.query_rewrite import QueryRewriter
 from app.workflows.refine import AnswerRefiner
@@ -87,6 +88,18 @@ class AdvancedWorkflow:
             else int(getattr(settings, "max_advanced_loops", 1))
         )
         self.memory_window = max(0, int(getattr(settings, "memory_window", 3)))
+        self.adaptive_enabled = bool(
+            getattr(settings, "advanced_adaptive_enabled", True)
+        )
+        self.force_llm_gate = bool(getattr(settings, "advanced_force_llm_gate", False))
+        self.force_llm_critic = bool(
+            getattr(settings, "advanced_force_llm_critic", False)
+        )
+        self.policy = AdvancedPolicy(
+            adaptive_enabled=self.adaptive_enabled,
+            force_llm_gate=self.force_llm_gate,
+            force_llm_critic=self.force_llm_critic,
+        )
 
         self.standard_workflow = standard_workflow or StandardWorkflow()
         llm_client = self.standard_workflow.generator.llm_client

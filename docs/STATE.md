@@ -13,6 +13,7 @@ Last updated: 2026-04-29 (Asia/Bangkok)
 - Dynamic query budget for Standard mode is implemented (`simple_extractive` / `normal` / `complex`).
 - Adaptive grounding is implemented with policy, lazy semantic usage, and grounding cache.
 - Cascade reranking is implemented to reduce cross-encoder CPU overhead for cheap/high-confidence cases.
+- Advanced mode uses adaptive LLM-call policy to skip gate/critic/refine calls when signals are strong, while preserving strict/risky safety paths.
 - Response schema compatibility is preserved (`latency_ms` and existing fields intact).
 
 ## Recently completed
@@ -71,6 +72,30 @@ Last updated: 2026-04-29 (Asia/Bangkok)
   - `tests/workflows/test_rerank_policy.py`
   - `tests/workflows/test_standard_workflow.py`
 
+### 4) Adaptive advanced-mode LLM call policy
+- Added `AdvancedPolicy` to control when to use:
+  - retrieval gate LLM (`heuristic` vs `llm`)
+  - critique LLM (`heuristic` vs `llm` / `skipped`)
+  - hallucination strict refine
+- Retrieval gate now defaults to heuristic and escalates to LLM only for ambiguity/risk/strictness.
+- Critique now runs heuristic-first and escalates to LLM only when risk/grounding/retrieval signals require it.
+- Refine step runs only when critique requires changes.
+- Language guard remains deterministic-first (LLM rewrite only on mismatch).
+- Added advanced trace/timing fields:
+  - `gate_strategy`
+  - `critique_strategy`
+  - `refine_used`
+  - `language_rewrite_used`
+  - `hallucination_refine_used`
+  - `llm_call_count_estimate`
+- Key files:
+  - `app/workflows/advanced_policy.py`
+  - `app/workflows/advanced.py`
+  - `app/workflows/advanced_pipeline.py`
+  - `app/workflows/retrieval_gate.py`
+  - `app/workflows/critique.py`
+  - `tests/workflows/test_advanced_workflow.py`
+
 ## Environment/config additions
 - Grounding:
   - `GROUNDING_POLICY=adaptive`
@@ -81,6 +106,10 @@ Last updated: 2026-04-29 (Asia/Bangkok)
   - `RERANK_SIMPLE_SKIP_CROSS_ENCODER=true`
   - `RERANK_MIN_CANDIDATES_FOR_CROSS_ENCODER=4`
   - `RERANK_SCORE_GAP_THRESHOLD=0.2`
+- Advanced adaptive controls:
+  - `ADVANCED_ADAPTIVE_ENABLED=true`
+  - `ADVANCED_FORCE_LLM_GATE=false`
+  - `ADVANCED_FORCE_LLM_CRITIC=false`
 
 ## Validation status (latest)
 - `make test-fast`: pass (`255 passed, 8 deselected`)
