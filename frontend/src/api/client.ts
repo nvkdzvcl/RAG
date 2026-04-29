@@ -22,6 +22,7 @@ import type {
 const API_BASE_URL = (import.meta.env.VITE_API_BASE_URL || "/api/v1").replace(/\/$/, "");
 const QUERY_STREAM_ENABLED = String(import.meta.env.VITE_QUERY_STREAM_ENABLED ?? "true").toLowerCase() === "true";
 const DOCUMENTS_BASE_URL = `${API_BASE_URL}/documents`;
+const DOCUMENTS_UPLOAD_URL = `${DOCUMENTS_BASE_URL}/upload`;
 const SETTINGS_BASE_URL = `${API_BASE_URL}/settings`;
 
 export class ApiRequestError extends Error {
@@ -561,13 +562,12 @@ export async function uploadDocument(
   file: File,
   onProgress?: (progressPercent: number) => void,
 ): Promise<ApiUploadDocumentResponse> {
-  // TODO(backend): implement POST /api/v1/documents to accept multipart PDF uploads.
   return new Promise<ApiUploadDocumentResponse>((resolve, reject) => {
     const request = new XMLHttpRequest();
     const formData = new FormData();
     formData.append("file", file);
 
-    request.open("POST", DOCUMENTS_BASE_URL, true);
+    request.open("POST", DOCUMENTS_UPLOAD_URL, true);
     request.responseType = "json";
 
     request.upload.onprogress = (event) => {
@@ -613,8 +613,7 @@ export async function uploadDocument(
 }
 
 export async function getDocumentStatus(documentId: string): Promise<ApiDocumentStatusResponse> {
-  // TODO(backend): implement GET /api/v1/documents/{document_id} to return processing status.
-  const response = await fetch(`${DOCUMENTS_BASE_URL}/${encodeURIComponent(documentId)}`, {
+  const response = await fetch(`${DOCUMENTS_BASE_URL}/${encodeURIComponent(documentId)}/status`, {
     method: "GET",
   });
 
@@ -627,7 +626,6 @@ export async function getDocumentStatus(documentId: string): Promise<ApiDocument
 }
 
 export async function listDocuments(): Promise<ApiDocument[]> {
-  // TODO(backend): implement GET /api/v1/documents to list uploaded document metadata.
   const response = await fetch(DOCUMENTS_BASE_URL, {
     method: "GET",
   });

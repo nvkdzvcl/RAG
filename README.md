@@ -130,7 +130,7 @@ Nếu ra JSON model list là OK.
 OLLAMA_BASE_URL=http://172.25.80.1:11434
 
 LLM_PROVIDER=openai_compatible
-LLM_MODEL=qwen2.5:latest
+LLM_MODEL=qwen2.5:3b
 LLM_API_BASE=http://172.25.80.1:11434/v1
 LLM_API_KEY=ollama
 ```
