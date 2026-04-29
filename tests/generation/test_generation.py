@@ -195,3 +195,32 @@ def test_non_title_definition_question_keeps_normal_answer_flow() -> None:
 
     assert result.stop_reason == "generated"
     assert "Tên của Điều" not in result.answer
+
+
+def test_generate_answer_forwards_max_tokens_to_llm() -> None:
+    observed: dict[str, int | None] = {"max_tokens": None}
+
+    def _responder(
+        prompt: str,
+        system: str | None = None,
+        model: str | None = None,
+        max_tokens: int | None = None,
+    ) -> str:
+        _ = prompt
+        _ = system
+        _ = model
+        observed["max_tokens"] = max_tokens
+        return '{"answer":"Token-capped answer.","confidence":0.8,"status":"answered"}'
+
+    llm = StubLLMClient(responder=_responder)
+    generator = BaselineGenerator(llm_client=llm)
+
+    result = generator.generate_answer(
+        query="What is Self-RAG?",
+        context=_sample_context(),
+        mode=Mode.STANDARD,
+        max_tokens=321,
+    )
+
+    assert result.answer == "Token-capped answer."
+    assert observed["max_tokens"] == 321

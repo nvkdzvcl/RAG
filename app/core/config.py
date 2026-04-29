@@ -72,6 +72,18 @@ class Settings(BaseSettings):
     llm_gate_max_tokens: int = Field(default=128, alias="LLM_GATE_MAX_TOKENS")
     llm_rewrite_max_tokens: int = Field(default=256, alias="LLM_REWRITE_MAX_TOKENS")
     llm_critique_max_tokens: int = Field(default=384, alias="LLM_CRITIQUE_MAX_TOKENS")
+    rag_dynamic_budget_enabled: bool = Field(
+        default=True, alias="RAG_DYNAMIC_BUDGET_ENABLED"
+    )
+    rag_simple_max_tokens: int = Field(default=384, alias="RAG_SIMPLE_MAX_TOKENS")
+    rag_normal_max_tokens: int = Field(default=768, alias="RAG_NORMAL_MAX_TOKENS")
+    rag_complex_max_tokens: int = Field(default=1536, alias="RAG_COMPLEX_MAX_TOKENS")
+    rag_simple_context_chars: int = Field(
+        default=1600, alias="RAG_SIMPLE_CONTEXT_CHARS"
+    )
+    rag_normal_context_chars: int = Field(
+        default=3000, alias="RAG_NORMAL_CONTEXT_CHARS"
+    )
 
     max_advanced_loops: int = Field(default=1, alias="MAX_ADVANCED_LOOPS")
     memory_window: int = Field(default=3, alias="MEMORY_WINDOW")

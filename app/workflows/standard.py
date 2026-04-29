@@ -45,6 +45,7 @@ from app.schemas.generation import GeneratedAnswer
 from app.schemas.ingestion import DocumentChunk
 from app.schemas.retrieval import RetrievalResult
 from app.services.index_runtime import EmptyRetriever
+from app.workflows.query_budget import QueryBudget, choose_query_budget
 from app.workflows.shared import (
     assess_grounding,
     build_chat_history_context,
@@ -74,6 +75,7 @@ class StandardPipelineResult:
     retrieval_debug: dict[str, Any] = field(default_factory=dict)
     timings: dict[str, int] = field(default_factory=dict)
     retrieval_timing_breakdown_available: bool = False
+    query_budget: QueryBudget | None = None
 
 
 class RetrieverLike(Protocol):
@@ -141,7 +143,8 @@ class StandardWorkflow:
         self.configured_rerank_top_n = max(1, int(configured_rerank))
         self.rerank_top_k = min(self.configured_rerank_top_n, self.hybrid_top_k)
         self.reranker_enabled = bool(getattr(settings, "reranker_enabled", True))
-        self.context_top_k = context_top_k
+        self.context_top_k = max(1, int(context_top_k))
+        self.context_max_chars = max(1, int(context_max_chars))
         self.chunk_size = (
             chunk_size
             if chunk_size is not None
@@ -158,6 +161,28 @@ class StandardWorkflow:
         self.persist_indexes = persist_indexes
         self.index_manager = index_manager
         self.caches = create_cache_group_from_settings(settings)
+        self.default_llm_max_tokens = max(
+            1, int(getattr(settings, "llm_max_tokens", 2048))
+        )
+        self.dynamic_budget_enabled = bool(
+            getattr(settings, "rag_dynamic_budget_enabled", True)
+        )
+        self.simple_max_tokens = max(
+            1, int(getattr(settings, "rag_simple_max_tokens", 384))
+        )
+        self.normal_max_tokens = max(
+            1, int(getattr(settings, "rag_normal_max_tokens", 768))
+        )
+        self.complex_max_tokens = max(
+            1, int(getattr(settings, "rag_complex_max_tokens", 1536))
+        )
+        self.simple_context_chars = max(
+            1, int(getattr(settings, "rag_simple_context_chars", 1600))
+        )
+        self.normal_context_chars = max(
+            1, int(getattr(settings, "rag_normal_context_chars", 3000))
+        )
+        self._retrieval_top_k_overridden = hybrid_top_k is not None
 
         self._fallback_retriever: RetrieverLike | None = None
 
@@ -206,7 +231,7 @@ class StandardWorkflow:
                 batch_size=settings.reranker_batch_size,
             )
         self.context_selector = ContextSelector(
-            max_chunks=context_top_k, max_chars=context_max_chars
+            max_chunks=self.context_top_k, max_chars=self.context_max_chars
         )
         resolved_llm_client = llm_client or create_llm_client_from_settings(settings)
         self.generator = BaselineGenerator(
@@ -277,6 +302,7 @@ class StandardWorkflow:
         """Update retrieval top_k and keep rerank top_n bounded."""
         self.hybrid_top_k = max(1, int(top_k))
         self.rerank_top_k = min(self.configured_rerank_top_n, self.hybrid_top_k)
+        self._retrieval_top_k_overridden = True
 
     def get_retrieval_top_k(self) -> int:
         """Return effective retrieval top_k."""
@@ -303,7 +329,28 @@ class StandardWorkflow:
         timer = StepTimer()
         with timer.measure("normalize_query_ms"):
             normalized_query = normalize_query(query)
-        retrieval_top_k = max(1, self.hybrid_top_k)
+        query_budget = choose_query_budget(
+            normalized_query,
+            dynamic_enabled=self.dynamic_budget_enabled,
+            base_hybrid_top_k=self.hybrid_top_k,
+            base_rerank_top_k=self.rerank_top_k,
+            base_context_top_k=self.context_top_k,
+            base_context_max_chars=self.context_max_chars,
+            base_llm_max_tokens=self.default_llm_max_tokens,
+            simple_max_tokens=self.simple_max_tokens,
+            normal_max_tokens=self.normal_max_tokens,
+            complex_max_tokens=self.complex_max_tokens,
+            simple_context_chars=self.simple_context_chars,
+            normal_context_chars=self.normal_context_chars,
+            retrieval_top_k_locked=self._retrieval_top_k_overridden,
+        )
+        retrieval_top_k = query_budget.hybrid_top_k
+        rerank_top_k = query_budget.rerank_top_k
+        context_selector = ContextSelector(
+            max_chunks=query_budget.context_top_k,
+            max_chars=query_budget.context_max_chars,
+            min_useful_chars=self.context_selector.min_useful_chars,
+        )
         retriever = self._get_retriever(query_filters=query_filters)
         retrieval_debug: dict[str, Any] = {}
         retrieval_timing_payload: dict[str, int] = {}
@@ -397,13 +444,13 @@ class StandardWorkflow:
                 self.reranker.rerank,
                 normalized_query,
                 retrieved,
-                self.rerank_top_k,
+                rerank_top_k,
             )
         with timer.measure("context_select_ms"):
             selected_context = await asyncio.to_thread(
-                self.context_selector.select,
+                context_selector.select,
                 reranked,
-                self.context_top_k,
+                query_budget.context_top_k,
             )
         await emit_stream_event(
             event_handler,
@@ -411,6 +458,8 @@ class StandardWorkflow:
                 "type": "retrieval",
                 "mode": mode.value,
                 "query": normalized_query,
+                "query_complexity": query_budget.complexity,
+                "query_budget": query_budget.as_trace_payload(),
                 "retrieved_count": len(retrieved),
                 "reranked_count": len(reranked),
                 "selected_count": len(selected_context),
@@ -487,6 +536,7 @@ class StandardWorkflow:
                     context=selected_context,
                     mode=mode,
                     model=model,
+                    max_tokens=query_budget.max_tokens,
                     response_language=response_language,
                     chat_history_context=history_context,
                     on_llm_delta=_on_llm_delta if event_handler is not None else None,
@@ -510,10 +560,15 @@ class StandardWorkflow:
 
         logger.info(
             (
-                "Standard retrieval config | top_k=%s | rerank_top_n=%s | final_context_size=%s"
+                "Standard retrieval config | complexity=%s | top_k=%s | rerank_top_n=%s "
+                "| context_top_k=%s | context_max_chars=%s | max_tokens=%s | final_context_size=%s"
             ),
+            query_budget.complexity,
             retrieval_top_k,
-            self.rerank_top_k,
+            rerank_top_k,
+            query_budget.context_top_k,
+            query_budget.context_max_chars,
+            query_budget.max_tokens,
             len(selected_context),
         )
 
@@ -526,6 +581,7 @@ class StandardWorkflow:
             retrieval_debug=retrieval_debug,
             timings=timer.metrics(),
             retrieval_timing_breakdown_available=retrieval_timing_breakdown_available,
+            query_budget=query_budget,
         )
 
     async def run_async(
@@ -554,6 +610,21 @@ class StandardWorkflow:
             query_filters=query_filters,
             event_handler=event_handler,
             event_context=event_context,
+        )
+        effective_budget = pipeline.query_budget or choose_query_budget(
+            pipeline.normalized_query,
+            dynamic_enabled=self.dynamic_budget_enabled,
+            base_hybrid_top_k=self.hybrid_top_k,
+            base_rerank_top_k=self.rerank_top_k,
+            base_context_top_k=self.context_top_k,
+            base_context_max_chars=self.context_max_chars,
+            base_llm_max_tokens=self.default_llm_max_tokens,
+            simple_max_tokens=self.simple_max_tokens,
+            normal_max_tokens=self.normal_max_tokens,
+            complex_max_tokens=self.complex_max_tokens,
+            simple_context_chars=self.simple_context_chars,
+            normal_context_chars=self.normal_context_chars,
+            retrieval_top_k_locked=self._retrieval_top_k_overridden,
         )
         timings = {
             key: int(value)
@@ -623,8 +694,10 @@ class StandardWorkflow:
                 "memory_messages": len(normalized_history),
                 "chunk_size": self.chunk_size,
                 "chunk_overlap": self.chunk_overlap,
-                "top_k": self.hybrid_top_k,
-                "rerank_top_n": self.rerank_top_k,
+                "top_k": effective_budget.hybrid_top_k,
+                "rerank_top_n": effective_budget.rerank_top_k,
+                "query_complexity": effective_budget.complexity,
+                "query_budget": effective_budget.as_trace_payload(),
                 "index_source": self._get_index_source(),
                 "count": len(pipeline.retrieved),
                 "chunk_ids": [item.chunk_id for item in pipeline.retrieved],
@@ -674,8 +747,8 @@ class StandardWorkflow:
                 "provider": getattr(
                     self.reranker, "name", self.reranker.__class__.__name__
                 ),
-                "top_k": self.hybrid_top_k,
-                "rerank_top_n": self.rerank_top_k,
+                "top_k": effective_budget.hybrid_top_k,
+                "rerank_top_n": effective_budget.rerank_top_k,
                 "count": len(pipeline.reranked),
                 "chunk_ids": [item.chunk_id for item in pipeline.reranked],
                 "docs": [
@@ -707,6 +780,8 @@ class StandardWorkflow:
                 "step": "context_select",
                 "count": len(pipeline.selected_context),
                 "final_context_size": len(pipeline.selected_context),
+                "context_top_k": effective_budget.context_top_k,
+                "context_max_chars": effective_budget.context_max_chars,
                 "chunk_ids": [item.chunk_id for item in pipeline.selected_context],
                 "docs": [
                     {
@@ -740,6 +815,7 @@ class StandardWorkflow:
                 "hallucination_detected": hallucination_detected,
                 "llm_fallback_used": llm_fallback_used,
                 "llm_generate_ms": timings.get("llm_generate_ms", 0),
+                "max_tokens": effective_budget.max_tokens,
             },
         ]
 
@@ -775,6 +851,8 @@ class StandardWorkflow:
                 "retrieval_timing_breakdown_available": (
                     pipeline.retrieval_timing_breakdown_available
                 ),
+                "query_complexity": effective_budget.complexity,
+                "query_budget": effective_budget.as_trace_payload(),
                 "rerank_ms": timings.get("rerank_ms", 0),
                 "context_select_ms": timings.get("context_select_ms", 0),
                 "llm_generate_ms": timings.get("llm_generate_ms", 0),

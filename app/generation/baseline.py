@@ -266,6 +266,7 @@ class BaselineGenerator(Generator):
         context: list[RetrievalResult],
         mode: Mode,
         model: str | None = None,
+        max_tokens: int | None = None,
         response_language: str = "en",
         chat_history_context: str = "(empty)",
         on_llm_delta: Callable[[str], Awaitable[None] | None] | None = None,
@@ -299,6 +300,7 @@ class BaselineGenerator(Generator):
                 prompt,
                 system_prompt=build_language_system_prompt(response_language),
                 model=model,
+                max_tokens=max_tokens,
                 on_delta=on_llm_delta,
             )
             llm_fallback_used = did_use_fallback(self.llm_client)
@@ -336,6 +338,7 @@ class BaselineGenerator(Generator):
         context: list[RetrievalResult],
         mode: Mode,
         model: str | None = None,
+        max_tokens: int | None = None,
         response_language: str = "en",
         chat_history_context: str = "(empty)",
         on_llm_delta: Callable[[str], Awaitable[None] | None] | None = None,
@@ -347,6 +350,7 @@ class BaselineGenerator(Generator):
                 context=context,
                 mode=mode,
                 model=model,
+                max_tokens=max_tokens,
                 response_language=response_language,
                 chat_history_context=chat_history_context,
                 on_llm_delta=on_llm_delta,

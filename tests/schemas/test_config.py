@@ -52,6 +52,12 @@ def test_settings_defaults(monkeypatch) -> None:
         "LLM_GATE_MAX_TOKENS",
         "LLM_REWRITE_MAX_TOKENS",
         "LLM_CRITIQUE_MAX_TOKENS",
+        "RAG_DYNAMIC_BUDGET_ENABLED",
+        "RAG_SIMPLE_MAX_TOKENS",
+        "RAG_NORMAL_MAX_TOKENS",
+        "RAG_COMPLEX_MAX_TOKENS",
+        "RAG_SIMPLE_CONTEXT_CHARS",
+        "RAG_NORMAL_CONTEXT_CHARS",
         "MAX_ADVANCED_LOOPS",
         "MEMORY_WINDOW",
         "GROUNDING_SEMANTIC_ENABLED",
@@ -101,6 +107,12 @@ def test_settings_defaults(monkeypatch) -> None:
     assert settings.llm_gate_max_tokens == 128
     assert settings.llm_rewrite_max_tokens == 256
     assert settings.llm_critique_max_tokens == 384
+    assert settings.rag_dynamic_budget_enabled is True
+    assert settings.rag_simple_max_tokens == 384
+    assert settings.rag_normal_max_tokens == 768
+    assert settings.rag_complex_max_tokens == 1536
+    assert settings.rag_simple_context_chars == 1600
+    assert settings.rag_normal_context_chars == 3000
     assert settings.memory_window == 3
 
 

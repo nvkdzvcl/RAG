@@ -25,6 +25,237 @@ def test_standard_workflow_run_path() -> None:
     assert response.status in {"answered", "partial", "insufficient_evidence"}
 
 
+def test_standard_workflow_applies_dynamic_budget_for_simple_query() -> None:
+    class _RecordingRetriever:
+        def __init__(self) -> None:
+            self.top_k_calls: list[int] = []
+
+        def retrieve(self, query: str, top_k: int = 5) -> list[RetrievalResult]:
+            _ = query
+            self.top_k_calls.append(top_k)
+            return [
+                RetrievalResult(
+                    chunk_id=f"simple_budget_{idx}",
+                    doc_id=f"simple_budget_doc_{idx}",
+                    source="seeded://simple-budget",
+                    content=("Nội dung mẫu " * 120) + str(idx),
+                    score=0.9 - (idx * 0.01),
+                    score_type="hybrid",
+                    rank=idx + 1,
+                )
+                for idx in range(5)
+            ]
+
+    class _FakeIndexManager:
+        def __init__(self) -> None:
+            self.retriever = _RecordingRetriever()
+
+        def get_retriever(self) -> _RecordingRetriever:
+            return self.retriever
+
+        def get_active_source(self) -> str:
+            return "seeded"
+
+    class _RecordingLLM:
+        def __init__(self) -> None:
+            self.max_tokens: list[int | None] = []
+
+        def complete(
+            self,
+            prompt: str,
+            system_prompt: str | None = None,
+            model: str | None = None,
+            max_tokens: int | None = None,
+        ) -> str:
+            _ = prompt
+            _ = system_prompt
+            _ = model
+            self.max_tokens.append(max_tokens)
+            return '{"answer":"Simple budget answer.","confidence":0.82,"status":"answered"}'
+
+    index_manager = _FakeIndexManager()
+    llm = _RecordingLLM()
+    workflow = StandardWorkflow(
+        index_manager=index_manager,
+        llm_client=llm,
+        reranker=ScoreOnlyReranker(),
+    )
+
+    response = workflow.run(query="Mức phạt tối đa là bao nhiêu?")
+    retrieve_step = response.trace[0]
+    context_step = response.trace[2]
+
+    assert retrieve_step["query_complexity"] == "simple_extractive"
+    assert retrieve_step["top_k"] == 3
+    assert retrieve_step["rerank_top_n"] == 3
+    assert retrieve_step["query_budget"]["context_top_k"] == 2
+    assert context_step["context_top_k"] == 2
+    assert context_step["final_context_size"] <= 2
+    assert llm.max_tokens and llm.max_tokens[-1] == workflow.simple_max_tokens
+    assert (
+        index_manager.retriever.top_k_calls
+        and index_manager.retriever.top_k_calls[-1] == 3
+    )
+
+
+def test_standard_workflow_keeps_locked_retrieval_top_k_with_dynamic_budget() -> None:
+    class _RecordingRetriever:
+        def __init__(self) -> None:
+            self.top_k_calls: list[int] = []
+
+        def retrieve(self, query: str, top_k: int = 5) -> list[RetrievalResult]:
+            _ = query
+            self.top_k_calls.append(top_k)
+            return [
+                RetrievalResult(
+                    chunk_id="locked_budget_001",
+                    doc_id="locked_budget_doc_001",
+                    source="seeded://locked-budget",
+                    content="Khung thông tin về retrieval custom.",
+                    score=0.9,
+                    score_type="hybrid",
+                    rank=1,
+                )
+            ]
+
+    class _FakeIndexManager:
+        def __init__(self) -> None:
+            self.retriever = _RecordingRetriever()
+
+        def get_retriever(self) -> _RecordingRetriever:
+            return self.retriever
+
+        def get_active_source(self) -> str:
+            return "seeded"
+
+    class _StubLLM:
+        def complete(
+            self,
+            prompt: str,
+            system_prompt: str | None = None,
+            model: str | None = None,
+            max_tokens: int | None = None,
+        ) -> str:
+            _ = prompt
+            _ = system_prompt
+            _ = model
+            _ = max_tokens
+            return '{"answer":"Locked retrieval answer.","confidence":0.8,"status":"answered"}'
+
+    index_manager = _FakeIndexManager()
+    workflow = StandardWorkflow(
+        index_manager=index_manager,
+        llm_client=_StubLLM(),
+        reranker=ScoreOnlyReranker(),
+    )
+    workflow.set_retrieval_top_k(4)
+
+    response = workflow.run(query="Retrieval custom token là gì?")
+    retrieve_step = response.trace[0]
+
+    assert retrieve_step["query_complexity"] == "simple_extractive"
+    assert retrieve_step["top_k"] == 4
+    assert retrieve_step["rerank_top_n"] == 4
+    assert (
+        index_manager.retriever.top_k_calls
+        and index_manager.retriever.top_k_calls[-1] == 4
+    )
+
+
+def test_standard_workflow_can_disable_dynamic_budget(monkeypatch) -> None:
+    class _Settings:
+        corpus_dir = "docs"
+        index_dir = "data/indexes"
+        retrieval_top_k = 8
+        reranker_enabled = True
+        reranker_provider = "score_only"
+        reranker_model = "stub-reranker"
+        reranker_device = "cpu"
+        reranker_batch_size = 4
+        reranker_top_n = 6
+        prompt_dir = "prompts"
+        llm_provider = "stub"
+        llm_model = "qwen2.5:3b"
+        llm_api_base = "http://localhost:11434/v1"
+        llm_api_key = "ollama"
+        llm_temperature = 0.2
+        llm_max_tokens = 512
+        llm_timeout_seconds = 10
+        rag_dynamic_budget_enabled = False
+        rag_simple_max_tokens = 384
+        rag_normal_max_tokens = 768
+        rag_complex_max_tokens = 1536
+        rag_simple_context_chars = 1600
+        rag_normal_context_chars = 3000
+
+    class _RecordingRetriever:
+        def __init__(self) -> None:
+            self.top_k_calls: list[int] = []
+
+        def retrieve(self, query: str, top_k: int = 5) -> list[RetrievalResult]:
+            _ = query
+            self.top_k_calls.append(top_k)
+            return [
+                RetrievalResult(
+                    chunk_id="disable_budget_001",
+                    doc_id="disable_budget_doc_001",
+                    source="seeded://disable-budget",
+                    content=("Context " * 80),
+                    score=0.91,
+                    score_type="hybrid",
+                    rank=1,
+                )
+            ]
+
+    class _FakeIndexManager:
+        def __init__(self) -> None:
+            self.retriever = _RecordingRetriever()
+
+        def get_retriever(self) -> _RecordingRetriever:
+            return self.retriever
+
+        def get_active_source(self) -> str:
+            return "seeded"
+
+    class _RecordingLLM:
+        def __init__(self) -> None:
+            self.max_tokens: list[int | None] = []
+
+        def complete(
+            self,
+            prompt: str,
+            system_prompt: str | None = None,
+            model: str | None = None,
+            max_tokens: int | None = None,
+        ) -> str:
+            _ = prompt
+            _ = system_prompt
+            _ = model
+            self.max_tokens.append(max_tokens)
+            return '{"answer":"Disabled dynamic budget answer.","confidence":0.8,"status":"answered"}'
+
+    monkeypatch.setattr("app.workflows.standard.get_settings", lambda: _Settings())
+    index_manager = _FakeIndexManager()
+    llm = _RecordingLLM()
+    workflow = StandardWorkflow(
+        index_manager=index_manager,
+        llm_client=llm,
+        reranker=ScoreOnlyReranker(),
+    )
+
+    response = workflow.run(query="Mức phạt tối đa là bao nhiêu?")
+    retrieve_step = response.trace[0]
+
+    assert retrieve_step["query_budget"]["dynamic_enabled"] is False
+    assert retrieve_step["top_k"] == 8
+    assert retrieve_step["rerank_top_n"] == 6
+    assert llm.max_tokens and llm.max_tokens[-1] == 512
+    assert (
+        index_manager.retriever.top_k_calls
+        and index_manager.retriever.top_k_calls[-1] == 8
+    )
+
+
 def test_standard_workflow_trace_contains_timing_metrics() -> None:
     class _TimingRetriever:
         def retrieve(self, query: str, top_k: int = 5) -> list[RetrievalResult]:
