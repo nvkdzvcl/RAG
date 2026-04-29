@@ -30,6 +30,16 @@ def coerce_ms(value: Any, default: int = 0) -> int:
         return default
 
 
+def coerce_non_negative_int(value: Any, default: int = 0) -> int:
+    """Coerce a generic counter/value to non-negative integer."""
+    if isinstance(value, bool):
+        return default
+    try:
+        return max(0, int(value))
+    except (TypeError, ValueError):
+        return default
+
+
 def normalize_timing_payload(
     raw: Mapping[str, Any] | None,
     *,

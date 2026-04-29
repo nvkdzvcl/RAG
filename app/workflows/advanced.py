@@ -7,7 +7,12 @@ from typing import Any, Protocol
 
 from app.core.async_utils import run_coro_sync
 from app.core.config import get_settings
-from app.core.timing import coerce_ms, ensure_completed_trace, safe_ratio
+from app.core.timing import (
+    coerce_ms,
+    coerce_non_negative_int,
+    ensure_completed_trace,
+    safe_ratio,
+)
 from app.generation.citations import CitationBuilder
 from app.schemas.api import AdvancedQueryResponse
 from app.schemas.common import Citation, Mode
@@ -246,7 +251,7 @@ class AdvancedWorkflow:
                     summary.get("timing_breakdown_available", False),
                 )
             )
-            summary["llm_call_count_estimate"] = coerce_ms(
+            summary["llm_call_count_estimate"] = coerce_non_negative_int(
                 summary.get("llm_call_count_estimate", 0), 0
             )
             summary["retrieval_vs_generation_ratio"] = safe_ratio(

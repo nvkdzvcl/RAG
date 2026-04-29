@@ -8,7 +8,12 @@ from typing import Any, Literal, cast
 
 from app.core.async_utils import run_coro_sync
 from app.core.config import get_settings
-from app.core.timing import coerce_ms, ensure_completed_trace, safe_ratio
+from app.core.timing import (
+    coerce_ms,
+    coerce_non_negative_int,
+    ensure_completed_trace,
+    safe_ratio,
+)
 from app.schemas.api import (
     AdvancedQueryResponse,
     CompareQueryResponse,
@@ -620,7 +625,7 @@ class CompareWorkflow:
                 summary.get("timing_breakdown_available", False),
             )
         )
-        summary["llm_call_count_estimate"] = coerce_ms(
+        summary["llm_call_count_estimate"] = coerce_non_negative_int(
             summary.get("llm_call_count_estimate", 0), 0
         )
         summary["retrieval_vs_generation_ratio"] = safe_ratio(

@@ -7,7 +7,12 @@ import time
 from dataclasses import dataclass, field
 from typing import Any, Protocol, TYPE_CHECKING
 
-from app.core.timing import coerce_ms, ensure_completed_trace, safe_ratio
+from app.core.timing import (
+    coerce_ms,
+    coerce_non_negative_int,
+    ensure_completed_trace,
+    safe_ratio,
+)
 from app.schemas.api import AdvancedQueryResponse
 from app.schemas.common import Citation
 from app.schemas.workflow import CritiqueResult, WorkflowState
@@ -192,7 +197,7 @@ class AdvancedPipelineContext:
         summary["refine_used"] = bool(self.refine_used)
         summary["language_rewrite_used"] = bool(self.language_rewrite_used)
         summary["hallucination_refine_used"] = bool(self.hallucination_refine_used)
-        summary["llm_call_count_estimate"] = coerce_ms(
+        summary["llm_call_count_estimate"] = coerce_non_negative_int(
             self.llm_call_count_estimate, 0
         )
         summary["retrieval_vs_generation_ratio"] = safe_ratio(
