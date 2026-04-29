@@ -8,8 +8,14 @@
    `pip install -r requirements-dev.txt`
 3. Sao chép file mẫu biến môi trường:
    `cp .env.example .env`
+   - hoặc profile local nhanh:
+     `cp .env.fast.example .env`
 4. Khởi chạy backend:
    `uvicorn app.main:app --reload`
+
+Profile local nhanh (`qwen2.5:3b`) và tradeoff:
+
+- `docs/local-fast.md`
 
 ## Cập Nhật Dependency Lock
 
@@ -73,6 +79,14 @@ Script sẽ in:
 - tổng hợp `p50/p90/p95/max`
 - backend `latency_ms` (khi response có)
 - với stream: `time_to_first_event_ms`, `time_to_first_token_ms`, `total_stream_ms`
+
+Lệnh Makefile tương ứng:
+
+- chạy backend local fast (không `--reload`): `make run-fast`
+- benchmark latency:
+  `make bench-latency BENCH_MODE=compare BENCH_RUNS=5 BENCH_WARMUP=1 BENCH_CONCURRENCY=1`
+- benchmark stream:
+  `make bench-latency BENCH_MODE=compare BENCH_STREAM=true`
 
 ## Cấu Hình Embedding
 

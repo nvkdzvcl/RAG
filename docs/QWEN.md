@@ -51,6 +51,11 @@ Sau đó chạy backend như bình thường:
 uvicorn app.main:app --reload
 ```
 
+Nếu cần cấu hình local latency thấp sẵn cho `qwen2.5:3b`, dùng:
+
+- `cp .env.fast.example .env`
+- xem chi tiết tradeoff fast/strict tại `docs/local-fast.md`
+
 ## Gợi Ý CPU / RAM
 
 - `qwen2.5:3b` là lựa chọn mặc định thực tế nhất cho laptop/máy chỉ có CPU.

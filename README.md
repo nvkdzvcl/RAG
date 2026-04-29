@@ -88,7 +88,12 @@ python3 -m venv .venv
 source .venv/bin/activate
 pip install -r requirements-dev.txt
 cp .env.example .env
+# hoặc profile nhanh cho local Ollama:
+cp .env.fast.example .env
 ```
+
+`.env.fast.example` tối ưu độ trễ cho local `qwen2.5:3b` (tradeoff: kiểm chứng bớt strict hơn).
+Chi tiết: `docs/local-fast.md`.
 
 ### 2. Khởi Động Backend API
 #### 1. Windows: chạy Ollama bằng GPU
@@ -136,6 +141,12 @@ cd ~/RAG
 source .venv/bin/activate
 uvicorn app.main:app --reload
 ```
+
+Lưu ý:
+
+- `--reload` chỉ dành cho vòng lặp phát triển.
+- Khi chạy benchmark latency, dùng không `--reload`:
+  `uvicorn app.main:app --host 127.0.0.1 --port 8000`
 
 ### 3. Bơm Dữ Liệu & Hỏi Đáp (Ingest & Query)
 Upload một tài liệu vào kho:

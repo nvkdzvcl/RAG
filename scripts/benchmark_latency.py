@@ -742,12 +742,16 @@ def _print_attempts(results: list[AttemptResult]) -> None:
 
 def _print_summary(summary: dict[str, Any], *, stream: bool) -> None:
     def _fmt(metric: dict[str, Any]) -> str:
+        def _value(field: str) -> str:
+            value = metric.get(field)
+            return "n/a" if value is None else f"{value}ms"
+
         return (
             f"count={metric['count']} "
-            f"p50={metric['p50_ms']}ms "
-            f"p90={metric['p90_ms']}ms "
-            f"p95={metric['p95_ms']}ms "
-            f"max={metric['max_ms']}ms"
+            f"p50={_value('p50_ms')} "
+            f"p90={_value('p90_ms')} "
+            f"p95={_value('p95_ms')} "
+            f"max={_value('max_ms')}"
         )
 
     print("\nSummary:")
@@ -768,7 +772,9 @@ def _print_summary(summary: dict[str, Any], *, stream: bool) -> None:
         metric = item["client_latency_ms"]
         print(
             f"- {query_id} ({item['query_set']}): successes={item['successes']}/{item['attempts']} "
-            f"p50={metric['p50_ms']}ms p95={metric['p95_ms']}ms max={metric['max_ms']}ms"
+            f"p50={'n/a' if metric['p50_ms'] is None else str(metric['p50_ms']) + 'ms'} "
+            f"p95={'n/a' if metric['p95_ms'] is None else str(metric['p95_ms']) + 'ms'} "
+            f"max={'n/a' if metric['max_ms'] is None else str(metric['max_ms']) + 'ms'}"
         )
 
 
