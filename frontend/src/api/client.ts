@@ -20,6 +20,7 @@ import type {
 } from "@/api/types";
 
 const API_BASE_URL = (import.meta.env.VITE_API_BASE_URL || "/api/v1").replace(/\/$/, "");
+const QUERY_STREAM_ENABLED = String(import.meta.env.VITE_QUERY_STREAM_ENABLED ?? "true").toLowerCase() === "true";
 const DOCUMENTS_BASE_URL = `${API_BASE_URL}/documents`;
 const SETTINGS_BASE_URL = `${API_BASE_URL}/settings`;
 
@@ -69,6 +70,31 @@ async function handleApiFailure(response: Response): Promise<never> {
     throw new ApiFeatureUnavailableError(response.status, message);
   }
   throw new ApiRequestError(response.status, message);
+}
+
+function supportsStreamingResponse(): boolean {
+  return typeof ReadableStream !== "undefined" && typeof TextDecoder !== "undefined";
+}
+
+function sanitizeStreamErrorMessage(raw: unknown): string {
+  if (typeof raw !== "string") {
+    return "Yêu cầu streaming thất bại.";
+  }
+  const trimmed = raw.trim();
+  if (!trimmed) {
+    return "Yêu cầu streaming thất bại.";
+  }
+  if (trimmed.includes("Traceback") || trimmed.includes("\n") || trimmed.length > 260) {
+    return "Không thể hoàn tất yêu cầu streaming. Vui lòng thử lại.";
+  }
+  return trimmed;
+}
+
+function nowMs(): number {
+  if (typeof performance !== "undefined" && typeof performance.now === "function") {
+    return performance.now();
+  }
+  return Date.now();
 }
 
 function isObject(value: unknown): value is Record<string, unknown> {
@@ -271,6 +297,234 @@ export async function postQuery(request: ApiQueryRequest): Promise<ApiQueryRespo
   }
 
   return (await parseJsonResponse(response)) as ApiQueryResponse;
+}
+
+export type QueryStreamHandlers = {
+  onStart?: (payload: Record<string, unknown>) => void;
+  onRetrieval?: (payload: Record<string, unknown>) => void;
+  onGenerationDelta?: (
+    delta: string,
+    meta: {
+      event: Record<string, unknown>;
+      time_to_first_token_ms: number | null;
+    },
+  ) => void;
+  onTrace?: (payload: Record<string, unknown>, eventName: string) => void;
+  onFinal?: (response: ApiQueryResponse, payload: Record<string, unknown>) => void;
+  onError?: (message: string, payload: Record<string, unknown>) => void;
+  onDone?: () => void;
+  onDebugEvent?: (eventName: string, payload: Record<string, unknown>) => void;
+};
+
+function parseSseFrame(frame: string): { eventName: string; payload: Record<string, unknown> | null } {
+  let eventName = "message";
+  const dataLines: string[] = [];
+  for (const rawLine of frame.split("\n")) {
+    const line = rawLine.trimEnd();
+    if (!line || line.startsWith(":")) {
+      continue;
+    }
+    if (line.startsWith("event:")) {
+      eventName = line.slice("event:".length).trim() || "message";
+      continue;
+    }
+    if (line.startsWith("data:")) {
+      dataLines.push(line.slice("data:".length).trimStart());
+    }
+  }
+
+  if (dataLines.length === 0) {
+    return { eventName, payload: null };
+  }
+
+  try {
+    const parsed = JSON.parse(dataLines.join("\n")) as unknown;
+    if (isObject(parsed)) {
+      return { eventName, payload: parsed };
+    }
+    return { eventName, payload: null };
+  } catch {
+    return { eventName, payload: null };
+  }
+}
+
+async function fallbackToPostQuery(
+  request: ApiQueryRequest,
+  handlers: QueryStreamHandlers | undefined,
+): Promise<ApiQueryResponse> {
+  const response = await postQuery(request);
+  handlers?.onFinal?.(response, {
+    type: "final",
+    response,
+    stream_fallback: true,
+  });
+  handlers?.onDone?.();
+  return response;
+}
+
+export function isQueryStreamEnabled(): boolean {
+  return QUERY_STREAM_ENABLED;
+}
+
+export async function postQueryStream(
+  request: ApiQueryRequest,
+  handlers?: QueryStreamHandlers,
+): Promise<ApiQueryResponse> {
+  if (!supportsStreamingResponse()) {
+    return fallbackToPostQuery(request, handlers);
+  }
+
+  const streamStartedAt = nowMs();
+  let firstTokenMs: number | null = null;
+  let sawAnyEvent = false;
+  let doneNotified = false;
+
+  try {
+    const response = await fetch(`${API_BASE_URL}/query/stream`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify(request),
+    });
+
+    if (!response.ok) {
+      await handleApiFailure(response);
+    }
+
+    if (!response.body) {
+      return fallbackToPostQuery(request, handlers);
+    }
+
+    const reader = response.body.getReader();
+    const decoder = new TextDecoder();
+    let buffer = "";
+    let finalResponse: ApiQueryResponse | null = null;
+
+    while (true) {
+      const { value, done } = await reader.read();
+      if (done) {
+        break;
+      }
+      buffer += decoder.decode(value, { stream: true });
+      buffer = buffer.replace(/\r\n/g, "\n");
+
+      let separatorIndex = buffer.indexOf("\n\n");
+      while (separatorIndex >= 0) {
+        const frame = buffer.slice(0, separatorIndex);
+        buffer = buffer.slice(separatorIndex + 2);
+        separatorIndex = buffer.indexOf("\n\n");
+
+        const { eventName, payload } = parseSseFrame(frame);
+        if (!payload) {
+          continue;
+        }
+        sawAnyEvent = true;
+
+        if (eventName === "start") {
+          handlers?.onStart?.(payload);
+          continue;
+        }
+        if (eventName === "retrieval") {
+          handlers?.onRetrieval?.(payload);
+          handlers?.onTrace?.(payload, eventName);
+          continue;
+        }
+        if (eventName === "generation_delta") {
+          const delta = typeof payload.delta === "string" ? payload.delta : "";
+          if (delta && firstTokenMs === null) {
+            firstTokenMs = Math.max(0, Math.round(nowMs() - streamStartedAt));
+          }
+          handlers?.onGenerationDelta?.(delta, {
+            event: payload,
+            time_to_first_token_ms: firstTokenMs,
+          });
+          handlers?.onTrace?.(payload, eventName);
+          continue;
+        }
+        if (eventName === "generation") {
+          if (typeof payload.delta === "string" && payload.delta.length > 0) {
+            if (firstTokenMs === null) {
+              firstTokenMs = Math.max(0, Math.round(nowMs() - streamStartedAt));
+            }
+            handlers?.onGenerationDelta?.(payload.delta, {
+              event: payload,
+              time_to_first_token_ms: firstTokenMs,
+            });
+          }
+          handlers?.onTrace?.(payload, eventName);
+          continue;
+        }
+        if (eventName === "final") {
+          const responsePayload = payload.response;
+          if (isObject(responsePayload)) {
+            finalResponse = responsePayload as ApiQueryResponse;
+            handlers?.onFinal?.(finalResponse, payload);
+            handlers?.onTrace?.(payload, eventName);
+          }
+          continue;
+        }
+        if (eventName === "error") {
+          const errorPayload = isObject(payload.error) ? payload.error : {};
+          const rawMessage = typeof errorPayload.message === "string" ? errorPayload.message : "";
+          const safeMessage = sanitizeStreamErrorMessage(rawMessage);
+          handlers?.onError?.(safeMessage, payload);
+          handlers?.onTrace?.(payload, eventName);
+          throw new ApiRequestError(500, safeMessage);
+        }
+        if (eventName === "done") {
+          handlers?.onDone?.();
+          doneNotified = true;
+          continue;
+        }
+
+        handlers?.onDebugEvent?.(eventName, payload);
+        handlers?.onTrace?.(payload, eventName);
+      }
+    }
+
+    buffer += decoder.decode();
+    const trailing = buffer.trim();
+    if (trailing) {
+      const { eventName, payload } = parseSseFrame(trailing);
+      if (payload) {
+        sawAnyEvent = true;
+        if (eventName === "final" && isObject(payload.response)) {
+          finalResponse = payload.response as ApiQueryResponse;
+          handlers?.onFinal?.(finalResponse, payload);
+          handlers?.onTrace?.(payload, eventName);
+        } else if (eventName === "done") {
+          handlers?.onDone?.();
+          doneNotified = true;
+        } else {
+          handlers?.onDebugEvent?.(eventName, payload);
+          handlers?.onTrace?.(payload, eventName);
+        }
+      }
+    }
+
+    if (finalResponse) {
+      if (!doneNotified) {
+        handlers?.onDone?.();
+        doneNotified = true;
+      }
+      return finalResponse;
+    }
+
+    if (!sawAnyEvent) {
+      return fallbackToPostQuery(request, handlers);
+    }
+    throw new ApiRequestError(500, "Không nhận được phản hồi cuối từ stream.");
+  } catch (error) {
+    if (!sawAnyEvent) {
+      return fallbackToPostQuery(request, handlers);
+    }
+    throw error;
+  } finally {
+    if (sawAnyEvent && !doneNotified) {
+      handlers?.onDone?.();
+    }
+  }
 }
 
 export async function getHealthStatus(): Promise<ApiHealthResponse> {

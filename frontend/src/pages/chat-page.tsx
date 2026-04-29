@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 
-import { getHealthStatus, postQuery } from "@/api/client";
-import type { ApiRetrievalMode } from "@/api/types";
+import { ApiRequestError, getHealthStatus, isQueryStreamEnabled, postQuery, postQueryStream } from "@/api/client";
+import type { ApiQueryRequest, ApiQueryResponse, ApiRetrievalMode } from "@/api/types";
 import { apiToUi } from "@/api/transform";
 import { AppShell } from "@/components/dashboard/app-shell";
 import { ChatComposer } from "@/components/dashboard/chat-composer";
@@ -40,6 +40,87 @@ const DEFAULT_MODEL =
 
 const MAX_MESSAGES_PER_SESSION = 24;
 const MAX_STORED_SESSIONS = 80;
+const STREAM_QUERY_ENABLED = isQueryStreamEnabled();
+
+type StreamingStage = "starting" | "retrieving" | "reranking" | "generating" | "grounding";
+
+type StreamProgress = {
+  stage: StreamingStage;
+  partialAnswer: string;
+  stageReached: {
+    retrieving: boolean;
+    reranking: boolean;
+    generating: boolean;
+    grounding: boolean;
+  };
+  timeToFirstTokenMs: number | null;
+  totalLatencyMs: number | null;
+};
+
+function initialStreamProgress(): StreamProgress {
+  return {
+    stage: "starting",
+    partialAnswer: "",
+    stageReached: {
+      retrieving: false,
+      reranking: false,
+      generating: false,
+      grounding: false,
+    },
+    timeToFirstTokenMs: null,
+    totalLatencyMs: null,
+  };
+}
+
+function fallbackErrorMessage(error: unknown): string {
+  if (error instanceof ApiRequestError) {
+    const cleaned = error.message.replace(/^API error \(\d+\):\s*/i, "").trim();
+    return cleaned || "Không thể hoàn tất yêu cầu.";
+  }
+  if (error instanceof Error && error.message.trim().length > 0) {
+    const trimmed = error.message.trim();
+    if (trimmed.includes("Traceback") || trimmed.includes("\n")) {
+      return "Không thể hoàn tất yêu cầu. Vui lòng thử lại.";
+    }
+    return trimmed;
+  }
+  return "Lỗi yêu cầu không xác định";
+}
+
+function totalLatencyFromFinalResponse(payload: ApiQueryResponse): number | null {
+  if (payload.mode === "compare") {
+    const standardTrace = payload.standard.trace ?? [];
+    const advancedTrace = payload.advanced.trace ?? [];
+    const findCompareTotal = (trace: Array<Record<string, unknown>>): number | null => {
+      for (const item of trace) {
+        if (
+          item.step === "compare_timing"
+          && typeof item.compare_total_ms === "number"
+          && Number.isFinite(item.compare_total_ms)
+        ) {
+          return item.compare_total_ms;
+        }
+      }
+      return null;
+    };
+    const traced = findCompareTotal(standardTrace) ?? findCompareTotal(advancedTrace);
+    if (traced !== null) {
+      return traced;
+    }
+    if (
+      typeof payload.standard.latency_ms === "number"
+      && typeof payload.advanced.latency_ms === "number"
+    ) {
+      return payload.standard.latency_ms + payload.advanced.latency_ms;
+    }
+    return null;
+  }
+
+  if (typeof payload.latency_ms === "number" && Number.isFinite(payload.latency_ms)) {
+    return payload.latency_ms;
+  }
+  return null;
+}
 
 function dateInputToIso(value: string, boundary: "start" | "end"): string | undefined {
   if (!value) {
@@ -104,6 +185,7 @@ export function ChatPage() {
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
+  const [streamProgress, setStreamProgress] = useState<StreamProgress | null>(null);
   const [chunkSize, setChunkSize] = useState(1000);
   const [chunkOverlap, setChunkOverlap] = useState(100);
   const [retrievalMode, setRetrievalMode] = useState<ApiRetrievalMode>("high");
@@ -328,12 +410,13 @@ export function ChatPage() {
     setError(null);
     setNotice(null);
     setQuery("");
+    setStreamProgress(initialStreamProgress());
 
     try {
       const selectedDocuments = selectedFilterDocIds.length > 0
         ? readyDocuments.filter((item) => selectedFilterDocIds.includes(item.id))
         : [];
-      const payload = await postQuery({
+      const requestPayload: ApiQueryRequest = {
         query: normalized,
         mode: requestMode,
         chat_history: requestChatHistoryPayload,
@@ -344,7 +427,195 @@ export function ChatPage() {
         uploaded_after: dateInputToIso(uploadedAfter, "start"),
         uploaded_before: dateInputToIso(uploadedBefore, "end"),
         include_ocr: ocrFilterToPayload(ocrFilter),
-      });
+      };
+
+      const applyTraceStage = (payload: Record<string, unknown>, eventName: string) => {
+        if (eventName === "retrieval") {
+          setStreamProgress((previous) => {
+            if (!previous) {
+              return previous;
+            }
+            return {
+              ...previous,
+              stage: "reranking",
+              stageReached: {
+                ...previous.stageReached,
+                retrieving: true,
+                reranking: true,
+              },
+            };
+          });
+          return;
+        }
+
+        if (eventName === "generation") {
+          const phase = typeof payload.phase === "string" ? payload.phase : "";
+          if (phase === "started") {
+            setStreamProgress((previous) => {
+              if (!previous) {
+                return previous;
+              }
+              return {
+                ...previous,
+                stage: "generating",
+                stageReached: {
+                  ...previous.stageReached,
+                  generating: true,
+                },
+              };
+            });
+            return;
+          }
+          if (phase === "completed" || phase === "skipped") {
+            setStreamProgress((previous) => {
+              if (!previous) {
+                return previous;
+              }
+              return {
+                ...previous,
+                stage: "grounding",
+                stageReached: {
+                  ...previous.stageReached,
+                  generating: true,
+                  grounding: true,
+                },
+              };
+            });
+            return;
+          }
+        }
+
+        if (eventName === "advanced_stage") {
+          const stage = typeof payload.stage === "string" ? payload.stage : "";
+          if (stage === "retrieval_gate" || stage === "critique_loop") {
+            setStreamProgress((previous) => {
+              if (!previous) {
+                return previous;
+              }
+              return {
+                ...previous,
+                stage: "reranking",
+                stageReached: {
+                  ...previous.stageReached,
+                  retrieving: true,
+                  reranking: true,
+                },
+              };
+            });
+            return;
+          }
+          if (
+            stage === "refine"
+            || stage === "language_guard"
+            || stage === "hallucination_guard"
+            || stage === "final_grounding"
+          ) {
+            setStreamProgress((previous) => {
+              if (!previous) {
+                return previous;
+              }
+              return {
+                ...previous,
+                stage: "grounding",
+                stageReached: {
+                  ...previous.stageReached,
+                  grounding: true,
+                },
+              };
+            });
+          }
+        }
+      };
+
+      const payload = STREAM_QUERY_ENABLED
+        ? await postQueryStream(requestPayload, {
+            onStart: () => {
+              setStreamProgress((previous) => {
+                if (!previous) {
+                  return initialStreamProgress();
+                }
+                return {
+                  ...previous,
+                  stage: "retrieving",
+                };
+              });
+            },
+            onRetrieval: () => {
+              setStreamProgress((previous) => {
+                if (!previous) {
+                  return previous;
+                }
+                return {
+                  ...previous,
+                  stage: "reranking",
+                  stageReached: {
+                    ...previous.stageReached,
+                    retrieving: true,
+                    reranking: true,
+                  },
+                };
+              });
+            },
+            onGenerationDelta: (delta, meta) => {
+              if (!delta) {
+                return;
+              }
+              setStreamProgress((previous) => {
+                const base = previous ?? initialStreamProgress();
+                return {
+                  ...base,
+                  stage: "generating",
+                  partialAnswer: `${base.partialAnswer}${delta}`,
+                  stageReached: {
+                    ...base.stageReached,
+                    generating: true,
+                  },
+                  timeToFirstTokenMs:
+                    base.timeToFirstTokenMs ?? meta.time_to_first_token_ms ?? null,
+                };
+              });
+            },
+            onTrace: (eventPayload, eventName) => {
+              applyTraceStage(eventPayload, eventName);
+              const compareTotalMs = eventPayload.compare_total_ms;
+              if (
+                eventName === "compare_timing"
+                && typeof compareTotalMs === "number"
+                && Number.isFinite(compareTotalMs)
+              ) {
+                setStreamProgress((previous) => {
+                  if (!previous) {
+                    return previous;
+                  }
+                  return {
+                    ...previous,
+                    totalLatencyMs: compareTotalMs,
+                  };
+                });
+              }
+            },
+            onFinal: (finalPayload) => {
+              const totalLatency = totalLatencyFromFinalResponse(finalPayload);
+              setStreamProgress((previous) => {
+                const base = previous ?? initialStreamProgress();
+                return {
+                  ...base,
+                  stage: "grounding",
+                  stageReached: {
+                    retrieving: true,
+                    reranking: true,
+                    generating: true,
+                    grounding: true,
+                  },
+                  totalLatencyMs: totalLatency,
+                };
+              });
+            },
+            onError: (streamErrorMessage) => {
+              setError(streamErrorMessage);
+            },
+          })
+        : await postQuery(requestPayload);
 
       const mapped = apiToUi(payload);
       const now = new Date().toISOString();
@@ -382,10 +653,10 @@ export function ChatPage() {
         };
       });
     } catch (requestError) {
-      const message = requestError instanceof Error ? requestError.message : "Lỗi yêu cầu không xác định";
-      setError(message);
+      setError(fallbackErrorMessage(requestError));
     } finally {
       setIsLoading(false);
+      setStreamProgress(null);
     }
   };
 
@@ -552,7 +823,14 @@ export function ChatPage() {
           onRequestDeleteAllDocuments={() => setShowClearVectorDialog(true)}
         />
       </div>
-      <ChatPanel messages={messages} result={result} isLoading={isLoading} error={error} notice={notice} />
+      <ChatPanel
+        messages={messages}
+        result={result}
+        isLoading={isLoading}
+        error={error}
+        notice={notice}
+        streamProgress={streamProgress}
+      />
       <QueryFilters
         documents={documents}
         selectedDocIds={selectedFilterDocIds}
