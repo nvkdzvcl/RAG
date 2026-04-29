@@ -6,8 +6,6 @@ import importlib.util
 import sys
 from pathlib import Path
 
-import requests
-
 
 def _load_module():
     script_path = Path("scripts/benchmark_latency.py")
@@ -121,7 +119,7 @@ def test_run_non_stream_attempt_handles_connection_error(monkeypatch) -> None:
     def _fake_post(*args, **kwargs):
         _ = args
         _ = kwargs
-        raise requests.ConnectionError("connection refused")
+        raise module.requests.ConnectionError("connection refused")
 
     monkeypatch.setattr(module.requests, "post", _fake_post)
     case = module.QueryCase(query_id="q1", query="test", query_set="normal")
