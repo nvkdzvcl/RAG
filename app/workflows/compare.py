@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import time
-from typing import Any, Literal
+from typing import Any, Literal, cast
 
 from app.core.async_utils import run_coro_sync
 from app.schemas.api import (
@@ -535,17 +535,23 @@ class CompareWorkflow:
         )
 
         total_latency_ms = int((time.perf_counter() - started) * 1000)
-        standard = self._inject_compare_timing_trace(
-            standard,
-            branch="standard",
-            branch_ms=standard_branch_ms,
-            compare_total_ms=total_latency_ms,
+        standard = cast(
+            StandardQueryResponse,
+            self._inject_compare_timing_trace(
+                standard,
+                branch="standard",
+                branch_ms=standard_branch_ms,
+                compare_total_ms=total_latency_ms,
+            ),
         )
-        advanced = self._inject_compare_timing_trace(
-            advanced,
-            branch="advanced",
-            branch_ms=advanced_branch_ms,
-            compare_total_ms=total_latency_ms,
+        advanced = cast(
+            AdvancedQueryResponse,
+            self._inject_compare_timing_trace(
+                advanced,
+                branch="advanced",
+                branch_ms=advanced_branch_ms,
+                compare_total_ms=total_latency_ms,
+            ),
         )
         await emit_stream_event(
             event_handler,

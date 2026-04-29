@@ -243,22 +243,21 @@ def test_grounding_cache_hit_avoids_semantic_recompute(monkeypatch) -> None:
         retrieval_confidence=0.18,
         fast_path_used=False,
     )
-    kwargs = {
-        "citation_count": 0,
-        "has_selected_context": True,
-        "status": "answered",
-        "policy": policy,
-    }
-
     first = grounding_mod.assess_grounding_with_policy(
         "Phần trả lời đã được diễn giải dài hơn từ cùng bằng chứng.",
         ["Bằng chứng nguồn mô tả cùng nội dung theo cách khác."],
-        **kwargs,
+        citation_count=0,
+        has_selected_context=True,
+        status="answered",
+        policy=policy,
     )
     second = grounding_mod.assess_grounding_with_policy(
         "Phần trả lời đã được diễn giải dài hơn từ cùng bằng chứng.",
         ["Bằng chứng nguồn mô tả cùng nội dung theo cách khác."],
-        **kwargs,
+        citation_count=0,
+        has_selected_context=True,
+        status="answered",
+        policy=policy,
     )
 
     assert first.grounding_cache_hit is False

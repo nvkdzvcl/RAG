@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from contextlib import asynccontextmanager, contextmanager
 from time import perf_counter
-from typing import Any, Iterator, Mapping
+from typing import Any, AsyncIterator, Iterator, Mapping
 
 
 RETRIEVAL_TIMING_KEYS: tuple[str, ...] = (
@@ -95,7 +95,7 @@ class StepTimer:
             self._metrics[name] = elapsed_ms(started)
 
     @asynccontextmanager
-    async def measure_async(self, name: str) -> Iterator[None]:
+    async def measure_async(self, name: str) -> AsyncIterator[None]:
         """Async context manager to measure async code blocks."""
         started = perf_counter()
         try:
