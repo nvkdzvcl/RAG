@@ -8,6 +8,7 @@ from typing import Any, Literal, cast
 
 from app.core.async_utils import run_coro_sync
 from app.core.config import get_settings
+from app.core.timing import coerce_ms, ensure_completed_trace, safe_ratio
 from app.schemas.api import (
     AdvancedQueryResponse,
     CompareQueryResponse,
@@ -22,6 +23,24 @@ from app.workflows.standard import StandardPipelineResult, StandardWorkflow
 
 class CompareWorkflow:
     """Run standard and advanced workflows and return a comparison payload."""
+
+    _COMMON_TIMING_KEYS: tuple[str, ...] = (
+        "total_ms",
+        "llm_generate_ms",
+        "retrieval_total_ms",
+    )
+    _ADVANCED_TIMING_KEYS: tuple[str, ...] = (
+        "retrieval_gate_ms",
+        "query_rewrite_ms",
+        "standard_pipeline_ms",
+        "critique_ms",
+        "refine_ms",
+        "refine_stage_ms",
+        "language_guard_ms",
+        "hallucination_guard_ms",
+        "grounding_ms",
+        "final_grounding_ms",
+    )
 
     def __init__(
         self,
@@ -553,11 +572,75 @@ class CompareWorkflow:
         trace.append(
             {
                 "step": "compare_timing",
-                branch_key: int(branch_ms),
-                "compare_total_ms": int(compare_total_ms),
+                branch_key: coerce_ms(branch_ms, 0),
+                "compare_total_ms": coerce_ms(compare_total_ms, 0),
             }
         )
+        trace = ensure_completed_trace(trace, total_ms=compare_total_ms)
         return response.model_copy(update={"trace": trace})
+
+    def _normalize_branch_timing_trace(
+        self,
+        response: StandardQueryResponse | AdvancedQueryResponse,
+        *,
+        branch: Literal["standard", "advanced"],
+    ) -> StandardQueryResponse | AdvancedQueryResponse:
+        trace = list(response.trace or [])
+        elapsed_ms = coerce_ms(response.latency_ms, 0)
+        timing_step_index = next(
+            (
+                idx
+                for idx, step in reversed(list(enumerate(trace)))
+                if step.get("step") == "timing_summary"
+            ),
+            None,
+        )
+        if timing_step_index is None:
+            summary: dict[str, Any] = {"step": "timing_summary"}
+            trace.append(summary)
+            timing_step_index = len(trace) - 1
+        else:
+            summary = dict(trace[timing_step_index])
+
+        for key in self._COMMON_TIMING_KEYS:
+            summary[key] = coerce_ms(summary.get(key, 0), 0)
+        summary["total_ms"] = coerce_ms(
+            summary.get("total_ms", response.latency_ms if response.latency_ms is not None else elapsed_ms),
+            elapsed_ms,
+        )
+        summary["timing_breakdown_available"] = bool(
+            summary.get(
+                "timing_breakdown_available",
+                summary.get("retrieval_timing_breakdown_available", False),
+            )
+        )
+        summary["retrieval_timing_breakdown_available"] = bool(
+            summary.get(
+                "retrieval_timing_breakdown_available",
+                summary.get("timing_breakdown_available", False),
+            )
+        )
+        summary["llm_call_count_estimate"] = coerce_ms(
+            summary.get("llm_call_count_estimate", 0), 0
+        )
+        summary["retrieval_vs_generation_ratio"] = safe_ratio(
+            summary.get("retrieval_total_ms", 0),
+            summary.get("llm_generate_ms", 0),
+        )
+        if branch == "advanced":
+            for key in self._ADVANCED_TIMING_KEYS:
+                summary[key] = coerce_ms(summary.get(key, 0), 0)
+            summary["gate_ms"] = coerce_ms(
+                summary.get("retrieval_gate_ms", summary.get("gate_ms", 0)), 0
+            )
+
+        trace[timing_step_index] = summary
+        return response.model_copy(
+            update={
+                "latency_ms": elapsed_ms,
+                "trace": trace,
+            }
+        )
 
     async def run_async(
         self,
@@ -649,7 +732,16 @@ class CompareWorkflow:
                 precomputed_pipeline=standard_pipeline
             )
 
-        total_latency_ms = int((time.perf_counter() - started) * 1000)
+        standard = cast(
+            StandardQueryResponse,
+            self._normalize_branch_timing_trace(standard, branch="standard"),
+        )
+        advanced = cast(
+            AdvancedQueryResponse,
+            self._normalize_branch_timing_trace(advanced, branch="advanced"),
+        )
+
+        total_latency_ms = coerce_ms((time.perf_counter() - started) * 1000, 0)
         standard = cast(
             StandardQueryResponse,
             self._inject_compare_timing_trace(

@@ -56,12 +56,17 @@ def test_query_stream_returns_incremental_events_and_final_payload() -> None:
     assert "final" in event_types
     assert "done" in event_types
 
-    final_payload = next(data["response"] for name, data in events if name == "final")
+    final_event = next(data for name, data in events if name == "final")
+    final_payload = final_event["response"]
     parsed = validate_query_response(final_payload)
 
     assert isinstance(parsed, StandardQueryResponse)
     assert parsed.mode == "standard"
     assert parsed.answer
+    assert final_event.get("latency_ms") == parsed.latency_ms
+    assert final_event.get("total_latency_ms") == parsed.latency_ms
+    ttf = final_event.get("time_to_first_token_ms")
+    assert ttf is None or (isinstance(ttf, int) and ttf >= 0)
 
 
 def test_query_stream_final_output_matches_regular_query_contract() -> None:
@@ -81,10 +86,13 @@ def test_query_stream_final_output_matches_regular_query_contract() -> None:
         stream_text = "".join(list(stream_response.iter_text()))
 
     events = _parse_sse_events(stream_text)
-    final_payload = next(data["response"] for name, data in events if name == "final")
+    final_event = next(data for name, data in events if name == "final")
+    final_payload = final_event["response"]
     streamed_parsed = validate_query_response(final_payload)
     assert isinstance(streamed_parsed, StandardQueryResponse)
 
     assert streamed_parsed.mode == normal_parsed.mode
     assert streamed_parsed.answer == normal_parsed.answer
     assert streamed_parsed.status == normal_parsed.status
+    assert final_event.get("latency_ms") == streamed_parsed.latency_ms
+    assert final_event.get("total_latency_ms") == streamed_parsed.latency_ms

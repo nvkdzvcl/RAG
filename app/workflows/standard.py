@@ -13,7 +13,14 @@ from app.core.async_utils import run_coro_sync
 from app.core.cache import create_cache_group_from_settings, make_cache_key
 from app.core.config import get_settings
 from app.core.json_utils import parse_json_object
-from app.core.timing import StepTimer, has_timing_breakdown, normalize_timing_payload
+from app.core.timing import (
+    StepTimer,
+    coerce_ms,
+    ensure_completed_trace,
+    has_timing_breakdown,
+    normalize_timing_payload,
+    safe_ratio,
+)
 from app.generation import (
     BaselineGenerator,
     ExtractiveAnswerer,
@@ -898,18 +905,21 @@ class StandardWorkflow:
             retrieval_top_k_locked=self._retrieval_top_k_overridden,
         )
         timings = {
-            key: int(value)
+            key: coerce_ms(value, 0)
             for key, value in pipeline.timings.items()
             if isinstance(value, (int, float))
         }
         final_answer = pipeline.generated.answer
         language_mismatch = is_language_mismatch(final_answer, resolved_language)
         stop_reason = pipeline.generated.stop_reason
+        language_rewrite_attempted = (
+            language_mismatch and pipeline.generated.status != "insufficient_evidence"
+        )
         context_texts = [
             item.content for item in pipeline.selected_context if item.content.strip()
         ]
 
-        if language_mismatch and pipeline.generated.status != "insufficient_evidence":
+        if language_rewrite_attempted:
             language_guard_started = time.perf_counter()
             rewritten = await self._rewrite_answer_language(
                 query=pipeline.normalized_query,
@@ -917,7 +927,7 @@ class StandardWorkflow:
                 response_language=resolved_language,
                 model=model,
             )
-            timings["language_guard_ms"] = int(
+            timings["language_guard_ms"] = coerce_ms(
                 (time.perf_counter() - language_guard_started) * 1000
             )
             if rewritten:
@@ -965,7 +975,7 @@ class StandardWorkflow:
         llm_fallback_used = bool(pipeline.generated.llm_fallback_used)
         llm_cache_hit = bool(pipeline.generated.llm_cache_hit)
 
-        elapsed_ms = int((time.perf_counter() - start_time) * 1000)
+        elapsed_ms = coerce_ms((time.perf_counter() - start_time) * 1000, 0)
         timings["total_ms"] = elapsed_ms
         timings.setdefault("normalize_query_ms", 0)
         timings.setdefault("retrieval_total_ms", 0)
@@ -975,6 +985,36 @@ class StandardWorkflow:
         timings.setdefault("rerank_ms", 0)
         timings.setdefault("context_select_ms", 0)
         timings.setdefault("llm_generate_ms", 0)
+        timings.setdefault("grounding_ms", 0)
+        timings.setdefault("language_guard_ms", 0)
+        for key in (
+            "normalize_query_ms",
+            "retrieval_total_ms",
+            "dense_retrieve_ms",
+            "sparse_retrieve_ms",
+            "hybrid_merge_ms",
+            "rerank_ms",
+            "context_select_ms",
+            "llm_generate_ms",
+            "grounding_ms",
+            "language_guard_ms",
+            "total_ms",
+        ):
+            timings[key] = coerce_ms(timings.get(key, 0), 0)
+        timing_breakdown_available = bool(pipeline.retrieval_timing_breakdown_available)
+        llm_call_count_estimate = 0
+        if (
+            not pipeline.generated.fast_path
+            and pipeline.generated.stop_reason != "no_context"
+            and not llm_cache_hit
+        ):
+            llm_call_count_estimate += 1
+        if language_rewrite_attempted:
+            llm_call_count_estimate += 1
+        retrieval_vs_generation_ratio = safe_ratio(
+            timings.get("retrieval_total_ms", 0),
+            timings.get("llm_generate_ms", 0),
+        )
         trace = [
             {
                 "step": "retrieve",
@@ -1027,9 +1067,10 @@ class StandardWorkflow:
                 "dense_retrieve_ms": timings.get("dense_retrieve_ms", 0),
                 "sparse_retrieve_ms": timings.get("sparse_retrieve_ms", 0),
                 "hybrid_merge_ms": timings.get("hybrid_merge_ms", 0),
-                "breakdown_available": pipeline.retrieval_timing_breakdown_available,
+                "breakdown_available": timing_breakdown_available,
+                "timing_breakdown_available": timing_breakdown_available,
                 "retrieval_timing_breakdown_available": (
-                    pipeline.retrieval_timing_breakdown_available
+                    timing_breakdown_available
                 ),
                 "embedding_cache_hit": pipeline.embedding_cache_hit,
                 "retrieval_cache_hit": pipeline.retrieval_cache_hit,
@@ -1155,9 +1196,10 @@ class StandardWorkflow:
                 "dense_retrieve_ms": timings.get("dense_retrieve_ms", 0),
                 "sparse_retrieve_ms": timings.get("sparse_retrieve_ms", 0),
                 "hybrid_merge_ms": timings.get("hybrid_merge_ms", 0),
-                "breakdown_available": pipeline.retrieval_timing_breakdown_available,
+                "breakdown_available": timing_breakdown_available,
+                "timing_breakdown_available": timing_breakdown_available,
                 "retrieval_timing_breakdown_available": (
-                    pipeline.retrieval_timing_breakdown_available
+                    timing_breakdown_available
                 ),
                 "query_complexity": effective_budget.complexity,
                 "query_budget": effective_budget.as_trace_payload(),
@@ -1179,8 +1221,11 @@ class StandardWorkflow:
                 "grounding_cache_hit": grounding_cache_hit,
                 "grounding_ms": timings.get("grounding_ms", 0),
                 "total_ms": timings.get("total_ms", elapsed_ms),
+                "llm_call_count_estimate": llm_call_count_estimate,
+                "retrieval_vs_generation_ratio": retrieval_vs_generation_ratio,
             }
         )
+        trace = ensure_completed_trace(trace, total_ms=timings.get("total_ms", elapsed_ms))
 
         return StandardQueryResponse(
             mode="standard",
@@ -1189,7 +1234,7 @@ class StandardWorkflow:
             confidence=pipeline.generated.confidence,
             stop_reason=stop_reason,
             status=pipeline.generated.status,
-            latency_ms=elapsed_ms,
+            latency_ms=coerce_ms(elapsed_ms, 0),
             response_language=resolved_language,
             language_mismatch=language_mismatch,
             grounded_score=grounded_score,

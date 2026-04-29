@@ -215,6 +215,8 @@ def test_advanced_workflow_trace_contains_timing_metrics() -> None:
     )
     for key in (
         "retrieval_gate_ms",
+        "retrieval_total_ms",
+        "llm_generate_ms",
         "standard_pipeline_ms",
         "critique_ms",
         "refine_ms",
@@ -228,10 +230,13 @@ def test_advanced_workflow_trace_contains_timing_metrics() -> None:
         "language_rewrite_used",
         "hallucination_refine_used",
         "llm_call_count_estimate",
+        "timing_breakdown_available",
     ):
         assert key in timing_summary
     for key in (
         "retrieval_gate_ms",
+        "retrieval_total_ms",
+        "llm_generate_ms",
         "standard_pipeline_ms",
         "critique_ms",
         "refine_ms",
@@ -242,6 +247,8 @@ def test_advanced_workflow_trace_contains_timing_metrics() -> None:
         "llm_call_count_estimate",
     ):
         assert isinstance(timing_summary[key], int)
+        assert timing_summary[key] >= 0
+    assert isinstance(timing_summary["timing_breakdown_available"], bool)
     assert timing_summary["gate_strategy"] in {"heuristic", "llm"}
     assert timing_summary["critique_strategy"] in {"heuristic", "llm", "skipped"}
     assert isinstance(timing_summary["refine_used"], bool)

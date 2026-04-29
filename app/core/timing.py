@@ -51,6 +51,46 @@ def has_timing_breakdown(
     return all(key in raw for key in keys)
 
 
+def safe_ratio(numerator: Any, denominator: Any) -> float:
+    """Return a non-negative ratio, defaulting to 0.0 on invalid values."""
+    try:
+        left = float(numerator)
+        right = float(denominator)
+    except (TypeError, ValueError):
+        return 0.0
+    if right <= 0:
+        return 0.0
+    value = left / right
+    if value != value:  # NaN guard
+        return 0.0
+    return max(0.0, round(value, 6))
+
+
+def ensure_completed_trace(
+    trace: list[dict[str, Any]] | None,
+    *,
+    total_ms: Any = 0,
+) -> list[dict[str, Any]]:
+    """Ensure a trace list ends with a stable completion marker."""
+    normalized = [dict(item) for item in (trace or [])]
+    if normalized and str(normalized[-1].get("step", "")).strip().lower() == "completed":
+        normalized[-1]["total_ms"] = coerce_ms(
+            normalized[-1].get("total_ms", total_ms),
+            coerce_ms(total_ms, 0),
+        )
+        normalized[-1].setdefault("status", "success")
+        return normalized
+
+    normalized.append(
+        {
+            "step": "completed",
+            "status": "success",
+            "total_ms": coerce_ms(total_ms, 0),
+        }
+    )
+    return normalized
+
+
 class StepTimer:
     """Collect named timing measurements in milliseconds."""
 
@@ -68,22 +108,24 @@ class StepTimer:
         """Stop a named timer and return elapsed milliseconds."""
         started = self._active.pop(name, perf_counter())
         duration = elapsed_ms(started)
-        self._metrics[name] = duration
+        self._metrics[name] = coerce_ms(duration, 0)
         return duration
 
     def record_ms(self, name: str, milliseconds: int) -> int:
         """Record a precomputed measurement for *name*."""
-        duration = int(milliseconds)
+        duration = coerce_ms(milliseconds, 0)
         self._metrics[name] = duration
         return duration
 
     def get_ms(self, name: str, default: int = 0) -> int:
         """Read one measurement, returning *default* when missing."""
-        return int(self._metrics.get(name, default))
+        return coerce_ms(self._metrics.get(name, default), coerce_ms(default, 0))
 
     def metrics(self) -> dict[str, int]:
         """Return a shallow copy of all measurements."""
-        return dict(self._metrics)
+        return {
+            key: coerce_ms(value, 0) for key, value in self._metrics.items()
+        }
 
     @contextmanager
     def measure(self, name: str) -> Iterator[None]:
@@ -92,7 +134,7 @@ class StepTimer:
         try:
             yield
         finally:
-            self._metrics[name] = elapsed_ms(started)
+            self._metrics[name] = coerce_ms(elapsed_ms(started), 0)
 
     @asynccontextmanager
     async def measure_async(self, name: str) -> AsyncIterator[None]:
@@ -101,4 +143,4 @@ class StepTimer:
         try:
             yield
         finally:
-            self._metrics[name] = elapsed_ms(started)
+            self._metrics[name] = coerce_ms(elapsed_ms(started), 0)

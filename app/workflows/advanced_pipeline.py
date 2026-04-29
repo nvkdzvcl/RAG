@@ -7,6 +7,7 @@ import time
 from dataclasses import dataclass, field
 from typing import Any, Protocol, TYPE_CHECKING
 
+from app.core.timing import coerce_ms, ensure_completed_trace, safe_ratio
 from app.schemas.api import AdvancedQueryResponse
 from app.schemas.common import Citation
 from app.schemas.workflow import CritiqueResult, WorkflowState
@@ -29,6 +30,8 @@ if TYPE_CHECKING:
 
 ADVANCED_TIMING_KEYS: tuple[str, ...] = (
     "retrieval_gate_ms",
+    "retrieval_total_ms",
+    "llm_generate_ms",
     "query_rewrite_ms",
     "standard_pipeline_ms",
     "critique_ms",
@@ -151,6 +154,7 @@ class AdvancedPipelineContext:
     retrieval_cache_hit: bool = False
     rerank_cache_hit: bool = False
     llm_cache_hit: bool = False
+    retrieval_timing_breakdown_available: bool = False
     query_complexity: str = "normal"
     gate_strategy: str = "heuristic"
     critique_strategy: str = "skipped"
@@ -167,10 +171,17 @@ class AdvancedPipelineContext:
     def timing_summary(self, *, total_ms: int | None = None) -> dict[str, Any]:
         """Build a trace-ready timing summary from measured stage timings."""
         if total_ms is not None:
-            self.timings["total_ms"] = int(total_ms)
+            self.timings["total_ms"] = coerce_ms(total_ms, 0)
         summary: dict[str, Any] = {"step": "timing_summary"}
         for key in ADVANCED_TIMING_KEYS:
-            summary[key] = int(self.timings.get(key, 0))
+            summary[key] = coerce_ms(self.timings.get(key, 0), 0)
+        summary["gate_ms"] = summary["retrieval_gate_ms"]
+        summary["timing_breakdown_available"] = bool(
+            self.retrieval_timing_breakdown_available
+        )
+        summary["retrieval_timing_breakdown_available"] = bool(
+            self.retrieval_timing_breakdown_available
+        )
         summary["embedding_cache_hit"] = bool(self.embedding_cache_hit)
         summary["retrieval_cache_hit"] = bool(self.retrieval_cache_hit)
         summary["rerank_cache_hit"] = bool(self.rerank_cache_hit)
@@ -181,7 +192,13 @@ class AdvancedPipelineContext:
         summary["refine_used"] = bool(self.refine_used)
         summary["language_rewrite_used"] = bool(self.language_rewrite_used)
         summary["hallucination_refine_used"] = bool(self.hallucination_refine_used)
-        summary["llm_call_count_estimate"] = int(self.llm_call_count_estimate)
+        summary["llm_call_count_estimate"] = coerce_ms(
+            self.llm_call_count_estimate, 0
+        )
+        summary["retrieval_vs_generation_ratio"] = safe_ratio(
+            summary.get("retrieval_total_ms", 0),
+            summary.get("llm_generate_ms", 0),
+        )
         summary["reused_standard_result"] = bool(self.reused_standard_result)
         summary["standard_reuse_saved_steps"] = list(self.standard_reuse_saved_steps)
         if self.standard_reuse_reason is not None:
@@ -303,7 +320,7 @@ class RetrievalGateStage(BasePipelineStage):
             allow_llm=allow_llm_gate,
             force_llm=workflow.force_llm_gate,
         )
-        retrieval_gate_ms = int((time.perf_counter() - gate_started) * 1000)
+        retrieval_gate_ms = coerce_ms((time.perf_counter() - gate_started) * 1000, 0)
         context.timings["retrieval_gate_ms"] = retrieval_gate_ms
         context.gate_strategy = gate_strategy
         if gate_strategy == "llm":
@@ -339,7 +356,7 @@ class RetrievalGateStage(BasePipelineStage):
         )
 
         if not need_retrieval:
-            total_ms = int((time.perf_counter() - context.start_time) * 1000)
+            total_ms = coerce_ms((time.perf_counter() - context.start_time) * 1000, 0)
             context.trace.append(context.timing_summary(total_ms=total_ms))
             answer, confidence, status, stop_reason = (
                 workflow._direct_answer_without_retrieval(
@@ -511,6 +528,9 @@ class CritiqueLoopStage(BasePipelineStage):
         standard_pipeline_total_ms = 0
         critique_total_ms = 0
         query_rewrite_total_ms = 0
+        retrieval_total_ms = 0
+        llm_generate_total_ms = 0
+        retrieval_breakdown_flags: list[bool] = []
 
         for loop in range(1, workflow.max_loops + 1):
             state.loop_count = loop
@@ -527,7 +547,7 @@ class CritiqueLoopStage(BasePipelineStage):
                 )
                 if self._rewrite_may_use_llm(workflow.query_rewriter):
                     context.add_llm_calls(1)
-                rewrite_ms = int((time.perf_counter() - rewrite_started) * 1000)
+                rewrite_ms = coerce_ms((time.perf_counter() - rewrite_started) * 1000, 0)
                 query_rewrite_total_ms += rewrite_ms
                 if rewrites:
                     current_query = rewrites[0]
@@ -568,12 +588,21 @@ class CritiqueLoopStage(BasePipelineStage):
                     event_handler=context.event_handler,
                     event_context=loop_event_context,
                 )
-                standard_pipeline_ms = int(
+                standard_pipeline_ms = coerce_ms(
                     (time.perf_counter() - pipeline_started) * 1000
                 )
             else:
                 standard_pipeline_ms = 0
             standard_pipeline_total_ms += standard_pipeline_ms
+            retrieval_total_ms += coerce_ms(
+                pipeline.timings.get("retrieval_total_ms", 0), 0
+            )
+            llm_generate_total_ms += coerce_ms(
+                pipeline.timings.get("llm_generate_ms", 0), 0
+            )
+            retrieval_breakdown_flags.append(
+                bool(pipeline.retrieval_timing_breakdown_available)
+            )
 
             state.retrieved_docs = [item.model_dump() for item in pipeline.retrieved]
             state.reranked_docs = [item.model_dump() for item in pipeline.reranked]
@@ -632,7 +661,7 @@ class CritiqueLoopStage(BasePipelineStage):
                 response_language=context.resolved_language,
                 allow_llm=allow_llm_critic,
             )
-            critique_ms = int((time.perf_counter() - critique_started) * 1000)
+            critique_ms = coerce_ms((time.perf_counter() - critique_started) * 1000, 0)
             critique_total_ms += critique_ms
             critique_strategy = strategy
             if strategy == "llm":
@@ -741,6 +770,9 @@ class CritiqueLoopStage(BasePipelineStage):
                     "reused_standard_result": reused_standard_result,
                     "standard_reuse_saved_steps": standard_reuse_saved_steps,
                     "standard_reuse_reason": standard_reuse_reason,
+                    "timing_breakdown_available": (
+                        pipeline.retrieval_timing_breakdown_available
+                    ),
                     "llm_call_count_estimate": context.llm_call_count_estimate,
                     "retrieval_timing_breakdown_available": (
                         pipeline.retrieval_timing_breakdown_available
@@ -776,10 +808,15 @@ class CritiqueLoopStage(BasePipelineStage):
         context.timings["standard_pipeline_ms"] = standard_pipeline_total_ms
         context.timings["critique_ms"] = critique_total_ms
         context.timings["query_rewrite_ms"] = query_rewrite_total_ms
+        context.timings["retrieval_total_ms"] = retrieval_total_ms
+        context.timings["llm_generate_ms"] = llm_generate_total_ms
         context.current_query = current_query
         context.pipeline = pipeline
         context.critique_result = critique_result
         context.critique_strategy = critique_strategy
+        context.retrieval_timing_breakdown_available = bool(
+            retrieval_breakdown_flags
+        ) and all(retrieval_breakdown_flags)
         if pipeline is not None:
             context.embedding_cache_hit = pipeline.embedding_cache_hit
             context.retrieval_cache_hit = pipeline.retrieval_cache_hit
@@ -941,7 +978,9 @@ class RefineStage(BasePipelineStage):
                 model=context.model,
                 response_language=context.resolved_language,
             )
-            refine_ms_total += int((time.perf_counter() - refine_started) * 1000)
+            refine_ms_total += coerce_ms(
+                (time.perf_counter() - refine_started) * 1000, 0
+            )
             context.add_llm_calls(1)
             refine_used = True
             if stop_reason != "max_loop_reached":
@@ -965,7 +1004,9 @@ class RefineStage(BasePipelineStage):
                     response_language=context.resolved_language,
                 )
             ).strip()
-            refine_ms_total += int((time.perf_counter() - strict_refine_started) * 1000)
+            refine_ms_total += coerce_ms(
+                (time.perf_counter() - strict_refine_started) * 1000, 0
+            )
             context.add_llm_calls(1)
             refine_used = True
             refined_is_insufficient = refined_from_insufficient == insufficient_answer
@@ -994,7 +1035,7 @@ class RefineStage(BasePipelineStage):
                 )
             stop_reason = "conflict_detected"
 
-        stage_ms = int((time.perf_counter() - stage_started) * 1000)
+        stage_ms = coerce_ms((time.perf_counter() - stage_started) * 1000, 0)
         context.timings["refine_ms"] = refine_ms_total
         context.timings["refine_stage_ms"] = stage_ms
 
@@ -1071,7 +1112,7 @@ class LanguageGuardStage(BasePipelineStage):
         state.final_answer = final_answer
         state.stop_reason = stop_reason
         state.language_mismatch = language_mismatch
-        stage_ms = int((time.perf_counter() - stage_started) * 1000)
+        stage_ms = coerce_ms((time.perf_counter() - stage_started) * 1000, 0)
         context.timings["language_guard_ms"] = stage_ms
         await emit_stream_event(
             context.event_handler,
@@ -1114,7 +1155,9 @@ class HallucinationGuardStage(BasePipelineStage):
                 citation_count=citation_count,
             ),
         )
-        context.grounding_ms = int((time.perf_counter() - grounding_started) * 1000)
+        context.grounding_ms = coerce_ms(
+            (time.perf_counter() - grounding_started) * 1000, 0
+        )
         grounding = grounding_eval.assessment
         grounded_score = grounding.grounded_score
         grounding_reason = grounding.grounding_reason
@@ -1346,7 +1389,7 @@ class HallucinationGuardStage(BasePipelineStage):
         state.citations = context.final_citations
         state.stop_reason = context.stop_reason
         state.language_mismatch = context.language_mismatch
-        stage_ms = int((time.perf_counter() - stage_started) * 1000)
+        stage_ms = coerce_ms((time.perf_counter() - stage_started) * 1000, 0)
         context.timings["hallucination_guard_ms"] = stage_ms
         await emit_stream_event(
             context.event_handler,
@@ -1387,7 +1430,9 @@ class FinalGroundingStage(BasePipelineStage):
                 citation_count=citation_count,
             ),
         )
-        context.grounding_ms = int((time.perf_counter() - grounding_started) * 1000)
+        context.grounding_ms = coerce_ms(
+            (time.perf_counter() - grounding_started) * 1000, 0
+        )
         context.timings["grounding_ms"] = context.grounding_ms
         final_grounding = final_grounding_eval.assessment
         context.citation_count = citation_count
@@ -1472,11 +1517,12 @@ class FinalGroundingStage(BasePipelineStage):
                 "standard_reuse_reason": context.standard_reuse_reason,
             }
         )
-        stage_ms = int((time.perf_counter() - stage_started) * 1000)
+        stage_ms = coerce_ms((time.perf_counter() - stage_started) * 1000, 0)
         context.timings["final_grounding_ms"] = stage_ms
-        total_ms = int((time.perf_counter() - context.start_time) * 1000)
+        total_ms = coerce_ms((time.perf_counter() - context.start_time) * 1000, 0)
         timing_summary = context.timing_summary(total_ms=total_ms)
         context.trace.append(timing_summary)
+        context.trace = ensure_completed_trace(context.trace, total_ms=total_ms)
         await emit_stream_event(
             context.event_handler,
             {

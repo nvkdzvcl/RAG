@@ -635,6 +635,7 @@ def test_standard_workflow_trace_contains_timing_metrics() -> None:
     assert isinstance(retrieve_step["sparse_retrieve_ms"], int)
     assert isinstance(retrieve_step["hybrid_merge_ms"], int)
     assert retrieve_step["breakdown_available"] is True
+    assert retrieve_step["timing_breakdown_available"] is True
     assert retrieve_step["retrieval_timing_breakdown_available"] is True
 
     timing_summary = next(
@@ -656,6 +657,7 @@ def test_standard_workflow_trace_contains_timing_metrics() -> None:
         assert isinstance(timing_summary[key], int)
         assert timing_summary[key] >= 0
     assert timing_summary["breakdown_available"] is True
+    assert timing_summary["timing_breakdown_available"] is True
     generate_step = next(
         step for step in response.trace if step.get("step") == "generate"
     )
@@ -717,7 +719,9 @@ def test_standard_workflow_missing_retrieval_breakdown_uses_zero_timings() -> No
     assert retrieve_step["sparse_retrieve_ms"] == 0
     assert retrieve_step["hybrid_merge_ms"] == 0
     assert retrieve_step["breakdown_available"] is False
+    assert retrieve_step["timing_breakdown_available"] is False
     assert timing_summary["breakdown_available"] is False
+    assert timing_summary["timing_breakdown_available"] is False
 
 
 def test_standard_workflow_uses_request_scoped_timing_for_concurrent_runs() -> None:

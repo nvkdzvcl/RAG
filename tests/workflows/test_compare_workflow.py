@@ -285,10 +285,25 @@ def test_compare_mode_trace_contains_branch_timing_metrics() -> None:
     advanced_timing = next(
         step for step in response.advanced.trace if step.get("step") == "compare_timing"
     )
+    standard_summary = next(
+        step for step in response.standard.trace if step.get("step") == "timing_summary"
+    )
+    advanced_summary = next(
+        step for step in response.advanced.trace if step.get("step") == "timing_summary"
+    )
     assert isinstance(standard_timing["standard_branch_ms"], int)
     assert isinstance(standard_timing["compare_total_ms"], int)
     assert isinstance(advanced_timing["advanced_branch_ms"], int)
     assert isinstance(advanced_timing["compare_total_ms"], int)
+    for summary in (standard_summary, advanced_summary):
+        assert isinstance(summary["total_ms"], int)
+        assert isinstance(summary["llm_generate_ms"], int)
+        assert isinstance(summary["retrieval_total_ms"], int)
+        assert summary["total_ms"] >= 0
+        assert summary["llm_generate_ms"] >= 0
+        assert summary["retrieval_total_ms"] >= 0
+    assert response.standard.trace[-1]["step"] == "completed"
+    assert response.advanced.trace[-1]["step"] == "completed"
 
 
 def test_compare_workflow_uses_injected_qwen_backed_branches() -> None:

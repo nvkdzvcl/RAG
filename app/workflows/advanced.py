@@ -7,6 +7,7 @@ from typing import Any, Protocol
 
 from app.core.async_utils import run_coro_sync
 from app.core.config import get_settings
+from app.core.timing import coerce_ms, ensure_completed_trace, safe_ratio
 from app.generation.citations import CitationBuilder
 from app.schemas.api import AdvancedQueryResponse
 from app.schemas.common import Citation, Mode
@@ -202,7 +203,7 @@ class AdvancedWorkflow:
         llm_fallback_used: bool,
         trace: list[dict[str, Any]],
     ) -> AdvancedQueryResponse:
-        elapsed_ms = int((time.perf_counter() - start_time) * 1000)
+        elapsed_ms = coerce_ms((time.perf_counter() - start_time) * 1000, 0)
         response_trace = list(trace)
         timing_step_index = next(
             (
@@ -217,13 +218,43 @@ class AdvancedWorkflow:
             for key in ADVANCED_TIMING_KEYS:
                 summary[key] = 0
             summary["total_ms"] = elapsed_ms
+            summary["gate_ms"] = 0
+            summary["timing_breakdown_available"] = False
+            summary["retrieval_timing_breakdown_available"] = False
+            summary["llm_call_count_estimate"] = 0
+            summary["retrieval_vs_generation_ratio"] = 0.0
             response_trace.append(summary)
         else:
             summary = dict(response_trace[timing_step_index])
             for key in ADVANCED_TIMING_KEYS:
                 summary.setdefault(key, 0)
+            for key in ADVANCED_TIMING_KEYS:
+                summary[key] = coerce_ms(summary.get(key, 0), 0)
             summary["total_ms"] = elapsed_ms
+            summary["gate_ms"] = coerce_ms(
+                summary.get("retrieval_gate_ms", summary.get("gate_ms", 0)), 0
+            )
+            summary["timing_breakdown_available"] = bool(
+                summary.get(
+                    "timing_breakdown_available",
+                    summary.get("retrieval_timing_breakdown_available", False),
+                )
+            )
+            summary["retrieval_timing_breakdown_available"] = bool(
+                summary.get(
+                    "retrieval_timing_breakdown_available",
+                    summary.get("timing_breakdown_available", False),
+                )
+            )
+            summary["llm_call_count_estimate"] = coerce_ms(
+                summary.get("llm_call_count_estimate", 0), 0
+            )
+            summary["retrieval_vs_generation_ratio"] = safe_ratio(
+                summary.get("retrieval_total_ms", 0),
+                summary.get("llm_generate_ms", 0),
+            )
             response_trace[timing_step_index] = summary
+        response_trace = ensure_completed_trace(response_trace, total_ms=elapsed_ms)
 
         return AdvancedQueryResponse(
             mode="advanced",
@@ -232,7 +263,7 @@ class AdvancedWorkflow:
             confidence=confidence,
             status=status,
             stop_reason=stop_reason,
-            latency_ms=elapsed_ms,
+            latency_ms=coerce_ms(elapsed_ms, 0),
             loop_count=loop_count,
             response_language=response_language,
             language_mismatch=language_mismatch,
