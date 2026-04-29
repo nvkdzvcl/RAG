@@ -3,79 +3,95 @@
 Last updated: 2026-04-29 (Asia/Bangkok)
 
 ## Repository snapshot
-- Branch: `vankhanh`
-- HEAD: `7347c63b` (`timing`)
-- Working tree: timing instrumentation fixes in backend/workflow/tests/docs.
+- Branch: `main`
+- HEAD: `5218fa63` (`reranker cascade: skip cross-encoder CPU khi không cần`)
+- Working tree: clean.
 
 ## Current status
-- Standard mode, Advanced mode, Compare mode are running end-to-end.
-- Per-step latency instrumentation is implemented across the RAG query pipeline.
-- Retrieval timing now prefers request-scoped timing payloads over shared `get_last_timing`.
-- Response schema remains backward compatible (`latency_ms` and existing fields still intact).
+- Standard mode, Advanced mode, Compare mode run end-to-end.
+- Retrieval timing is request-scoped where supported (`RetrievalBatch`) and avoids shared timing races where possible.
+- Dynamic query budget for Standard mode is implemented (`simple_extractive` / `normal` / `complex`).
+- Adaptive grounding is implemented with policy, lazy semantic usage, and grounding cache.
+- Cascade reranking is implemented to reduce cross-encoder CPU overhead for cheap/high-confidence cases.
+- Response schema compatibility is preserved (`latency_ms` and existing fields intact).
 
-## Latency instrumentation completed
+## Recently completed
 
-### Standard mode
-- Added trace/metadata timings:
-  - `normalize_query_ms`
-  - `retrieval_total_ms`
-  - `dense_retrieve_ms` (0 when unavailable)
-  - `sparse_retrieve_ms` (0 when unavailable)
-  - `hybrid_merge_ms` (0 when unavailable)
-  - `breakdown_available` / `retrieval_timing_breakdown_available`
-  - `rerank_ms`
-  - `context_select_ms`
-  - `llm_generate_ms`
+### 1) Dynamic query budget
+- Deterministic query complexity classifier (no LLM).
+- Per-profile budget for retrieval/rerank/context/max_tokens.
+- Standard pipeline uses selected budget for:
+  - retrieval top_k
+  - rerank top_k
+  - context limits
+  - generation max_tokens
+- Key files:
+  - `app/workflows/query_budget.py`
+  - `app/workflows/standard.py`
+  - `tests/workflows/test_query_budget.py`
+
+### 2) Adaptive grounding
+- Grounding policy inputs:
+  - mode (`standard` / `advanced` / `compare`)
+  - query complexity
+  - status
+  - answer length
+  - citation count
+  - retrieval confidence (if available)
+  - fast-path flag
+- Standard path is lexical-first; semantic is policy-controlled and lazy-loaded.
+- Grounding cache key includes answer + selected context text + policy version.
+- Added trace fields:
+  - `grounding_policy`
+  - `grounding_semantic_used`
+  - `grounding_cache_hit`
   - `grounding_ms`
-  - `total_ms`
+- Key files:
+  - `app/workflows/shared/grounding.py`
+  - `app/workflows/standard.py`
+  - `app/workflows/advanced_pipeline.py`
+  - `tests/workflows/test_grounding_helpers.py`
 
-### Advanced mode
-- Added stage timings:
-  - `retrieval_gate_ms`
-  - `query_rewrite_ms`
-  - `standard_pipeline_ms`
-  - `critique_ms`
-  - `refine_ms` (when executed)
-  - `refine_stage_ms`
-  - `language_guard_ms` (when executed)
-  - `hallucination_guard_ms` (when executed)
-  - `final_grounding_ms`
-  - `total_ms`
-- Added `timing_summary` trace step including these keys.
+### 3) Cascade reranking
+- Added deterministic `RerankPolicy`.
+- Policy behavior:
+  - `simple_extractive` -> skip cross-encoder
+  - few candidates -> skip cross-encoder
+  - high top score + clear gap -> skip cross-encoder
+  - ambiguous normal/complex -> allow cross-encoder
+  - advanced mode keeps quality path available
+- Uses existing `ScoreOnlyReranker` for cheap path.
+- Added trace fields:
+  - `rerank_policy`
+  - `reranker_used` (`score_only` / `cross_encoder` / `skipped`)
+  - `rerank_ms`
+- Key files:
+  - `app/workflows/rerank_policy.py`
+  - `app/workflows/standard.py`
+  - `tests/workflows/test_rerank_policy.py`
+  - `tests/workflows/test_standard_workflow.py`
 
-### Compare mode
-- Added compare branch timings:
-  - `standard_branch_ms`
-  - `advanced_branch_ms`
-  - `compare_total_ms`
-- Each branch trace gets a `compare_timing` step.
+## Environment/config additions
+- Grounding:
+  - `GROUNDING_POLICY=adaptive`
+  - `GROUNDING_SEMANTIC_STANDARD_ENABLED=false`
+  - `GROUNDING_SEMANTIC_ADVANCED_ENABLED=true`
+- Rerank cascade:
+  - `RERANK_CASCADE_ENABLED=true`
+  - `RERANK_SIMPLE_SKIP_CROSS_ENCODER=true`
+  - `RERANK_MIN_CANDIDATES_FOR_CROSS_ENCODER=4`
+  - `RERANK_SCORE_GAP_THRESHOLD=0.2`
 
-## Streaming status
-- Standard retrieval/generation events include `timings_ms`.
-- Advanced stage events include stage timing and final timing bundle.
-- Compare mode emits `compare_timing` event.
-- SSE final response behavior is unchanged and still working.
-
-## Key files touched for timing
-- `app/core/timing.py`
-- `app/retrieval/hybrid.py`
-- `app/schemas/retrieval.py`
-- `app/services/index_runtime.py`
-- `app/workflows/standard.py`
-- `app/workflows/advanced_pipeline.py`
-- `app/workflows/advanced.py`
-- `app/workflows/compare.py`
-- `tests/workflows/test_standard_workflow.py`
-- `tests/workflows/test_advanced_workflow.py`
-- `tests/workflows/test_compare_workflow.py`
-
-## Test validation (latest)
-- `make test-fast`: pass (`232 passed, 8 deselected`)
-- Targeted workflow + stream tests also pass.
-- Timing fix targeted tests: pass (`5 passed`)
-- Related retrieval/index/workflow timing tests: pass (`63 passed, 1 deselected`)
+## Validation status (latest)
+- `make test-fast`: pass (`255 passed, 8 deselected`)
+- `mypy app tests`: pass (`Success: no issues found in 131 source files`)
+- `.venv/bin/ruff check app/ tests/`: pass
+- `.venv/bin/python -m ruff format --check app/ tests/`: pass (`131 files already formatted`)
 
 ## Notes for next session
-- If retriever internals are not exposed, sub-step dense/sparse/merge timing is reported as `0` with `breakdown_available=false`.
-- Per-retriever `get_last_timing` is a legacy shared diagnostic and is unsafe under concurrent requests. Prefer `retrieve_with_timing` / `retrieve_with_timing_async`, which return request-scoped `RetrievalBatch` timing.
-- Next optional step: surface these timing metrics in frontend trace/diagnostics panels.
+- Keep preferring `retrieve_with_timing` / `retrieve_with_timing_async` in retrievers to avoid shared timing diagnostics.
+- If quality/latency tradeoff needs tuning, adjust:
+  - `RERANK_SCORE_GAP_THRESHOLD`
+  - `RERANK_MIN_CANDIDATES_FOR_CROSS_ENCODER`
+  - normal/complex dynamic budgets
+- Optional next step: expose grounding/rerank policy details in frontend trace panels.
