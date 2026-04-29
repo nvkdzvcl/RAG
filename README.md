@@ -1,193 +1,151 @@
-# Enterprise-Grade Self-RAG Pipeline
+# Self-RAG Level 2 (Standard / Advanced / Compare)
 
-> Hệ thống RAG (Retrieval-Augmented Generation) đáp ứng tiêu chuẩn Production, được tối ưu hóa cho khả năng truy xuất độ chính xác cao, truy hồi cực kỳ ổn định (deterministic) và chống sinh ảo giác (hallucination).
+Ứng dụng RAG mã nguồn mở với 3 chế độ truy vấn: `standard`, `advanced`, `compare`.
+Mục tiêu của repo là một hệ thống rõ ràng, module hóa, dễ test và dễ mở rộng cho bài toán hỏi đáp có trích dẫn nguồn.
 
 ![Python](https://img.shields.io/badge/Python-3.12-3776AB?logo=python&logoColor=white)
 ![FastAPI](https://img.shields.io/badge/FastAPI-API-009688?logo=fastapi&logoColor=white)
-![Pytest](https://img.shields.io/badge/Tests-190%2B_Passing-10B981?logo=pytest&logoColor=white)
-![Stability](https://img.shields.io/badge/CI-Security_%26_Dependency_Audits-2088FF)
+![React](https://img.shields.io/badge/React-18-61DAFB?logo=react&logoColor=111111)
+![Vite](https://img.shields.io/badge/Vite-8-646CFF?logo=vite&logoColor=white)
 
-Repository này **không phải là bản demo hay tutorial RAG cơ bản**. Đây là một hệ thống thiết kế theo module hướng tới cấp độ doanh nghiệp (enterprise-oriented), giải quyết các bài toán hóc búa nhất của RAG: trôi ngữ cảnh (lost-in-the-middle), trả lời ảo giác, bóc tách cấu trúc dữ liệu, và quản trị rủi ro giảm sút chất lượng âm thầm (silent degradation).
+<p align="center">
+  <img src="./assets/RAG-pipeline.gif" alt="RAG pipeline demo" width="100%" />
+</p>
 
----
+## 1) Ba chế độ hoạt động
 
-## 🌟 Công Nghệ Sử Dụng
+- `standard`:
+  `query -> retrieve -> rerank -> select context -> generate -> return`
+- `advanced`:
+  `query -> retrieval gate -> rewrite -> retrieve -> rerank -> draft -> critique -> retry/refine/abstain -> return`
+- `compare`:
+  chạy cả `standard` và `advanced`, trả về kết quả song song kèm phần so sánh.
 
-**Backend**
-![Python](https://img.shields.io/badge/Python-3.12-3776AB?logo=python&logoColor=white)
-![FastAPI](https://img.shields.io/badge/FastAPI-API-009688?logo=fastapi&logoColor=white)
-![Pydantic](https://img.shields.io/badge/Pydantic-Schemas-E92063?logo=pydantic&logoColor=white)
-![Pytest](https://img.shields.io/badge/Pytest-Tests-0A9EDC?logo=pytest&logoColor=white)
+## 2) Thành phần chính
 
-**Frontend**
-![React](https://img.shields.io/badge/React-UI-61DAFB?logo=react&logoColor=111111)
-![Vite](https://img.shields.io/badge/Vite-Build-646CFF?logo=vite&logoColor=white)
-![TypeScript](https://img.shields.io/badge/TypeScript-Frontend-3178C6?logo=typescript&logoColor=white)
-![Tailwind CSS](https://img.shields.io/badge/Tailwind_CSS-Styling-06B6D4?logo=tailwindcss&logoColor=white)
+- Ingestion: loader cho `pdf`, `docx`, `txt`, `md`, làm sạch và chunking.
+- Indexing: dense embeddings + BM25, lưu local.
+- Retrieval: dense + sparse + RRF fusion.
+- Reranking: cross-encoder (có fallback an toàn).
+- Generation: câu trả lời có citations + xử lý thiếu bằng chứng.
+- Workflow runner: điều phối theo mode.
+- API: FastAPI (`/api/v1/...`) + SSE stream.
+- Frontend: React + Vite + Tailwind + shadcn/ui + lucide-react.
 
-**RAG / LLM**
-![Sentence Transformers](https://img.shields.io/badge/Sentence_Transformers-Embeddings-FF6F00)
-![BM25](https://img.shields.io/badge/BM25-Sparse_Retrieval-4B5563)
-![Qwen](https://img.shields.io/badge/Qwen-LLM-7C3AED)
-![Ollama](https://img.shields.io/badge/Ollama-Local_Runtime-000000?logo=ollama&logoColor=white)
+## 3) Kiến trúc lưu trữ hiện tại
 
-**CI/CD & Code Quality**
-![GitHub Actions](https://img.shields.io/badge/GitHub_Actions-CI-2088FF?logo=github-actions&logoColor=white)
-![Ruff](https://img.shields.io/badge/Ruff-Linter-FCC21B?logo=python&logoColor=black)
-![Mypy](https://img.shields.io/badge/Mypy-Type_Check-2B5B84?logo=python&logoColor=white)
+- Vector index: `InMemoryVectorIndex` và persist JSON tại `data/indexes`.
+- Sparse index: BM25 local.
+- Chưa dùng ChromaDB/FAISS trong codebase hiện tại.
 
----
+## 4) Cài đặt nhanh
 
-## 💡 Các Năng Lực Cốt Lõi
+### Yêu cầu
 
-Khác biệt với các hệ thống Single-Vector RAG tiêu chuẩn, kiến trúc của hệ thống này sở hữu 3 tầng đánh giá và xử lý:
+- Python 3.12 (khuyến nghị)
+- Node.js 18+ / npm
+- Ollama hoặc OpenAI-compatible endpoint (nếu dùng LLM thật)
 
-- **Bóc tách Tự Động Nhận Diện Cấu Trúc (Structure-Aware Ingestion):** Duy trì ý nghĩa văn cảnh bằng cách sử dụng các sliding chunk thông minh - không bao giờ cắt đôi các bảng dữ liệu (data tables) và tự động nối các Heading liên quan (`[Title: X | Section: Y]`) vào đầu mỗi chunk để định hướng chính xác mô hình Vector Dense.
-- **Truy hồi Lai kết hợp Reranking (Hybrid RRF & Cross-Encoder):** Dung hợp Dense Vectors (tìm kiếm ngữ nghĩa) và Sparse Keywords (BM25) qua thuật toán thẻ lai cực nhạy (Reciprocal Rank Fusion - RRF). Sau đó chấm điểm chặt chẽ lần 2 bởi Cross-Encoder Reranker để đẩy các đoạn văn chính xác nhất lên đầu.
-- **Agent Tự Phản Tư (Self-Reflective RAG):** Tự động đo mức độ bằng chứng (Grounding) của contexts đã truy hồi. Pipeline sẽ cực kỳ dứt khoát **chối từ trả lời (Abstain)** hoặc nhờ người dùng làm rõ thay vì "bịa" ra kết quả (hallucinate). Nếu ngữ cảnh hợp lệ, tự động đánh giá (critique) và tinh chỉnh prompt đầu ra (rewrite/refine).
-- **Caching Đa Tầng (LRU Cache):** Giảm thiểu tối đa áp lực tài nguyên và độ trễ do mạng thông qua cache In-memory tích hợp song song cả 3 chặng: Embedding, Retrieval và LLM API.
-- **Evaluation Framework Chuyên Sâu:** Trang bị sẵn engine tính toán và báo cáo tự động cho các chỉ số Truy Hồi Thông Tin (IR Metrics: **Hit Rate, MRR, nDCG**) rạch ròi, độc lập hoàn toàn với lớp AI phán đoán. Thêm vào đó là pipeline đánh giá độ tin cậy dựa trên phương pháp LLM-as-a-judge.
+### Backend
 
----
-
-## 🏗️ Tổng Quan Kiến Trúc
-
- Hệ thống phân chia thành các Provider cực kỳ Module hóa (Hot-swappable):
-
-```text
-┌─────────────────┐       ┌──────────────────┐       ┌─────────────────┐
-│  Ingestion      │       │  Retrieval Tiers │       │ Generation      │
-│                 │       │                  │       │                 │
-│ 1. Parse Layout ├──────►│ 1. Dense (E5/VN) ├──────►│ 1. Caching      │
-│ 2. Smart Chunk  │       │ 2. Sparse (BM25) │       │ 2. Self-Critique│
-│ 3. Inject Context       │ 3. Fusion (RRF)  │       │ 3. Grounding    │
-└─────────────────┘       │ 4. Cross-Encoder │       │ 4. Fallback     │
-                          └──────────────────┘       └─────────────────┘
-```
-
-## 📊 Evaluation & Benchmarks
-
-Chúng tôi sử dụng mô hình Deterministic Benchmarking (đo lường tính kiên định) nhằm chống lại vấn đề suy giảm truy xuất thầm lặng qua thời gian. Một cơ chế CI Guard tự động chặn đứng và kiểm chứng toán học các ngưỡng an toàn này.
-
-*Metrics Baseline ví dụ trên dataset nội bộ:*
-
-| Metric | Chỉ Sử Dụng Dense | Hybrid + Reranker |
-| :--- | :--- | :--- |
-| **Hit Rate@K** | `0.78` | **`>0.98`** |
-| **Mean Reciprocal Rank (MRR)** | `0.65` | **`>0.88`** |
-| **nDCG@K** | `0.60` | **`>0.85`** |
-| **Tỷ Lệ Sinh Ảo Giác** | `12%` | **`<1%`** |
-
----
-
-## 🚀 Khởi Động Nhanh
-
-### 1. Cài Đặt Môi Trường
 ```bash
 python3 -m venv .venv
 source .venv/bin/activate
 pip install -r requirements-dev.txt
 cp .env.example .env
-# hoặc profile nhanh cho local Ollama:
-cp .env.fast.example .env
-```
-
-`.env.fast.example` tối ưu độ trễ cho local `qwen2.5:3b` (tradeoff: kiểm chứng bớt strict hơn).
-Chi tiết: `docs/local-fast.md`.
-
-### 2. Khởi Động Backend API
-#### 1. Windows: chạy Ollama bằng GPU
-Mở PowerShell Admin:
-```powershell
-Get-Process ollama | Stop-Process -Force
-$env:OLLAMA_HOST="0.0.0.0:11434"
-ollama serve
-```
-Giữ cửa sổ này mở.
-
-Thấy log kiểu này là đúng:
-```text
-inference compute ... CUDA ... NVIDIA GeForce RTX 3060
-Listening on [::]:11434
-```
-
-#### 2. WSL: đảm bảo không chạy Ollama trong WSL
-```bash
-sudo snap stop ollama
-curl http://127.0.0.1:11434/api/tags
-```
-Nếu `connection refused` là đúng.
-
-#### 3. WSL: kiểm tra gọi được Ollama Windows
-Dùng IP Windows WSL của bạn:
-```bash
-curl http://172.25.80.1:11434/api/tags
-```
-Nếu ra JSON model list là OK.
-
-#### 4. `.env` trong repo
-```env
-OLLAMA_BASE_URL=http://172.25.80.1:11434
-
-LLM_PROVIDER=openai_compatible
-LLM_MODEL=qwen2.5:3b
-LLM_API_BASE=http://172.25.80.1:11434/v1
-LLM_API_KEY=ollama
-```
-
-#### 5. WSL: chạy backend
-```bash
-cd ~/RAG
-source .venv/bin/activate
 uvicorn app.main:app --reload
 ```
 
-Lưu ý:
+Backend chạy tại `http://127.0.0.1:8000`.
 
-- `--reload` chỉ dành cho vòng lặp phát triển.
-- Khi chạy benchmark latency, dùng không `--reload`:
-  `uvicorn app.main:app --host 127.0.0.1 --port 8000`
+Kiểm tra nhanh:
 
-### 3. Bơm Dữ Liệu & Hỏi Đáp (Ingest & Query)
-Upload một tài liệu vào kho:
 ```bash
-curl -X POST http://127.0.0.1:8000/api/v1/documents/upload -F "file=@./data/sample.pdf"
+curl http://127.0.0.1:8000/api/v1/health
 ```
 
-Chạy một query yêu cầu phân tích cao trong chế độ Self-RAG:
+### Frontend
+
 ```bash
-curl -X POST http://127.0.0.1:8000/api/v1/query \
+cd frontend
+cp .env.example .env
+npm install
+npm run dev
+```
+
+Frontend mặc định chạy tại `http://127.0.0.1:5173`.
+
+## 5) API mẫu
+
+### Upload tài liệu
+
+```bash
+curl -X POST "http://127.0.0.1:8000/api/v1/documents/upload" \
+  -F "file=@./tests/test-files/testocr.pdf"
+```
+
+### Query (standard / advanced / compare)
+
+```bash
+curl -X POST "http://127.0.0.1:8000/api/v1/query" \
   -H "Content-Type: application/json" \
-  -d '{"query": "Tóm tắt các phát hiện quan trọng trong báo cáo tài chính.", "mode": "advanced"}'
+  -d '{
+    "query": "Tóm tắt nội dung chính của tài liệu",
+    "mode": "advanced"
+  }'
 ```
 
----
+### Stream qua SSE
 
-## 🛡️ Kiểm Định Kiểm Phủ & Mã Nguồn (Testing & Security Guardrails)
-
-Tính chính xác của dự án RAG được bảo kê chéo bằng tổ hợp hơn **190+ bài Unit Test / Integration Test mạch lạc** song song trên Github Actions.
-
-**Lệnh lập trình hằng ngày (Fast Tests vòng lặp Local):**
 ```bash
-python -m pytest -m "not slow and not e2e" \
-  --cov=app --cov-report=term-missing --cov-report=xml --cov-fail-under=75
+curl -N -X POST "http://127.0.0.1:8000/api/v1/query/stream" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "query": "Cho tôi câu trả lời có trích dẫn",
+    "mode": "compare"
+  }'
 ```
 
-**Bot CI/CD Kiểm Soát Định Kỳ:**
-- **Deterministic Regression Guard:** Xác nhận bảo vệ sàn `Hit Rate`, `MRR`, và `nDCG` với Mock Data JSON (Fixture) nội bộ mà không cần tải bất cứ Model Internet hay API ngoài luồng nào.
-- **Strict Typing:** `Mypy` chạy toàn phần strict mode đảm bảo tính ổn định bộ nhớ.
-- **Code Format:** Tự format theo `Ruff`.
-- **Security & Dependency Auditing:** CI Pipeline tự động trigger ứng dụng `bandit` (Quét tấn công AST code) và `pip-audit` (Quét phơi bày lỗ hổng thư viện mở).
+## 6) Chạy test
 
----
+```bash
+make test-fast
+make test-integration
+make test-full
+```
 
-## 🗺️ Tầm Nhìn & Kế Hoạch (Roadmap)
+Frontend check:
 
-Bộ Pipeline RAG này đã gần như đủ bản lĩnh để plug-and-play vào production của Doanh Nghiệp. Các cột mốc nâng cấp quy mô ngang dự tính trong chặng đường tới:
+```bash
+cd frontend
+npm run build
+```
 
-- **Lưu trữ Cụm (Distributed Vector & Graph Stores):** Di dời `InMemoryVectorIndex` lên Qdrant, Milvus. Cân nhắc tích hợp mô hình `Neo4j` giúp Query GraphRAG kết nối vòng lặp rộng.
-- **Bơm dữ liệu hướng Sự Kiện (Event-Driven Ingestion):** Add RabbitMQ/Kafka tách rời Job bóc tách File PDF nặng nhọc ra khỏi Backend Thread HTTP.
-- **Phân luồng Semantic Routing Agent:** Viết Gateway Agent phân loại sớm mục đích truy vấn (VD: Yêu cầu Thống kê báo cáo -> Ném sang đường Text-to-SQL thay vì ném sang Vector Database).
+## 7) Cấu trúc thư mục
 
----
-*Kiến trúc RAG chất lượng cao - Dành cho doanh nghiệp làm sản phẩm chân chính.*
+```text
+app/
+  api/          # routes FastAPI
+  ingestion/    # loaders, cleaner, chunker
+  indexing/     # embeddings, vector/bm25 index, persistence
+  retrieval/    # dense, sparse, hybrid, reranker, context selector
+  generation/   # llm client, baseline generation, citations
+  workflows/    # standard, advanced, compare orchestration
+  services/     # query/document/runtime services
+prompts/        # prompt templates
+tests/          # unit/integration tests
+frontend/       # React app
+docs/           # architecture, modes, runbook, evaluation...
+```
+
+## 8) Tài liệu thêm
+
+- [Architecture](./docs/ARCHITECTURE.md)
+- [Modes](./docs/MODES.md)
+- [Runbook](./docs/RUNBOOK.md)
+- [Evaluation](./docs/EVALUATION.md)
+- [OCR](./docs/OCR.md)
+
+## 9) License
+
+MIT - xem [LICENSE](./LICENSE).
