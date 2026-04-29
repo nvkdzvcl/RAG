@@ -359,8 +359,8 @@ class HeuristicCritic:
         if "force retry" in normalized_query or "force abstain" in normalized_query:
             return heuristic, "heuristic"
 
-        can_use_llm = self.use_llm if allow_llm is None else bool(
-            self.use_llm and allow_llm
+        can_use_llm = (
+            self.use_llm if allow_llm is None else bool(self.use_llm and allow_llm)
         )
         if not can_use_llm:
             return heuristic, "heuristic"

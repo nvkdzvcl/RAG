@@ -552,7 +552,9 @@ class CritiqueLoopStage(BasePipelineStage):
                 )
                 if self._rewrite_may_use_llm(workflow.query_rewriter):
                     context.add_llm_calls(1)
-                rewrite_ms = coerce_ms((time.perf_counter() - rewrite_started) * 1000, 0)
+                rewrite_ms = coerce_ms(
+                    (time.perf_counter() - rewrite_started) * 1000, 0
+                )
                 query_rewrite_total_ms += rewrite_ms
                 if rewrites:
                     current_query = rewrites[0]

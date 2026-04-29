@@ -12,9 +12,7 @@ import requests
 def _load_module():
     script_path = Path("scripts/benchmark_latency.py")
     module_name = "benchmark_latency_script"
-    spec = importlib.util.spec_from_file_location(
-        module_name, script_path
-    )
+    spec = importlib.util.spec_from_file_location(module_name, script_path)
     assert spec is not None and spec.loader is not None
     module = importlib.util.module_from_spec(spec)
     sys.modules[module_name] = module

@@ -610,7 +610,10 @@ class CompareWorkflow:
         for key in self._COMMON_TIMING_KEYS:
             summary[key] = coerce_ms(summary.get(key, 0), 0)
         summary["total_ms"] = coerce_ms(
-            summary.get("total_ms", response.latency_ms if response.latency_ms is not None else elapsed_ms),
+            summary.get(
+                "total_ms",
+                response.latency_ms if response.latency_ms is not None else elapsed_ms,
+            ),
             elapsed_ms,
         )
         summary["timing_breakdown_available"] = bool(

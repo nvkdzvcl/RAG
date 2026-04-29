@@ -1069,9 +1069,7 @@ class StandardWorkflow:
                 "hybrid_merge_ms": timings.get("hybrid_merge_ms", 0),
                 "breakdown_available": timing_breakdown_available,
                 "timing_breakdown_available": timing_breakdown_available,
-                "retrieval_timing_breakdown_available": (
-                    timing_breakdown_available
-                ),
+                "retrieval_timing_breakdown_available": (timing_breakdown_available),
                 "embedding_cache_hit": pipeline.embedding_cache_hit,
                 "retrieval_cache_hit": pipeline.retrieval_cache_hit,
             },
@@ -1198,9 +1196,7 @@ class StandardWorkflow:
                 "hybrid_merge_ms": timings.get("hybrid_merge_ms", 0),
                 "breakdown_available": timing_breakdown_available,
                 "timing_breakdown_available": timing_breakdown_available,
-                "retrieval_timing_breakdown_available": (
-                    timing_breakdown_available
-                ),
+                "retrieval_timing_breakdown_available": (timing_breakdown_available),
                 "query_complexity": effective_budget.complexity,
                 "query_budget": effective_budget.as_trace_payload(),
                 "rerank_policy": pipeline.rerank_policy,
@@ -1225,7 +1221,9 @@ class StandardWorkflow:
                 "retrieval_vs_generation_ratio": retrieval_vs_generation_ratio,
             }
         )
-        trace = ensure_completed_trace(trace, total_ms=timings.get("total_ms", elapsed_ms))
+        trace = ensure_completed_trace(
+            trace, total_ms=timings.get("total_ms", elapsed_ms)
+        )
 
         return StandardQueryResponse(
             mode="standard",

@@ -83,7 +83,10 @@ def ensure_completed_trace(
 ) -> list[dict[str, Any]]:
     """Ensure a trace list ends with a stable completion marker."""
     normalized = [dict(item) for item in (trace or [])]
-    if normalized and str(normalized[-1].get("step", "")).strip().lower() == "completed":
+    if (
+        normalized
+        and str(normalized[-1].get("step", "")).strip().lower() == "completed"
+    ):
         normalized[-1]["total_ms"] = coerce_ms(
             normalized[-1].get("total_ms", total_ms),
             coerce_ms(total_ms, 0),
@@ -133,9 +136,7 @@ class StepTimer:
 
     def metrics(self) -> dict[str, int]:
         """Return a shallow copy of all measurements."""
-        return {
-            key: coerce_ms(value, 0) for key, value in self._metrics.items()
-        }
+        return {key: coerce_ms(value, 0) for key, value in self._metrics.items()}
 
     @contextmanager
     def measure(self, name: str) -> Iterator[None]:

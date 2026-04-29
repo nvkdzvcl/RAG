@@ -4,7 +4,11 @@ from __future__ import annotations
 
 from typing import Any
 
-from app.schemas.api import AdvancedQueryResponse, CompareQueryResponse, StandardQueryResponse
+from app.schemas.api import (
+    AdvancedQueryResponse,
+    CompareQueryResponse,
+    StandardQueryResponse,
+)
 from app.schemas.common import Mode
 from app.workflows.runner import WorkflowRunner
 
@@ -45,7 +49,12 @@ def test_timing_shape_standard_advanced_compare() -> None:
     assert isinstance(advanced, AdvancedQueryResponse)
     advanced_summary = _timing_summary(advanced.trace)
     _assert_common_timing_shape(advanced_summary)
-    for key in ("standard_pipeline_ms", "critique_ms", "retrieval_gate_ms", "refine_ms"):
+    for key in (
+        "standard_pipeline_ms",
+        "critique_ms",
+        "retrieval_gate_ms",
+        "refine_ms",
+    ):
         assert key in advanced_summary
         assert isinstance(advanced_summary[key], int)
         assert advanced_summary[key] >= 0
@@ -65,5 +74,9 @@ def test_timing_shape_standard_advanced_compare() -> None:
     assert isinstance(advanced_branch_summary.get("refine_ms"), int)
     _assert_non_negative_ms(compare.standard.trace)
     _assert_non_negative_ms(compare.advanced.trace)
-    assert compare.standard.trace and compare.standard.trace[-1].get("step") == "completed"
-    assert compare.advanced.trace and compare.advanced.trace[-1].get("step") == "completed"
+    assert (
+        compare.standard.trace and compare.standard.trace[-1].get("step") == "completed"
+    )
+    assert (
+        compare.advanced.trace and compare.advanced.trace[-1].get("step") == "completed"
+    )
