@@ -290,3 +290,64 @@ def test_language_guard_rewrite_failure_keeps_workflow_stable() -> None:
     assert response.status == "answered"
     assert response.answer
     assert response.language_mismatch is True
+
+
+def test_language_guard_rewrite_uses_llm_rewrite_max_tokens(monkeypatch) -> None:
+    class _Settings:
+        retrieval_top_k = 8
+        reranker_top_k = 6
+        reranker_top_n = 6
+        reranker_enabled = True
+        chunk_size = 320
+        chunk_overlap = 40
+        memory_window = 3
+        corpus_dir = "docs"
+        index_dir = "data/indexes"
+        prompt_dir = "prompts"
+        llm_max_tokens = 1024
+        llm_rewrite_max_tokens = 123
+        rag_dynamic_budget_enabled = False
+        rag_simple_max_tokens = 384
+        rag_normal_max_tokens = 768
+        rag_complex_max_tokens = 1536
+        rag_simple_context_chars = 1600
+        rag_normal_context_chars = 3000
+
+    class _ChineseThenVietnameseRewriteLLM:
+        def __init__(self) -> None:
+            self.calls = 0
+            self.max_tokens_seen: list[int | None] = []
+
+        def complete(
+            self,
+            prompt: str,
+            system_prompt: str | None = None,
+            model: str | None = None,
+            max_tokens: int | None = None,
+        ) -> str:
+            _ = prompt
+            _ = system_prompt
+            _ = model
+            self.calls += 1
+            self.max_tokens_seen.append(max_tokens)
+            if self.calls == 1:
+                return (
+                    '{"answer":"这是中文回答。","confidence":0.82,"status":"answered"}'
+                )
+            return '{"answer":"Đây là câu trả lời đã được viết lại.","confidence":0.8,"status":"answered"}'
+
+    monkeypatch.setattr("app.workflows.standard.get_settings", lambda: _Settings())
+    llm = _ChineseThenVietnameseRewriteLLM()
+    workflow = StandardWorkflow(
+        index_manager=_FakeIndexManager(),
+        llm_client=llm,
+        reranker=ScoreOnlyReranker(),
+    )
+
+    response = workflow.run(query="Self-RAG là gì?")
+
+    assert response.answer.startswith("Đây là câu trả lời")
+    assert response.language_mismatch is False
+    assert len(llm.max_tokens_seen) >= 2
+    assert llm.max_tokens_seen[0] == 1024
+    assert llm.max_tokens_seen[1] == 123

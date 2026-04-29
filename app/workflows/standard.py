@@ -164,6 +164,9 @@ class StandardWorkflow:
         self.default_llm_max_tokens = max(
             1, int(getattr(settings, "llm_max_tokens", 2048))
         )
+        self.llm_rewrite_max_tokens = max(
+            1, int(getattr(settings, "llm_rewrite_max_tokens", 256))
+        )
         self.dynamic_budget_enabled = bool(
             getattr(settings, "rag_dynamic_budget_enabled", True)
         )
@@ -931,6 +934,7 @@ class StandardWorkflow:
                 prompt,
                 system_prompt=build_language_system_prompt(response_language),
                 model=model,
+                max_tokens=self.llm_rewrite_max_tokens,
             )
         except Exception:
             return None

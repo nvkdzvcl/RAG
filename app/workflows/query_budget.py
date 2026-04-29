@@ -195,6 +195,10 @@ def choose_query_budget(
         target_context_chars = base_context_chars
         target_tokens = _positive_int(complex_max_tokens)
 
+    # Keep constructor/configured context_max_chars as hard upper bound for
+    # all dynamic profiles.
+    target_context_chars = min(base_context_chars, _positive_int(target_context_chars))
+
     if retrieval_top_k_locked:
         hybrid_top_k = base_hybrid
         rerank_top_k = base_rerank

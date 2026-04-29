@@ -145,3 +145,23 @@ def test_choose_query_budget_disabled_keeps_legacy_budget() -> None:
     assert budget.context_top_k == 4
     assert budget.context_max_chars == 4000
     assert budget.max_tokens == 2048
+
+
+def test_choose_query_budget_dynamic_caps_context_chars_by_base_limit() -> None:
+    budget = choose_query_budget(
+        "Tên của Điều 2 là gì?",
+        dynamic_enabled=True,
+        base_hybrid_top_k=8,
+        base_rerank_top_k=6,
+        base_context_top_k=4,
+        base_context_max_chars=1200,
+        base_llm_max_tokens=2048,
+        simple_max_tokens=384,
+        normal_max_tokens=768,
+        complex_max_tokens=1536,
+        simple_context_chars=1600,
+        normal_context_chars=3000,
+    )
+
+    assert budget.complexity == "simple_extractive"
+    assert budget.context_max_chars == 1200
