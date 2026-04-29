@@ -283,13 +283,25 @@ function normalizeUpdateRetrievalSettingsResponse(payload: unknown): ApiUpdateRe
   };
 }
 
-export async function postQuery(request: ApiQueryRequest): Promise<ApiQueryResponse> {
+type RequestOptions = {
+  signal?: AbortSignal;
+};
+
+function isAbortError(error: unknown): boolean {
+  return error instanceof DOMException && error.name === "AbortError";
+}
+
+export async function postQuery(
+  request: ApiQueryRequest,
+  options: RequestOptions = {},
+): Promise<ApiQueryResponse> {
   const response = await fetch(`${API_BASE_URL}/query`, {
     method: "POST",
     headers: {
       "Content-Type": "application/json",
     },
     body: JSON.stringify(request),
+    signal: options.signal,
   });
 
   if (!response.ok) {
@@ -351,8 +363,9 @@ function parseSseFrame(frame: string): { eventName: string; payload: Record<stri
 async function fallbackToPostQuery(
   request: ApiQueryRequest,
   handlers: QueryStreamHandlers | undefined,
+  options: RequestOptions = {},
 ): Promise<ApiQueryResponse> {
-  const response = await postQuery(request);
+  const response = await postQuery(request, options);
   handlers?.onFinal?.(response, {
     type: "final",
     response,
@@ -369,9 +382,10 @@ export function isQueryStreamEnabled(): boolean {
 export async function postQueryStream(
   request: ApiQueryRequest,
   handlers?: QueryStreamHandlers,
+  options: RequestOptions = {},
 ): Promise<ApiQueryResponse> {
   if (!supportsStreamingResponse()) {
-    return fallbackToPostQuery(request, handlers);
+    return fallbackToPostQuery(request, handlers, options);
   }
 
   const streamStartedAt = nowMs();
@@ -386,6 +400,7 @@ export async function postQueryStream(
         "Content-Type": "application/json",
       },
       body: JSON.stringify(request),
+      signal: options.signal,
     });
 
     if (!response.ok) {
@@ -393,7 +408,7 @@ export async function postQueryStream(
     }
 
     if (!response.body) {
-      return fallbackToPostQuery(request, handlers);
+      return fallbackToPostQuery(request, handlers, options);
     }
 
     const reader = response.body.getReader();
@@ -512,12 +527,15 @@ export async function postQueryStream(
     }
 
     if (!sawAnyEvent) {
-      return fallbackToPostQuery(request, handlers);
+      return fallbackToPostQuery(request, handlers, options);
     }
     throw new ApiRequestError(500, "Không nhận được phản hồi cuối từ stream.");
   } catch (error) {
+    if (options.signal?.aborted || isAbortError(error)) {
+      throw error;
+    }
     if (!sawAnyEvent) {
-      return fallbackToPostQuery(request, handlers);
+      return fallbackToPostQuery(request, handlers, options);
     }
     throw error;
   } finally {

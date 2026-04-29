@@ -45,13 +45,13 @@ export function AlertDialog({
   };
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50">
-      <Card className="w-full max-w-md border-slate-200 shadow-lg">
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-3 backdrop-blur-sm dark:bg-black/70">
+      <Card className="w-full max-w-md border-border bg-card shadow-soft">
         <CardHeader>
           <CardTitle className="text-lg">{title}</CardTitle>
         </CardHeader>
         <CardContent className="space-y-4">
-          <p className="text-sm text-slate-600">{description}</p>
+          <p className="text-sm leading-6 text-muted-foreground">{description}</p>
           <div className="flex justify-end gap-2">
             <Button
               type="button"
@@ -67,8 +67,8 @@ export function AlertDialog({
               onClick={handleConfirm}
               className={
                 variant === "destructive"
-                  ? "bg-rose-600 hover:bg-rose-700 text-white"
-                  : "bg-primary hover:bg-primary/90 text-white"
+                  ? "bg-destructive text-destructive-foreground hover:bg-destructive/90"
+                  : "bg-primary text-primary-foreground hover:bg-primary/90"
               }
             >
               {confirmText}

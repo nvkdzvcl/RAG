@@ -19,7 +19,7 @@ function isObject(value: unknown): value is Record<string, unknown> {
 
 function toTitleCase(step: string): string {
   return step
-    .replaceAll("_", " ")
+    .replace(/_/g, " ")
     .split(" ")
     .filter(Boolean)
     .map((part) => part.charAt(0).toUpperCase() + part.slice(1))
@@ -194,7 +194,6 @@ function TimelineList({ items }: { items: TimelineItem[] }) {
   const statusTranslation: Record<TraceStatus, string> = {
     success: "thành công",
     warning: "cảnh báo",
-    error: "lỗi",
     info: "thông tin",
   };
 

@@ -16,6 +16,7 @@ export type ChatSession = {
   title: string;
   createdAt: string;
   updatedAt: string;
+  pinned: boolean;
   mode: Mode;
   model: string;
   messages: ChatSessionMessage[];

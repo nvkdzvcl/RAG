@@ -252,9 +252,9 @@ export function SettingsModal({
 
   return (
     <>
-      <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-2 sm:p-4">
-        <Card className="flex max-h-[90vh] w-full max-w-3xl flex-col border-slate-200 shadow-lg">
-          <CardHeader className="shrink-0 border-b border-slate-100 pb-4">
+      <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-2 backdrop-blur-sm dark:bg-black/70 sm:p-4">
+        <Card className="flex max-h-[90vh] w-full max-w-3xl flex-col border-border bg-card shadow-soft dark:[&_.bg-amber-50]:!bg-warning/10 dark:[&_.bg-blue-50]:!bg-primary/10 dark:[&_.bg-slate-50]:!bg-card dark:[&_.bg-white]:!bg-background dark:[&_.border-amber-200]:!border-warning/25 dark:[&_.border-blue-200]:!border-primary/25 dark:[&_.border-blue-300]:!border-primary/35 dark:[&_.border-slate-100]:!border-border dark:[&_.border-slate-200]:!border-border dark:[&_.border-slate-300]:!border-muted dark:[&_.text-amber-800]:!text-warning dark:[&_.text-slate-500]:!text-muted-foreground dark:[&_.text-slate-600]:!text-muted-foreground dark:[&_.text-slate-700]:!text-foreground dark:[&_.text-slate-800]:!text-foreground dark:[&_.text-slate-900]:!text-foreground">
+          <CardHeader className="shrink-0 border-b border-border pb-4">
             <div className="flex flex-row items-center justify-between">
               <CardTitle className="text-lg">Cài đặt hệ thống</CardTitle>
               <Button
@@ -351,7 +351,7 @@ export function SettingsModal({
                       />
                     </div>
                     {chunkValidationError ? (
-                      <p className="text-xs font-medium text-rose-600">{chunkValidationError}</p>
+                      <p className="text-xs font-medium text-destructive">{chunkValidationError}</p>
                     ) : null}
                   </div>
                 ) : null}
@@ -412,7 +412,7 @@ export function SettingsModal({
                       />
                     </div>
                     {retrievalValidationError ? (
-                      <p className="text-xs font-medium text-rose-600">{retrievalValidationError}</p>
+                      <p className="text-xs font-medium text-destructive">{retrievalValidationError}</p>
                     ) : null}
                   </div>
                 ) : null}
@@ -423,15 +423,15 @@ export function SettingsModal({
               </div>
 
               {showPerformanceWarning ? (
-                <div className="rounded-lg border border-amber-200 bg-amber-50 px-3 py-2">
-                  <p className="text-xs text-amber-800">
+                <div className="rounded-lg border border-warning/20 bg-warning/10 px-3 py-2">
+                  <p className="text-xs text-warning">
                     Cấu hình lớn có thể làm chậm re-index hoặc truy vấn.
                   </p>
                 </div>
               ) : null}
             </div>
 
-            <div className="sticky bottom-0 z-10 shrink-0 border-t border-slate-200 bg-white px-4 py-4 sm:px-6">
+            <div className="sticky bottom-0 z-10 shrink-0 border-t border-border bg-card px-4 py-4 sm:px-6">
               <p className="mb-3 text-xs text-slate-500">
                 Khi áp dụng, hệ thống có thể re-index toàn bộ tài liệu đã tải nếu cấu hình thay đổi.
               </p>
@@ -443,7 +443,7 @@ export function SettingsModal({
                   type="button"
                   onClick={handleApply}
                   disabled={isApplying || hasValidationError}
-                  className="bg-primary text-white hover:bg-primary/90"
+                  className="bg-primary text-primary-foreground hover:bg-primary/90"
                 >
                   {isApplying ? "Đang áp dụng..." : "Áp dụng"}
                 </Button>

@@ -1,23 +1,27 @@
 import { useEffect, useMemo, useRef, useState } from "react";
+import { CheckCircle2, Clock3, X } from "lucide-react";
 
 import { ApiRequestError, getHealthStatus, isQueryStreamEnabled, postQuery, postQueryStream } from "@/api/client";
 import type { ApiQueryRequest, ApiQueryResponse, ApiRetrievalMode } from "@/api/types";
 import { apiToUi } from "@/api/transform";
 import { AppShell } from "@/components/dashboard/app-shell";
-import { ChatComposer } from "@/components/dashboard/chat-composer";
-import { ChatPanel } from "@/components/dashboard/chat-panel";
 import { DocumentUploadCard } from "@/components/dashboard/document-upload-card";
-import { ModeSelector } from "@/components/dashboard/mode-selector";
 import {
   QueryFilters,
   type QueryFileTypeFilter,
   type QueryOcrFilter,
 } from "@/components/dashboard/query-filters";
-import { Sidebar, type RecentChat } from "@/components/dashboard/sidebar";
-import { SourcesPanel } from "@/components/dashboard/sources-panel";
-import { WorkflowTrace } from "@/components/dashboard/workflow-trace";
 import { SettingsModal, type SettingsChangePayload } from "@/components/dashboard/settings-modal";
+import { ChatContainer } from "@/components/rag/chat-container";
+import { CitationPreviewModal } from "@/components/rag/citation-preview-modal";
+import { Composer } from "@/components/rag/composer";
+import { ModeSelector } from "@/components/rag/mode-selector";
+import { Sidebar, type RecentChat } from "@/components/rag/sidebar";
+import { SidePanel, type SidePanelTab } from "@/components/rag/side-panel";
+import { ThemeToggle } from "@/components/rag/theme-toggle";
+import { flattenCitationItems, type CitationPanelItem } from "@/components/rag/citation-utils";
 import { AlertDialog } from "@/components/ui/alert-dialog";
+import { Button } from "@/components/ui/button";
 import { useDocumentIngestion } from "@/hooks/use-document-ingestion";
 import {
   clearChatSessionsStorage,
@@ -28,6 +32,12 @@ import {
   loadChatSessions,
   persistChatSessions,
 } from "@/lib/chat-sessions";
+import {
+  applyThemePreference,
+  persistThemePreference,
+  readThemePreference,
+  type ThemeMode,
+} from "@/lib/theme";
 import type { Mode, QueryResult, SingleMode } from "@/types/chat";
 import type { ChatSession, ChatSessionMessage } from "@/types/chat-session";
 import type { DocumentRecord } from "@/types/document";
@@ -186,6 +196,13 @@ export function ChatPage() {
   const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
   const [streamProgress, setStreamProgress] = useState<StreamProgress | null>(null);
+  const [theme, setTheme] = useState<ThemeMode>(() => readThemePreference());
+  const [sidePanelOpen, setSidePanelOpen] = useState(true);
+  const [sidePanelTab, setSidePanelTab] = useState<SidePanelTab>("citations");
+  const [activeCitationId, setActiveCitationId] = useState<string | null>(null);
+  const [previewCitation, setPreviewCitation] = useState<CitationPanelItem | null>(null);
+  const [showDocumentsModal, setShowDocumentsModal] = useState(false);
+  const [toastMessage, setToastMessage] = useState<string | null>(null);
   const [chunkSize, setChunkSize] = useState(1000);
   const [chunkOverlap, setChunkOverlap] = useState(100);
   const [retrievalMode, setRetrievalMode] = useState<ApiRetrievalMode>("high");
@@ -203,7 +220,7 @@ export function ChatPage() {
   const [uploadedAfter, setUploadedAfter] = useState("");
   const [uploadedBefore, setUploadedBefore] = useState("");
   const [ocrFilter, setOcrFilter] = useState<QueryOcrFilter>("all");
-  const documentsSectionRef = useRef<HTMLDivElement | null>(null);
+  const abortControllerRef = useRef<AbortController | null>(null);
 
   const {
     documents,
@@ -237,6 +254,19 @@ export function ChatPage() {
     const limited = sessions.slice(0, MAX_STORED_SESSIONS);
     persistChatSessions(limited);
   }, [sessions]);
+
+  useEffect(() => {
+    if (!toastMessage) {
+      return;
+    }
+    const timeout = window.setTimeout(() => setToastMessage(null), 2200);
+    return () => window.clearTimeout(timeout);
+  }, [toastMessage]);
+
+  useEffect(() => {
+    applyThemePreference(theme);
+    persistThemePreference(theme);
+  }, [theme]);
 
   const activeSession = useMemo(
     () => sessions.find((item) => item.id === activeSessionId) ?? sessions[0] ?? null,
@@ -299,11 +329,16 @@ export function ChatPage() {
   const recentChats = useMemo<RecentChat[]>(() => {
     return sessions
       .filter((item) => item.messages.some((message) => message.role === "user"))
-      .sort((left, right) => right.updatedAt.localeCompare(left.updatedAt))
+      .sort((left, right) => {
+        if (left.pinned !== right.pinned) {
+          return left.pinned ? -1 : 1;
+        }
+        return right.updatedAt.localeCompare(left.updatedAt);
+      })
       .map((item) => ({
         id: item.id,
         title: item.title,
-        mode: item.mode,
+        pinned: item.pinned,
         timeLabel: formatRelativeTime(item.updatedAt),
       }));
   }, [sessions]);
@@ -362,8 +397,8 @@ export function ChatPage() {
     }));
   };
 
-  const runQuery = async () => {
-    const normalized = query.trim();
+  const runQuery = async (queryOverride?: string) => {
+    const normalized = (queryOverride ?? query).trim();
     if (!normalized || isLoading) {
       return;
     }
@@ -410,7 +445,11 @@ export function ChatPage() {
     setError(null);
     setNotice(null);
     setQuery("");
+    setActiveCitationId(null);
+    setPreviewCitation(null);
     setStreamProgress(initialStreamProgress());
+    const abortController = new AbortController();
+    abortControllerRef.current = abortController;
 
     try {
       const selectedDocuments = selectedFilterDocIds.length > 0
@@ -528,94 +567,98 @@ export function ChatPage() {
       };
 
       const payload = STREAM_QUERY_ENABLED
-        ? await postQueryStream(requestPayload, {
-            onStart: () => {
-              setStreamProgress((previous) => {
-                if (!previous) {
-                  return initialStreamProgress();
-                }
-                return {
-                  ...previous,
-                  stage: "retrieving",
-                };
-              });
-            },
-            onRetrieval: () => {
-              setStreamProgress((previous) => {
-                if (!previous) {
-                  return previous;
-                }
-                return {
-                  ...previous,
-                  stage: "reranking",
-                  stageReached: {
-                    ...previous.stageReached,
-                    retrieving: true,
-                    reranking: true,
-                  },
-                };
-              });
-            },
-            onGenerationDelta: (delta, meta) => {
-              if (!delta) {
-                return;
-              }
-              setStreamProgress((previous) => {
-                const base = previous ?? initialStreamProgress();
-                return {
-                  ...base,
-                  stage: "generating",
-                  partialAnswer: `${base.partialAnswer}${delta}`,
-                  stageReached: {
-                    ...base.stageReached,
-                    generating: true,
-                  },
-                  timeToFirstTokenMs:
-                    base.timeToFirstTokenMs ?? meta.time_to_first_token_ms ?? null,
-                };
-              });
-            },
-            onTrace: (eventPayload, eventName) => {
-              applyTraceStage(eventPayload, eventName);
-              const compareTotalMs = eventPayload.compare_total_ms;
-              if (
-                eventName === "compare_timing"
-                && typeof compareTotalMs === "number"
-                && Number.isFinite(compareTotalMs)
-              ) {
+        ? await postQueryStream(
+            requestPayload,
+            {
+              onStart: () => {
+                setStreamProgress((previous) => {
+                  if (!previous) {
+                    return initialStreamProgress();
+                  }
+                  return {
+                    ...previous,
+                    stage: "retrieving",
+                  };
+                });
+              },
+              onRetrieval: () => {
                 setStreamProgress((previous) => {
                   if (!previous) {
                     return previous;
                   }
                   return {
                     ...previous,
-                    totalLatencyMs: compareTotalMs,
+                    stage: "reranking",
+                    stageReached: {
+                      ...previous.stageReached,
+                      retrieving: true,
+                      reranking: true,
+                    },
                   };
                 });
-              }
+              },
+              onGenerationDelta: (delta, meta) => {
+                if (!delta) {
+                  return;
+                }
+                setStreamProgress((previous) => {
+                  const base = previous ?? initialStreamProgress();
+                  return {
+                    ...base,
+                    stage: "generating",
+                    partialAnswer: `${base.partialAnswer}${delta}`,
+                    stageReached: {
+                      ...base.stageReached,
+                      generating: true,
+                    },
+                    timeToFirstTokenMs:
+                      base.timeToFirstTokenMs ?? meta.time_to_first_token_ms ?? null,
+                  };
+                });
+              },
+              onTrace: (eventPayload, eventName) => {
+                applyTraceStage(eventPayload, eventName);
+                const compareTotalMs = eventPayload.compare_total_ms;
+                if (
+                  eventName === "compare_timing"
+                  && typeof compareTotalMs === "number"
+                  && Number.isFinite(compareTotalMs)
+                ) {
+                  setStreamProgress((previous) => {
+                    if (!previous) {
+                      return previous;
+                    }
+                    return {
+                      ...previous,
+                      totalLatencyMs: compareTotalMs,
+                    };
+                  });
+                }
+              },
+              onFinal: (finalPayload) => {
+                const totalLatency = totalLatencyFromFinalResponse(finalPayload);
+                setStreamProgress((previous) => {
+                  const base = previous ?? initialStreamProgress();
+                  return {
+                    ...base,
+                    stage: "grounding",
+                    stageReached: {
+                      retrieving: true,
+                      reranking: true,
+                      generating: true,
+                      grounding: true,
+                    },
+                    totalLatencyMs: totalLatency,
+                  };
+                });
+              },
+              onError: (streamErrorMessage) => {
+                setError(streamErrorMessage);
+              },
             },
-            onFinal: (finalPayload) => {
-              const totalLatency = totalLatencyFromFinalResponse(finalPayload);
-              setStreamProgress((previous) => {
-                const base = previous ?? initialStreamProgress();
-                return {
-                  ...base,
-                  stage: "grounding",
-                  stageReached: {
-                    retrieving: true,
-                    reranking: true,
-                    generating: true,
-                    grounding: true,
-                  },
-                  totalLatencyMs: totalLatency,
-                };
-              });
-            },
-            onError: (streamErrorMessage) => {
-              setError(streamErrorMessage);
-            },
-          })
-        : await postQuery(requestPayload);
+            { signal: abortController.signal },
+          )
+        : await postQuery(requestPayload, { signal: abortController.signal });
 
       const mapped = apiToUi(payload);
       const now = new Date().toISOString();
@@ -653,8 +696,18 @@ export function ChatPage() {
         };
       });
     } catch (requestError) {
+      const requestWasAborted =
+        abortController.signal.aborted
+        || (requestError instanceof DOMException && requestError.name === "AbortError");
+      if (requestWasAborted) {
+        setNotice("Generation stopped.");
+        return;
+      }
       setError(fallbackErrorMessage(requestError));
     } finally {
+      if (abortControllerRef.current === abortController) {
+        abortControllerRef.current = null;
+      }
       setIsLoading(false);
       setStreamProgress(null);
     }
@@ -662,6 +715,15 @@ export function ChatPage() {
 
   const handleNewChat = () => {
     createFreshSession(mode, selectedModel);
+    setActiveCitationId(null);
+    setPreviewCitation(null);
+  };
+
+  const handleStopGeneration = () => {
+    abortControllerRef.current?.abort();
+    setNotice("Generation stopped.");
+    setIsLoading(false);
+    setStreamProgress(null);
   };
 
   const handleClearHistory = () => {
@@ -672,6 +734,7 @@ export function ChatPage() {
     setQuery("");
     setError(null);
     setNotice(null);
+    setPreviewCitation(null);
   };
 
   const handleClearVectorStore = async () => {
@@ -776,6 +839,41 @@ export function ChatPage() {
     setQuery("");
     setError(null);
     setNotice(null);
+    setActiveCitationId(null);
+    setPreviewCitation(null);
+  };
+
+  const handleTogglePinChat = (chat: RecentChat) => {
+    setSessions((previous) =>
+      previous.map((item) =>
+        item.id === chat.id
+          ? {
+              ...item,
+              pinned: !item.pinned,
+            }
+          : item,
+      ),
+    );
+  };
+
+  const handleDeleteChat = (chat: RecentChat) => {
+    setSessions((previous) => {
+      const remaining = previous.filter((item) => item.id !== chat.id);
+      if (remaining.length === 0) {
+        const created = createChatSession({ mode, model: selectedModel });
+        setActiveSessionId(created.id);
+        return [created];
+      }
+      if (activeSessionId === chat.id) {
+        setActiveSessionId(remaining[0].id);
+      }
+      return remaining;
+    });
+
+    setError(null);
+    setNotice(null);
+    setActiveCitationId(null);
+    setPreviewCitation(null);
   };
 
   const handleModeChange = (nextMode: Mode) => {
@@ -798,57 +896,82 @@ export function ChatPage() {
     }));
   };
 
+  const handleCitationClick = (panelId: string) => {
+    setActiveCitationId(panelId);
+    setSidePanelTab("citations");
+    const selected = flattenCitationItems(result).find((item) => item.panelId === panelId) ?? null;
+    setPreviewCitation(selected);
+  };
+
+  const handleToggleDebug = () => {
+    setSidePanelTab("debug");
+    setSidePanelOpen(true);
+  };
+
+  const handleCopyNotice = () => {
+    setToastMessage("Copied to clipboard");
+  };
+
+  const handleRegenerate = () => {
+    if (!submittedQuery || isLoading) {
+      return;
+    }
+    void runQuery(submittedQuery);
+  };
+
+  const resultLatencyMs =
+    result?.mode === "compare"
+      ? result.standard.latencyMs !== null && result.advanced.latencyMs !== null
+        ? result.standard.latencyMs + result.advanced.latencyMs
+        : null
+      : result?.latencyMs ?? null;
+  const latencyLabel =
+    streamProgress?.totalLatencyMs !== null && streamProgress?.totalLatencyMs !== undefined
+      ? `${streamProgress.totalLatencyMs}ms`
+      : resultLatencyMs !== null
+        ? `${resultLatencyMs}ms`
+        : "n/a";
+
   const mainContent = (
-    <div className="mx-auto flex w-full max-w-5xl flex-col gap-4">
-      <ModeSelector
-        mode={mode}
-        onModeChange={handleModeChange}
-        selectedModel={selectedModel}
-        onModelChange={handleModelChange}
-        disabled={isLoading}
-      />
-      <div ref={documentsSectionRef}>
-        <DocumentUploadCard
-          documents={documents}
-          activeDocument={activeDocument}
-          isUploading={isUploading}
-          isDeletingDocuments={isDeletingDocuments}
-          deletingDocumentId={deletingDocumentId}
-          uploadMessage={uploadMessage}
-          uploadError={uploadError}
-          uploadBatchItems={uploadBatchItems}
-          uploadBatchSummary={uploadBatchSummary}
-          onUploadFiles={uploadFiles}
-          onRequestDeleteDocument={(document) => setSelectedDocumentForDelete(document)}
-          onRequestDeleteAllDocuments={() => setShowClearVectorDialog(true)}
+    <div className="flex h-full min-h-0 flex-col">
+      <header className="relative z-30 flex min-h-14 shrink-0 items-center justify-between gap-4 border-b border-border bg-background/75 px-4 backdrop-blur-xl md:px-6">
+        <ModeSelector
+          workflowMode={mode}
+          onWorkflowModeChange={handleModeChange}
+          selectedModel={selectedModel}
+          onModelChange={handleModelChange}
+          disabled={isLoading}
         />
-      </div>
-      <ChatPanel
+        <div className="flex shrink-0 items-center gap-2">
+          <div className="hidden items-center gap-2 rounded-xl border border-border bg-card/80 px-3 py-2 font-mono text-xs text-muted-foreground shadow-subtle md:flex">
+            <Clock3 className="h-3.5 w-3.5 text-success" />
+            <span>Latency:</span>
+            <span className="font-semibold text-accent">{latencyLabel}</span>
+          </div>
+          <ThemeToggle theme={theme} onThemeChange={setTheme} />
+        </div>
+      </header>
+
+      <ChatContainer
         messages={messages}
         result={result}
         isLoading={isLoading}
         error={error}
         notice={notice}
         streamProgress={streamProgress}
+        canQuery={canQuery}
+        onOpenDocuments={() => setShowDocumentsModal(true)}
+        onCitationClick={handleCitationClick}
+        onCopied={handleCopyNotice}
+        onRegenerate={handleRegenerate}
+        onToggleDebug={handleToggleDebug}
       />
-      <QueryFilters
-        documents={documents}
-        selectedDocIds={selectedFilterDocIds}
-        onSelectedDocIdsChange={setSelectedFilterDocIds}
-        selectedFileTypes={selectedFileTypes}
-        onSelectedFileTypesChange={setSelectedFileTypes}
-        uploadedAfter={uploadedAfter}
-        onUploadedAfterChange={setUploadedAfter}
-        uploadedBefore={uploadedBefore}
-        onUploadedBeforeChange={setUploadedBefore}
-        ocrFilter={ocrFilter}
-        onOcrFilterChange={setOcrFilter}
-        disabled={isLoading}
-      />
-      <ChatComposer
+
+      <Composer
         query={query}
         onQueryChange={setQuery}
-        onSubmit={runQuery}
+        onSubmit={() => void runQuery()}
+        onStop={handleStopGeneration}
         isLoading={isLoading}
         canSubmit={canSubmit}
         disabled={!canQuery}
@@ -858,10 +981,16 @@ export function ChatPage() {
   );
 
   const inspectPanel = (
-    <div className="space-y-4">
-      <SourcesPanel result={result} />
-      <WorkflowTrace result={result} />
-    </div>
+    <SidePanel
+      open={sidePanelOpen}
+      tab={sidePanelTab}
+      onOpenChange={setSidePanelOpen}
+      onTabChange={setSidePanelTab}
+      result={result}
+      activeCitationId={activeCitationId}
+      query={submittedQuery}
+      onFocusCitation={setActiveCitationId}
+    />
   );
 
   return (
@@ -869,13 +998,15 @@ export function ChatPage() {
       <AppShell
         sidebar={
           <Sidebar
-            mode={mode}
+            activeSessionId={activeSessionId}
             onNewChat={handleNewChat}
             recentChats={recentChats}
             onSelectRecent={handleSelectRecent}
-            onOpenDocuments={() => {
-              documentsSectionRef.current?.scrollIntoView({ behavior: "smooth", block: "start" });
-            }}
+            onTogglePinChat={handleTogglePinChat}
+            onDeleteChat={handleDeleteChat}
+            documentsCount={documents.length}
+            readyDocumentsCount={readyDocuments.length}
+            onOpenDocuments={() => setShowDocumentsModal(true)}
             onClearHistory={() => setShowClearHistoryDialog(true)}
             onClearVectorStore={() => setShowClearVectorDialog(true)}
             onOpenSettings={() => setShowSettingsModal(true)}
@@ -883,7 +1014,76 @@ export function ChatPage() {
         }
         main={mainContent}
         inspect={inspectPanel}
+        rightPanelOpen={sidePanelOpen}
       />
+
+      {showDocumentsModal ? (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-3 backdrop-blur-sm dark:bg-black/70">
+          <div className="flex max-h-[90vh] w-full max-w-4xl flex-col rounded-xl border border-border bg-background shadow-soft">
+            <div className="flex shrink-0 items-center justify-between border-b border-border px-4 py-3">
+              <div>
+                <p className="text-sm font-semibold text-foreground">Documents</p>
+                <p className="text-xs text-muted-foreground">
+                  {readyDocuments.length} ready of {documents.length} uploaded
+                </p>
+              </div>
+              <Button
+                type="button"
+                variant="ghost"
+                size="icon"
+                onClick={() => setShowDocumentsModal(false)}
+                className="text-muted-foreground hover:text-foreground"
+                title="Close documents"
+              >
+                <X className="h-4 w-4" />
+              </Button>
+            </div>
+            <div className="min-h-0 flex-1 space-y-4 overflow-y-auto p-4 dark:[&_.bg-blue-50]:!bg-primary/10 dark:[&_.bg-emerald-50]:!bg-success/10 dark:[&_.bg-rose-50]:!bg-destructive/10 dark:[&_.bg-slate-100]:!bg-card dark:[&_.bg-slate-50]:!bg-card dark:[&_.bg-white]:!bg-background dark:[&_.border-blue-300]:!border-primary/30 dark:[&_.border-emerald-200]:!border-success/25 dark:[&_.border-rose-200]:!border-destructive/25 dark:[&_.border-slate-100]:!border-border dark:[&_.border-slate-200]:!border-border dark:[&_.border-slate-300]:!border-muted dark:[&_.text-blue-600]:!text-primary dark:[&_.text-emerald-700]:!text-success dark:[&_.text-rose-700]:!text-destructive dark:[&_.text-slate-400]:!text-muted-foreground dark:[&_.text-slate-500]:!text-muted-foreground dark:[&_.text-slate-600]:!text-muted-foreground dark:[&_.text-slate-700]:!text-foreground dark:[&_.text-slate-800]:!text-foreground dark:[&_.text-slate-900]:!text-foreground">
+              <DocumentUploadCard
+                documents={documents}
+                activeDocument={activeDocument}
+                isUploading={isUploading}
+                isDeletingDocuments={isDeletingDocuments}
+                deletingDocumentId={deletingDocumentId}
+                uploadMessage={uploadMessage}
+                uploadError={uploadError}
+                uploadBatchItems={uploadBatchItems}
+                uploadBatchSummary={uploadBatchSummary}
+                onUploadFiles={uploadFiles}
+                onRequestDeleteDocument={(document) => setSelectedDocumentForDelete(document)}
+                onRequestDeleteAllDocuments={() => setShowClearVectorDialog(true)}
+              />
+              <QueryFilters
+                documents={documents}
+                selectedDocIds={selectedFilterDocIds}
+                onSelectedDocIdsChange={setSelectedFilterDocIds}
+                selectedFileTypes={selectedFileTypes}
+                onSelectedFileTypesChange={setSelectedFileTypes}
+                uploadedAfter={uploadedAfter}
+                onUploadedAfterChange={setUploadedAfter}
+                uploadedBefore={uploadedBefore}
+                onUploadedBeforeChange={setUploadedBefore}
+                ocrFilter={ocrFilter}
+                onOcrFilterChange={setOcrFilter}
+                disabled={isLoading}
+              />
+            </div>
+          </div>
+        </div>
+      ) : null}
+
+      <CitationPreviewModal
+        item={previewCitation}
+        query={submittedQuery}
+        onClose={() => setPreviewCitation(null)}
+      />
+
+      {toastMessage ? (
+        <div className="fixed bottom-5 right-5 z-[60] flex items-center gap-2 rounded-xl border border-success/20 bg-card px-4 py-3 text-sm text-success shadow-soft">
+          <CheckCircle2 className="h-4 w-4 text-success" />
+          {toastMessage}
+        </div>
+      ) : null}
 
       <SettingsModal
         open={showSettingsModal}
