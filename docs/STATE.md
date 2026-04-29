@@ -14,6 +14,7 @@ Last updated: 2026-04-29 (Asia/Bangkok)
 - Adaptive grounding is implemented with policy, lazy semantic usage, and grounding cache.
 - Cascade reranking is implemented to reduce cross-encoder CPU overhead for cheap/high-confidence cases.
 - Advanced mode uses adaptive LLM-call policy to skip gate/critic/refine calls when signals are strong, while preserving strict/risky safety paths.
+- Compare mode now defaults to sequential execution and can reuse Standard pipeline output in Advanced loop-1 to avoid duplicate retrieval/rerank/generation.
 - Response schema compatibility is preserved (`latency_ms` and existing fields intact).
 
 ## Recently completed
@@ -96,6 +97,23 @@ Last updated: 2026-04-29 (Asia/Bangkok)
   - `app/workflows/critique.py`
   - `tests/workflows/test_advanced_workflow.py`
 
+### 5) Compare-mode standard-result reuse
+- Compare mode runs Standard first by default and passes precomputed `StandardPipelineResult` to Advanced.
+- Advanced loop 1 consumes precomputed result when reusable, then continues critique/refine/grounding.
+- Fallback safety:
+  - if query/filter compatibility fails, Advanced falls back to legacy pipeline call and emits trace reason.
+- Added trace fields:
+  - `reused_standard_result`
+  - `standard_reuse_saved_steps`
+  - `standard_reuse_reason`
+- Key files:
+  - `app/workflows/standard.py`
+  - `app/workflows/compare.py`
+  - `app/workflows/advanced.py`
+  - `app/workflows/advanced_pipeline.py`
+  - `tests/workflows/test_compare_workflow.py`
+  - `tests/workflows/test_advanced_workflow.py`
+
 ## Environment/config additions
 - Grounding:
   - `GROUNDING_POLICY=adaptive`
@@ -110,12 +128,14 @@ Last updated: 2026-04-29 (Asia/Bangkok)
   - `ADVANCED_ADAPTIVE_ENABLED=true`
   - `ADVANCED_FORCE_LLM_GATE=false`
   - `ADVANCED_FORCE_LLM_CRITIC=false`
+- Compare execution:
+  - `COMPARE_PARALLEL_ENABLED=false`
 
 ## Validation status (latest)
-- `make test-fast`: pass (`255 passed, 8 deselected`)
-- `mypy app tests`: pass (`Success: no issues found in 131 source files`)
+- `make test-fast`: pass (`274 passed, 8 deselected`)
+- `mypy app tests`: pass (`Success: no issues found in 134 source files`)
 - `.venv/bin/ruff check app/ tests/`: pass
-- `.venv/bin/python -m ruff format --check app/ tests/`: pass (`131 files already formatted`)
+- `.venv/bin/python -m ruff format --check app/ tests/`: pass
 
 ## Notes for next session
 - Keep preferring `retrieve_with_timing` / `retrieve_with_timing_async` in retrievers to avoid shared timing diagnostics.

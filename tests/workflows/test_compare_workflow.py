@@ -2,6 +2,8 @@
 
 from app.schemas.api import CompareQueryResponse, validate_query_response
 from app.schemas.common import Mode
+from app.core.config import get_settings
+from app.generation import StubLLMClient
 from app.schemas.retrieval import RetrievalResult
 from app.retrieval import ScoreOnlyReranker
 from app.workflows.advanced import AdvancedWorkflow
@@ -36,6 +38,184 @@ def test_compare_mode_schema_contract() -> None:
     assert parsed.comparison.citation_delta == (
         len(parsed.advanced.citations) - len(parsed.standard.citations)
     )
+
+
+def test_compare_reuses_standard_pipeline_once_by_default() -> None:
+    class _AlwaysRetrieveGate:
+        async def decide_async(
+            self,
+            query: str,
+            chat_history: list[dict[str, str]] | None = None,
+            *,
+            model: str | None = None,
+            response_language: str = "en",
+            allow_llm: bool = True,
+        ) -> tuple[bool, str]:
+            _ = query
+            _ = chat_history
+            _ = model
+            _ = response_language
+            _ = allow_llm
+            return True, "always_retrieve"
+
+    class _FakeRetriever:
+        def retrieve(self, query: str, top_k: int = 5) -> list[RetrievalResult]:
+            _ = query
+            _ = top_k
+            return [
+                RetrievalResult(
+                    chunk_id="cmp_reuse_001",
+                    doc_id="cmp_reuse_doc_001",
+                    source="seeded://cmp-reuse",
+                    content="Compare reuse should avoid duplicate standard pipeline work.",
+                    score=0.9,
+                    score_type="hybrid",
+                    rank=1,
+                )
+            ]
+
+    class _FakeIndexManager:
+        def get_retriever(self) -> _FakeRetriever:
+            return _FakeRetriever()
+
+        def get_active_source(self) -> str:
+            return "seeded"
+
+    class _CountingStandardWorkflow(StandardWorkflow):
+        def __init__(self, *args, **kwargs) -> None:
+            super().__init__(*args, **kwargs)
+            self.pipeline_calls = 0
+
+        async def run_pipeline(self, *args, **kwargs):
+            self.pipeline_calls += 1
+            return await super().run_pipeline(*args, **kwargs)
+
+    standard = _CountingStandardWorkflow(
+        index_manager=_FakeIndexManager(),
+        llm_client=StubLLMClient(
+            responder=lambda prompt, system, model=None: (
+                '{"answer":"Reuse standard answer.","confidence":0.72,"status":"answered"}'
+            )
+        ),
+        reranker=ScoreOnlyReranker(),
+    )
+    advanced = AdvancedWorkflow(
+        standard_workflow=standard,
+        max_loops=1,
+        retrieval_gate=_AlwaysRetrieveGate(),  # type: ignore[arg-type]
+    )
+    compare = CompareWorkflow(
+        standard_workflow=standard,
+        advanced_workflow=advanced,
+    )
+
+    response = compare.run(
+        query="force retrieval compare reuse default path",
+        response_language="en",
+    )
+
+    assert standard.pipeline_calls == 1
+    loop_step = next(
+        step for step in response.advanced.trace if step.get("step") == "loop"
+    )
+    assert loop_step.get("reused_standard_result") is True
+    assert loop_step.get("standard_reuse_saved_steps") == [
+        "retrieve",
+        "rerank",
+        "generate",
+    ]
+    parsed = validate_query_response(response.model_dump())
+    assert isinstance(parsed, CompareQueryResponse)
+
+
+def test_compare_parallel_opt_in_keeps_legacy_duplicate_pipeline_path(
+    monkeypatch,
+) -> None:
+    monkeypatch.setenv("COMPARE_PARALLEL_ENABLED", "true")
+    get_settings.cache_clear()
+
+    class _AlwaysRetrieveGate:
+        async def decide_async(
+            self,
+            query: str,
+            chat_history: list[dict[str, str]] | None = None,
+            *,
+            model: str | None = None,
+            response_language: str = "en",
+            allow_llm: bool = True,
+        ) -> tuple[bool, str]:
+            _ = query
+            _ = chat_history
+            _ = model
+            _ = response_language
+            _ = allow_llm
+            return True, "always_retrieve"
+
+    class _FakeRetriever:
+        def retrieve(self, query: str, top_k: int = 5) -> list[RetrievalResult]:
+            _ = query
+            _ = top_k
+            return [
+                RetrievalResult(
+                    chunk_id="cmp_parallel_001",
+                    doc_id="cmp_parallel_doc_001",
+                    source="seeded://cmp-parallel",
+                    content="Parallel opt-in keeps old compare behavior.",
+                    score=0.88,
+                    score_type="hybrid",
+                    rank=1,
+                )
+            ]
+
+    class _FakeIndexManager:
+        def get_retriever(self) -> _FakeRetriever:
+            return _FakeRetriever()
+
+        def get_active_source(self) -> str:
+            return "seeded"
+
+    class _CountingStandardWorkflow(StandardWorkflow):
+        def __init__(self, *args, **kwargs) -> None:
+            super().__init__(*args, **kwargs)
+            self.pipeline_calls = 0
+
+        async def run_pipeline(self, *args, **kwargs):
+            self.pipeline_calls += 1
+            return await super().run_pipeline(*args, **kwargs)
+
+    try:
+        standard = _CountingStandardWorkflow(
+            index_manager=_FakeIndexManager(),
+            llm_client=StubLLMClient(
+                responder=lambda prompt, system, model=None: (
+                    '{"answer":"Parallel compare answer.","confidence":0.71,"status":"answered"}'
+                )
+            ),
+            reranker=ScoreOnlyReranker(),
+        )
+        advanced = AdvancedWorkflow(
+            standard_workflow=standard,
+            max_loops=1,
+            retrieval_gate=_AlwaysRetrieveGate(),  # type: ignore[arg-type]
+        )
+        compare = CompareWorkflow(
+            standard_workflow=standard,
+            advanced_workflow=advanced,
+        )
+
+        response = compare.run(
+            query="force retrieval compare parallel opt-in",
+            response_language="en",
+        )
+
+        assert standard.pipeline_calls == 2
+        loop_step = next(
+            step for step in response.advanced.trace if step.get("step") == "loop"
+        )
+        assert loop_step.get("reused_standard_result") is False
+    finally:
+        monkeypatch.delenv("COMPARE_PARALLEL_ENABLED", raising=False)
+        get_settings.cache_clear()
 
 
 def test_compare_mode_trace_contains_branch_timing_metrics() -> None:

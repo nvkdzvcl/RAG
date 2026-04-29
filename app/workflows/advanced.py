@@ -35,7 +35,7 @@ from app.workflows.shared import (
     trim_chat_history,
 )
 from app.workflows.streaming import StreamEventHandler
-from app.workflows.standard import StandardWorkflow
+from app.workflows.standard import StandardPipelineResult, StandardWorkflow
 
 
 class RefinerLike(Protocol):
@@ -264,6 +264,7 @@ class AdvancedWorkflow:
         model: str | None = None,
         response_language: str | None = None,
         query_filters: dict[str, Any] | None = None,
+        precomputed_pipeline: StandardPipelineResult | None = None,
         event_handler: StreamEventHandler | None = None,
         event_context: dict[str, Any] | None = None,
     ) -> AdvancedQueryResponse:
@@ -287,6 +288,7 @@ class AdvancedWorkflow:
             query_filters=query_filters,
             normalized_history=normalized_history,
             resolved_language=resolved_language,
+            precomputed_pipeline=precomputed_pipeline,
             event_handler=event_handler,
             event_context=dict(event_context or {}),
         )
@@ -327,6 +329,7 @@ class AdvancedWorkflow:
         model: str | None = None,
         response_language: str | None = None,
         query_filters: dict[str, Any] | None = None,
+        precomputed_pipeline: StandardPipelineResult | None = None,
         event_handler: StreamEventHandler | None = None,
         event_context: dict[str, Any] | None = None,
     ) -> AdvancedQueryResponse:
@@ -338,6 +341,7 @@ class AdvancedWorkflow:
                 model=model,
                 response_language=response_language,
                 query_filters=query_filters,
+                precomputed_pipeline=precomputed_pipeline,
                 event_handler=event_handler,
                 event_context=event_context,
             )

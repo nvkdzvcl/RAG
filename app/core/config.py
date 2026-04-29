@@ -112,6 +112,9 @@ class Settings(BaseSettings):
     advanced_force_llm_critic: bool = Field(
         default=False, alias="ADVANCED_FORCE_LLM_CRITIC"
     )
+    compare_parallel_enabled: bool = Field(
+        default=False, alias="COMPARE_PARALLEL_ENABLED"
+    )
     memory_window: int = Field(default=3, alias="MEMORY_WINDOW")
 
     cache_enabled: bool = Field(default=True, alias="CACHE_ENABLED")

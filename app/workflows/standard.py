@@ -873,33 +873,15 @@ class StandardWorkflow:
             fast_path_reason=fast_path_reason,
         )
 
-    async def run_async(
+    async def _build_response_from_pipeline(
         self,
-        query: str,
-        chat_history: list[dict[str, str]] | None = None,
-        model: str | None = None,
-        response_language: str | None = None,
-        query_filters: dict[str, Any] | None = None,
-        event_handler: StreamEventHandler | None = None,
-        event_context: dict[str, Any] | None = None,
+        *,
+        pipeline: StandardPipelineResult,
+        start_time: float,
+        model: str | None,
+        resolved_language: str,
+        normalized_history: list[dict[str, str]],
     ) -> StandardQueryResponse:
-        start_time = time.perf_counter()
-        normalized_history = trim_chat_history(
-            chat_history,
-            memory_window=self.memory_window,
-        )
-
-        resolved_language = response_language or detect_response_language(query)
-        pipeline = await self.run_pipeline(
-            query=query,
-            mode=Mode.STANDARD,
-            model=model,
-            response_language=resolved_language,
-            chat_history=normalized_history,
-            query_filters=query_filters,
-            event_handler=event_handler,
-            event_context=event_context,
-        )
         effective_budget = pipeline.query_budget or choose_query_budget(
             pipeline.normalized_query,
             dynamic_enabled=self.dynamic_budget_enabled,
@@ -1217,6 +1199,62 @@ class StandardWorkflow:
             llm_fallback_used=llm_fallback_used,
             trace=trace,
         )
+
+    async def run_async_with_pipeline(
+        self,
+        query: str,
+        chat_history: list[dict[str, str]] | None = None,
+        model: str | None = None,
+        response_language: str | None = None,
+        query_filters: dict[str, Any] | None = None,
+        event_handler: StreamEventHandler | None = None,
+        event_context: dict[str, Any] | None = None,
+    ) -> tuple[StandardQueryResponse, StandardPipelineResult]:
+        start_time = time.perf_counter()
+        normalized_history = trim_chat_history(
+            chat_history,
+            memory_window=self.memory_window,
+        )
+        resolved_language = response_language or detect_response_language(query)
+        pipeline = await self.run_pipeline(
+            query=query,
+            mode=Mode.STANDARD,
+            model=model,
+            response_language=resolved_language,
+            chat_history=normalized_history,
+            query_filters=query_filters,
+            event_handler=event_handler,
+            event_context=event_context,
+        )
+        response = await self._build_response_from_pipeline(
+            pipeline=pipeline,
+            start_time=start_time,
+            model=model,
+            resolved_language=resolved_language,
+            normalized_history=normalized_history,
+        )
+        return response, pipeline
+
+    async def run_async(
+        self,
+        query: str,
+        chat_history: list[dict[str, str]] | None = None,
+        model: str | None = None,
+        response_language: str | None = None,
+        query_filters: dict[str, Any] | None = None,
+        event_handler: StreamEventHandler | None = None,
+        event_context: dict[str, Any] | None = None,
+    ) -> StandardQueryResponse:
+        response, _ = await self.run_async_with_pipeline(
+            query=query,
+            chat_history=chat_history,
+            model=model,
+            response_language=response_language,
+            query_filters=query_filters,
+            event_handler=event_handler,
+            event_context=event_context,
+        )
+        return response
 
     def run(
         self,

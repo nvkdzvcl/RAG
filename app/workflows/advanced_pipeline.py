@@ -18,6 +18,7 @@ from app.workflows.shared import (
     grounded_overlap_score,
     is_language_mismatch,
     localized_insufficient_evidence,
+    normalize_query,
 )
 from app.workflows.streaming import StreamEventHandler, emit_stream_event
 from app.workflows.standard import StandardPipelineResult
@@ -115,10 +116,14 @@ class AdvancedPipelineContext:
     event_context: dict[str, Any] = field(default_factory=dict)
     trace: list[dict[str, Any]] = field(default_factory=list)
     timings: dict[str, int] = field(default_factory=dict)
+    precomputed_pipeline: StandardPipelineResult | None = None
 
     current_query: str = ""
     pipeline: StandardPipelineResult | None = None
     critique_result: CritiqueResult | None = None
+    reused_standard_result: bool = False
+    standard_reuse_saved_steps: list[str] = field(default_factory=list)
+    standard_reuse_reason: str | None = None
 
     final_answer: str = ""
     final_citations: list[Citation] = field(default_factory=list)
@@ -177,6 +182,10 @@ class AdvancedPipelineContext:
         summary["language_rewrite_used"] = bool(self.language_rewrite_used)
         summary["hallucination_refine_used"] = bool(self.hallucination_refine_used)
         summary["llm_call_count_estimate"] = int(self.llm_call_count_estimate)
+        summary["reused_standard_result"] = bool(self.reused_standard_result)
+        summary["standard_reuse_saved_steps"] = list(self.standard_reuse_saved_steps)
+        if self.standard_reuse_reason is not None:
+            summary["standard_reuse_reason"] = self.standard_reuse_reason
         return summary
 
 
@@ -449,6 +458,44 @@ class CritiqueLoopStage(BasePipelineStage):
             )
         return result, "heuristic"
 
+    @staticmethod
+    def _normalize_filter_payload(value: Any) -> Any:
+        if isinstance(value, dict):
+            return {
+                str(key): CritiqueLoopStage._normalize_filter_payload(item)
+                for key, item in sorted(value.items(), key=lambda pair: str(pair[0]))
+            }
+        if isinstance(value, list):
+            return [CritiqueLoopStage._normalize_filter_payload(item) for item in value]
+        return value
+
+    def _consume_precomputed_pipeline(
+        self,
+        *,
+        current_query: str,
+    ) -> tuple[StandardPipelineResult | None, str | None]:
+        context = self.context
+        candidate = context.precomputed_pipeline
+        context.precomputed_pipeline = None
+        if candidate is None:
+            return None, None
+
+        normalized_current_query = normalize_query(current_query)
+        if candidate.normalized_query != normalized_current_query:
+            return None, "query_mismatch_after_rewrite"
+
+        requested_filters = context.query_filters
+        applied_filters = candidate.retrieval_debug.get("applied_filters")
+        if (
+            isinstance(requested_filters, dict)
+            and isinstance(applied_filters, dict)
+            and self._normalize_filter_payload(requested_filters)
+            != self._normalize_filter_payload(applied_filters)
+        ):
+            return None, "query_filters_mismatch"
+
+        return candidate, None
+
     async def execute(self, state: WorkflowState) -> WorkflowState:
         context = self.context
         if context.terminal_response is not None:
@@ -492,18 +539,40 @@ class CritiqueLoopStage(BasePipelineStage):
 
             loop_event_context = dict(context.event_context)
             loop_event_context["loop"] = loop
-            pipeline_started = time.perf_counter()
-            pipeline = await workflow.standard_workflow.run_pipeline(
-                query=current_query,
-                mode=state.mode,
-                model=context.model,
-                response_language=context.resolved_language,
-                chat_history=context.normalized_history,
-                query_filters=context.query_filters,
-                event_handler=context.event_handler,
-                event_context=loop_event_context,
-            )
-            standard_pipeline_ms = int((time.perf_counter() - pipeline_started) * 1000)
+            reused_standard_result = False
+            standard_reuse_saved_steps: list[str] = []
+            standard_reuse_reason: str | None = None
+            if loop == 1:
+                pipeline, standard_reuse_reason = self._consume_precomputed_pipeline(
+                    current_query=current_query
+                )
+                if pipeline is not None:
+                    reused_standard_result = True
+                    standard_reuse_saved_steps = ["retrieve", "rerank", "generate"]
+                    context.reused_standard_result = True
+                    context.standard_reuse_saved_steps = list(
+                        standard_reuse_saved_steps
+                    )
+                    context.standard_reuse_reason = None
+            if pipeline is None:
+                if loop == 1 and standard_reuse_reason is not None:
+                    context.standard_reuse_reason = standard_reuse_reason
+                pipeline_started = time.perf_counter()
+                pipeline = await workflow.standard_workflow.run_pipeline(
+                    query=current_query,
+                    mode=state.mode,
+                    model=context.model,
+                    response_language=context.resolved_language,
+                    chat_history=context.normalized_history,
+                    query_filters=context.query_filters,
+                    event_handler=context.event_handler,
+                    event_context=loop_event_context,
+                )
+                standard_pipeline_ms = int(
+                    (time.perf_counter() - pipeline_started) * 1000
+                )
+            else:
+                standard_pipeline_ms = 0
             standard_pipeline_total_ms += standard_pipeline_ms
 
             state.retrieved_docs = [item.model_dump() for item in pipeline.retrieved]
@@ -513,7 +582,8 @@ class CritiqueLoopStage(BasePipelineStage):
             ]
             state.draft_answer = pipeline.generated.answer
             if (
-                not pipeline.generated.fast_path
+                not reused_standard_result
+                and not pipeline.generated.fast_path
                 and pipeline.generated.stop_reason != "no_context"
                 and not bool(pipeline.generated.llm_cache_hit)
             ):
@@ -668,6 +738,9 @@ class CritiqueLoopStage(BasePipelineStage):
                     "query_rewrite_ms": rewrite_ms,
                     "standard_pipeline_ms": standard_pipeline_ms,
                     "critique_ms": critique_ms,
+                    "reused_standard_result": reused_standard_result,
+                    "standard_reuse_saved_steps": standard_reuse_saved_steps,
+                    "standard_reuse_reason": standard_reuse_reason,
                     "llm_call_count_estimate": context.llm_call_count_estimate,
                     "retrieval_timing_breakdown_available": (
                         pipeline.retrieval_timing_breakdown_available
@@ -689,6 +762,9 @@ class CritiqueLoopStage(BasePipelineStage):
                     "critique_ms": critique_ms,
                     "critique_strategy": strategy,
                     "query_rewrite_ms": rewrite_ms,
+                    "reused_standard_result": reused_standard_result,
+                    "standard_reuse_saved_steps": standard_reuse_saved_steps,
+                    "standard_reuse_reason": standard_reuse_reason,
                     **loop_event_context,
                 },
             )
@@ -1346,6 +1422,9 @@ class FinalGroundingStage(BasePipelineStage):
                 "language_rewrite_used": context.language_rewrite_used,
                 "hallucination_refine_used": context.hallucination_refine_used,
                 "llm_call_count_estimate": context.llm_call_count_estimate,
+                "reused_standard_result": context.reused_standard_result,
+                "standard_reuse_saved_steps": list(context.standard_reuse_saved_steps),
+                "standard_reuse_reason": context.standard_reuse_reason,
             }
         )
 
@@ -1388,6 +1467,9 @@ class FinalGroundingStage(BasePipelineStage):
                 "language_rewrite_used": context.language_rewrite_used,
                 "hallucination_refine_used": context.hallucination_refine_used,
                 "llm_call_count_estimate": context.llm_call_count_estimate,
+                "reused_standard_result": context.reused_standard_result,
+                "standard_reuse_saved_steps": list(context.standard_reuse_saved_steps),
+                "standard_reuse_reason": context.standard_reuse_reason,
             }
         )
         stage_ms = int((time.perf_counter() - stage_started) * 1000)

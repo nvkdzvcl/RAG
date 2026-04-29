@@ -92,6 +92,80 @@ def test_advanced_mode_run_path() -> None:
     assert parsed.answer
 
 
+def test_advanced_falls_back_when_precomputed_pipeline_query_mismatch() -> None:
+    class _AlwaysRetrieveGate:
+        async def decide_async(
+            self,
+            query: str,
+            chat_history: list[dict[str, str]] | None = None,
+            *,
+            model: str | None = None,
+            response_language: str = "en",
+            allow_llm: bool = True,
+        ) -> tuple[bool, str]:
+            _ = query
+            _ = chat_history
+            _ = model
+            _ = response_language
+            _ = allow_llm
+            return True, "always_retrieve"
+
+    class _FakeRetriever:
+        def retrieve(self, query: str, top_k: int = 5) -> list[RetrievalResult]:
+            _ = query
+            _ = top_k
+            return [
+                RetrievalResult(
+                    chunk_id="adv_precompute_mismatch_001",
+                    doc_id="adv_precompute_mismatch_doc_001",
+                    source="seeded://adv-precompute",
+                    content="Advanced precomputed mismatch should fall back safely.",
+                    score=0.91,
+                    score_type="hybrid",
+                    rank=1,
+                )
+            ]
+
+    class _FakeIndexManager:
+        def get_retriever(self) -> _FakeRetriever:
+            return _FakeRetriever()
+
+        def get_active_source(self) -> str:
+            return "seeded"
+
+    llm = StubLLMClient(
+        responder=lambda prompt, system, model=None: (
+            '{"answer":"Precomputed mismatch baseline answer.","confidence":0.8,"status":"answered"}'
+        )
+    )
+    standard = StandardWorkflow(
+        index_manager=_FakeIndexManager(),
+        llm_client=llm,
+        reranker=ScoreOnlyReranker(),
+    )
+    _, precomputed_pipeline = asyncio.run(
+        standard.run_async_with_pipeline(
+            query="query precomputed source",
+            response_language="en",
+        )
+    )
+    workflow = AdvancedWorkflow(
+        standard_workflow=standard,
+        max_loops=1,
+        retrieval_gate=_AlwaysRetrieveGate(),  # type: ignore[arg-type]
+    )
+
+    response = workflow.run(
+        query="query uses a different normalized text",
+        response_language="en",
+        precomputed_pipeline=precomputed_pipeline,
+    )
+
+    loop_step = next(step for step in response.trace if step.get("step") == "loop")
+    assert loop_step.get("reused_standard_result") is False
+    assert loop_step.get("standard_reuse_reason") == "query_mismatch_after_rewrite"
+
+
 def test_advanced_workflow_trace_contains_timing_metrics() -> None:
     class _FakeRetriever:
         def retrieve(self, query: str, top_k: int = 5) -> list[RetrievalResult]:

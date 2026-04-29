@@ -69,6 +69,7 @@ def test_settings_defaults(monkeypatch) -> None:
         "ADVANCED_ADAPTIVE_ENABLED",
         "ADVANCED_FORCE_LLM_GATE",
         "ADVANCED_FORCE_LLM_CRITIC",
+        "COMPARE_PARALLEL_ENABLED",
         "MEMORY_WINDOW",
         "CACHE_ENABLED",
         "EMBEDDING_CACHE_ENABLED",
@@ -142,6 +143,7 @@ def test_settings_defaults(monkeypatch) -> None:
     assert settings.advanced_adaptive_enabled is True
     assert settings.advanced_force_llm_gate is False
     assert settings.advanced_force_llm_critic is False
+    assert settings.compare_parallel_enabled is False
     assert settings.cache_enabled is True
     assert settings.embedding_cache_enabled is True
     assert settings.retrieval_cache_enabled is True

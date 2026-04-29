@@ -7,6 +7,7 @@ import time
 from typing import Any, Literal, cast
 
 from app.core.async_utils import run_coro_sync
+from app.core.config import get_settings
 from app.schemas.api import (
     AdvancedQueryResponse,
     CompareQueryResponse,
@@ -16,7 +17,7 @@ from app.schemas.api import (
 from app.workflows.advanced import AdvancedWorkflow
 from app.workflows.shared import detect_response_language
 from app.workflows.streaming import StreamEventHandler, emit_stream_event
-from app.workflows.standard import StandardWorkflow
+from app.workflows.standard import StandardPipelineResult, StandardWorkflow
 
 
 class CompareWorkflow:
@@ -28,8 +29,12 @@ class CompareWorkflow:
         standard_workflow: StandardWorkflow,
         advanced_workflow: AdvancedWorkflow,
     ) -> None:
+        settings = get_settings()
         self.standard_workflow = standard_workflow
         self.advanced_workflow = advanced_workflow
+        self.compare_parallel_enabled = bool(
+            getattr(settings, "compare_parallel_enabled", False)
+        )
 
     def _build_summary(
         self,
@@ -379,6 +384,68 @@ class CompareWorkflow:
                 raise
         return await asyncio.to_thread(self.standard_workflow.run, **kwargs)
 
+    async def _run_standard_with_pipeline_async(
+        self,
+        *,
+        query: str,
+        chat_history: list[dict[str, str]] | None,
+        model: str | None,
+        response_language: str,
+        query_filters: dict[str, Any] | None,
+        event_handler: StreamEventHandler | None = None,
+        event_context: dict[str, Any] | None = None,
+    ) -> tuple[StandardQueryResponse, StandardPipelineResult | None]:
+        run_async_with_pipeline = getattr(
+            self.standard_workflow, "run_async_with_pipeline", None
+        )
+        if callable(run_async_with_pipeline):
+            async_kwargs: dict[str, Any] = {
+                "query": query,
+                "chat_history": chat_history,
+                "model": model,
+                "response_language": response_language,
+            }
+            if query_filters is not None:
+                async_kwargs["query_filters"] = query_filters
+            if event_handler is not None:
+                async_kwargs["event_handler"] = event_handler
+            if event_context:
+                async_kwargs["event_context"] = dict(event_context)
+
+            result: Any
+            for removable in ("event_context", "event_handler", "query_filters"):
+                try:
+                    result = await run_async_with_pipeline(**async_kwargs)
+                    break
+                except TypeError:
+                    if removable in async_kwargs:
+                        async_kwargs.pop(removable, None)
+                        continue
+                    raise
+            else:
+                result = await run_async_with_pipeline(**async_kwargs)
+
+            if (
+                isinstance(result, tuple)
+                and len(result) == 2
+                and isinstance(result[0], StandardQueryResponse)
+            ):
+                pipeline = result[1]
+                if isinstance(pipeline, StandardPipelineResult):
+                    return result[0], pipeline
+                return result[0], None
+
+        response = await self._run_standard_async(
+            query=query,
+            chat_history=chat_history,
+            model=model,
+            response_language=response_language,
+            query_filters=query_filters,
+            event_handler=event_handler,
+            event_context=event_context,
+        )
+        return response, None
+
     async def _run_advanced_async(
         self,
         *,
@@ -387,6 +454,7 @@ class CompareWorkflow:
         model: str | None,
         response_language: str,
         query_filters: dict[str, Any] | None,
+        precomputed_pipeline: StandardPipelineResult | None = None,
         event_handler: StreamEventHandler | None = None,
         event_context: dict[str, Any] | None = None,
     ) -> AdvancedQueryResponse:
@@ -400,11 +468,18 @@ class CompareWorkflow:
             }
             if query_filters is not None:
                 async_kwargs["query_filters"] = query_filters
+            if precomputed_pipeline is not None:
+                async_kwargs["precomputed_pipeline"] = precomputed_pipeline
             if event_handler is not None:
                 async_kwargs["event_handler"] = event_handler
             if event_context:
                 async_kwargs["event_context"] = dict(event_context)
-            for removable in ("event_context", "event_handler", "query_filters"):
+            for removable in (
+                "precomputed_pipeline",
+                "event_context",
+                "event_handler",
+                "query_filters",
+            ):
                 try:
                     return await run_async(**async_kwargs)
                 except TypeError:
@@ -421,12 +496,19 @@ class CompareWorkflow:
         }
         if query_filters is not None:
             kwargs["query_filters"] = query_filters
+        if precomputed_pipeline is not None:
+            kwargs["precomputed_pipeline"] = precomputed_pipeline
         if event_handler is not None:
             kwargs["event_handler"] = event_handler
         if event_context:
             kwargs["event_context"] = dict(event_context)
 
-        for removable in ("event_context", "event_handler", "query_filters"):
+        for removable in (
+            "precomputed_pipeline",
+            "event_context",
+            "event_handler",
+            "query_filters",
+        ):
             try:
                 return await asyncio.to_thread(self.advanced_workflow.run, **kwargs)
             except TypeError:
@@ -513,7 +595,29 @@ class CompareWorkflow:
             )
             return result, int((time.perf_counter() - branch_started) * 1000)
 
-        async def _run_advanced_timed() -> tuple[AdvancedQueryResponse, int]:
+        async def _run_standard_timed_with_pipeline() -> tuple[
+            StandardQueryResponse, StandardPipelineResult | None, int
+        ]:
+            branch_started = time.perf_counter()
+            response, pipeline = await self._run_standard_with_pipeline_async(
+                query=query,
+                chat_history=chat_history,
+                model=model,
+                response_language=resolved_language,
+                query_filters=query_filters,
+                event_handler=standard_event_handler,
+                event_context=event_context,
+            )
+            return (
+                response,
+                pipeline,
+                int((time.perf_counter() - branch_started) * 1000),
+            )
+
+        async def _run_advanced_timed(
+            *,
+            precomputed_pipeline: StandardPipelineResult | None = None,
+        ) -> tuple[AdvancedQueryResponse, int]:
             branch_started = time.perf_counter()
             result = await self._run_advanced_async(
                 query=query,
@@ -521,18 +625,29 @@ class CompareWorkflow:
                 model=model,
                 response_language=resolved_language,
                 query_filters=query_filters,
+                precomputed_pipeline=precomputed_pipeline,
                 event_handler=advanced_event_handler,
                 event_context=event_context,
             )
             return result, int((time.perf_counter() - branch_started) * 1000)
 
-        (
-            (standard, standard_branch_ms),
-            (advanced, advanced_branch_ms),
-        ) = await asyncio.gather(
-            _run_standard_timed(),
-            _run_advanced_timed(),
-        )
+        if self.compare_parallel_enabled:
+            (
+                (standard, standard_branch_ms),
+                (advanced, advanced_branch_ms),
+            ) = await asyncio.gather(
+                _run_standard_timed(),
+                _run_advanced_timed(),
+            )
+        else:
+            (
+                standard,
+                standard_pipeline,
+                standard_branch_ms,
+            ) = await _run_standard_timed_with_pipeline()
+            advanced, advanced_branch_ms = await _run_advanced_timed(
+                precomputed_pipeline=standard_pipeline
+            )
 
         total_latency_ms = int((time.perf_counter() - started) * 1000)
         standard = cast(
@@ -560,6 +675,7 @@ class CompareWorkflow:
                 "standard_branch_ms": standard_branch_ms,
                 "advanced_branch_ms": advanced_branch_ms,
                 "compare_total_ms": total_latency_ms,
+                "compare_parallel_enabled": self.compare_parallel_enabled,
                 **dict(event_context or {}),
             },
         )
