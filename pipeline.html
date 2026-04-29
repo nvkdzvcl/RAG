@@ -1,0 +1,372 @@
+<!doctype html>
+<html lang="vi">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Animated RAG Pipeline</title>
+  <style>
+    :root {
+      --bg: #0b0f1a;
+      --panel: #111827;
+      --panel-2: #0f172a;
+      --stroke: #334155;
+      --text: #f8fafc;
+      --muted: #94a3b8;
+      --primary: #6366f1;
+      --accent: #10b981;
+      --warning: #f59e0b;
+      --danger: #ef4444;
+      --cyan: #38bdf8;
+    }
+
+    * { box-sizing: border-box; }
+
+    body {
+      margin: 0;
+      min-height: 100vh;
+      display: grid;
+      place-items: center;
+      background:
+        radial-gradient(circle at top left, rgba(99, 102, 241, 0.2), transparent 34%),
+        radial-gradient(circle at bottom right, rgba(16, 185, 129, 0.12), transparent 28%),
+        var(--bg);
+      color: var(--text);
+      font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+    }
+
+    .stage {
+      width: min(1280px, 96vw);
+      aspect-ratio: 16 / 9;
+      position: relative;
+      border: 1px solid rgba(148, 163, 184, 0.22);
+      border-radius: 28px;
+      overflow: hidden;
+      background: rgba(15, 23, 42, 0.78);
+      box-shadow: 0 24px 80px rgba(0, 0, 0, 0.45), inset 0 1px 0 rgba(255,255,255,0.04);
+    }
+
+    .title {
+      position: absolute;
+      left: 42px;
+      top: 30px;
+      z-index: 10;
+    }
+
+    .title h1 {
+      margin: 0;
+      font-size: 32px;
+      letter-spacing: -0.04em;
+    }
+
+    .title p {
+      margin: 8px 0 0;
+      color: var(--muted);
+      font-size: 15px;
+    }
+
+    svg {
+      width: 100%;
+      height: 100%;
+      display: block;
+    }
+
+    .lane-label {
+      font-size: 15px;
+      fill: var(--muted);
+      letter-spacing: 0.04em;
+      text-transform: uppercase;
+      font-weight: 700;
+    }
+
+    .lane-line {
+      stroke: rgba(148, 163, 184, 0.16);
+      stroke-width: 1;
+    }
+
+    .node rect {
+      fill: rgba(15, 23, 42, 0.96);
+      stroke: rgba(148, 163, 184, 0.28);
+      stroke-width: 1.3;
+      filter: drop-shadow(0 14px 24px rgba(0,0,0,0.24));
+    }
+
+    .node .icon-bg {
+      fill: rgba(99,102,241,0.14);
+      stroke: rgba(99,102,241,0.45);
+      stroke-width: 1;
+    }
+
+    .node .icon-bg.green {
+      fill: rgba(16,185,129,0.12);
+      stroke: rgba(16,185,129,0.42);
+    }
+
+    .node .icon-bg.yellow {
+      fill: rgba(245,158,11,0.12);
+      stroke: rgba(245,158,11,0.42);
+    }
+
+    .node .icon-bg.cyan {
+      fill: rgba(56,189,248,0.12);
+      stroke: rgba(56,189,248,0.42);
+    }
+
+    .node-title {
+      fill: var(--text);
+      font-weight: 800;
+      font-size: 18px;
+      letter-spacing: -0.02em;
+    }
+
+    .node-subtitle {
+      fill: var(--muted);
+      font-size: 13px;
+    }
+
+    .mini-text {
+      fill: rgba(248,250,252,0.75);
+      font-size: 12px;
+      font-weight: 600;
+    }
+
+    .flow {
+      fill: none;
+      stroke-width: 3;
+      stroke-linecap: round;
+      stroke-dasharray: 10 12;
+      animation: dash 0.9s linear infinite;
+      filter: drop-shadow(0 0 5px rgba(99,102,241,0.8));
+    }
+
+    .ingest-flow { stroke: url(#ingestGradient); }
+    .query-flow { stroke: url(#queryGradient); animation-duration: 0.7s; }
+    .response-flow { stroke: url(#responseGradient); animation-duration: 0.75s; }
+
+    @keyframes dash {
+      to { stroke-dashoffset: -44; }
+    }
+
+    .pulse rect {
+      animation: pulseBox 4.8s ease-in-out infinite;
+    }
+
+    .delay-1 rect { animation-delay: 0.2s; }
+    .delay-2 rect { animation-delay: 0.7s; }
+    .delay-3 rect { animation-delay: 1.2s; }
+    .delay-4 rect { animation-delay: 1.7s; }
+    .delay-5 rect { animation-delay: 2.2s; }
+    .delay-6 rect { animation-delay: 2.7s; }
+    .delay-7 rect { animation-delay: 3.2s; }
+    .delay-8 rect { animation-delay: 3.7s; }
+
+    @keyframes pulseBox {
+      0%, 13%, 100% { stroke: rgba(148, 163, 184, 0.28); filter: drop-shadow(0 14px 24px rgba(0,0,0,0.24)); }
+      6% { stroke: rgba(99, 102, 241, 0.95); filter: drop-shadow(0 0 24px rgba(99,102,241,0.42)); }
+    }
+
+    .token {
+      fill: var(--primary);
+      filter: drop-shadow(0 0 8px rgba(99,102,241,0.8));
+    }
+
+    .token.query {
+      fill: var(--accent);
+      filter: drop-shadow(0 0 8px rgba(16,185,129,0.85));
+    }
+
+    .token.response {
+      fill: var(--cyan);
+      filter: drop-shadow(0 0 8px rgba(56,189,248,0.85));
+    }
+
+    .doc-line {
+      stroke: rgba(248,250,252,0.75);
+      stroke-width: 2;
+      stroke-linecap: round;
+    }
+
+    .vector-bar {
+      animation: vectorGlow 1.6s ease-in-out infinite alternate;
+    }
+
+    @keyframes vectorGlow {
+      from { opacity: 0.42; }
+      to { opacity: 1; }
+    }
+
+    .typing {
+      animation: blink 0.8s steps(2, start) infinite;
+    }
+
+    @keyframes blink { 50% { opacity: 0; } }
+  </style>
+</head>
+<body>
+  <main class="stage" aria-label="Animated RAG Pipeline Diagram">
+    <div class="title">
+      <h1>RAG Pipeline</h1>
+      <p>Document ingestion → vector retrieval → prompt building → local LLM streaming</p>
+    </div>
+
+    <svg viewBox="0 0 1280 720" role="img">
+      <defs>
+        <linearGradient id="ingestGradient" x1="0" y1="0" x2="1" y2="0">
+          <stop offset="0%" stop-color="#10b981" />
+          <stop offset="100%" stop-color="#6366f1" />
+        </linearGradient>
+        <linearGradient id="queryGradient" x1="0" y1="0" x2="1" y2="0">
+          <stop offset="0%" stop-color="#38bdf8" />
+          <stop offset="100%" stop-color="#6366f1" />
+        </linearGradient>
+        <linearGradient id="responseGradient" x1="0" y1="0" x2="1" y2="0">
+          <stop offset="0%" stop-color="#6366f1" />
+          <stop offset="100%" stop-color="#22c55e" />
+        </linearGradient>
+        <marker id="arrow" markerWidth="12" markerHeight="12" refX="10" refY="6" orient="auto" markerUnits="strokeWidth">
+          <path d="M2,2 L10,6 L2,10 Z" fill="#818cf8" />
+        </marker>
+      </defs>
+
+      <line x1="40" y1="220" x2="1240" y2="220" class="lane-line" />
+      <line x1="40" y1="445" x2="1240" y2="445" class="lane-line" />
+      <text x="44" y="205" class="lane-label">1. Ingestion flow</text>
+      <text x="44" y="430" class="lane-label">2. Query flow</text>
+      <text x="44" y="654" class="lane-label">3. Streaming response</text>
+
+      <!-- Animated flow paths -->
+      <path class="flow ingest-flow" marker-end="url(#arrow)" d="M205 165 C250 165, 275 165, 320 165" />
+      <path class="flow ingest-flow" marker-end="url(#arrow)" d="M470 165 C520 165, 560 165, 610 165" />
+      <path class="flow ingest-flow" marker-end="url(#arrow)" d="M760 165 C810 165, 850 165, 900 165" />
+
+      <path class="flow query-flow" marker-end="url(#arrow)" d="M205 382 C250 382, 275 382, 320 382" />
+      <path class="flow query-flow" marker-end="url(#arrow)" d="M470 382 C520 382, 560 382, 610 382" />
+      <path class="flow query-flow" marker-end="url(#arrow)" d="M755 382 C810 340, 840 310, 930 278" />
+      <path class="flow query-flow" marker-end="url(#arrow)" d="M1038 280 C1058 315, 1058 350, 1038 385" />
+      <path class="flow query-flow" marker-end="url(#arrow)" d="M935 435 C880 435, 830 435, 775 435" />
+      <path class="flow query-flow" marker-end="url(#arrow)" d="M625 435 C565 435, 535 435, 475 435" />
+
+      <path class="flow response-flow" marker-end="url(#arrow)" d="M475 585 C555 585, 605 585, 685 585" />
+      <path class="flow response-flow" marker-end="url(#arrow)" d="M835 585 C910 585, 970 585, 1045 585" />
+
+      <!-- moving dots -->
+      <circle r="6" class="token">
+        <animateMotion dur="3.2s" repeatCount="indefinite" path="M205 165 C250 165, 275 165, 320 165 M470 165 C520 165, 560 165, 610 165 M760 165 C810 165, 850 165, 900 165" />
+      </circle>
+      <circle r="6" class="token query">
+        <animateMotion dur="4.2s" repeatCount="indefinite" path="M205 382 C250 382, 275 382, 320 382 M470 382 C520 382, 560 382, 610 382 M755 382 C810 340, 840 310, 930 278 M1038 280 C1058 315, 1058 350, 1038 385 M935 435 C880 435, 830 435, 775 435 M625 435 C565 435, 535 435, 475 435" />
+      </circle>
+      <circle r="6" class="token response">
+        <animateMotion dur="2.6s" repeatCount="indefinite" path="M475 585 C555 585, 605 585, 685 585 M835 585 C910 585, 970 585, 1045 585" />
+      </circle>
+
+      <!-- Nodes -->
+      <g class="node pulse delay-1" transform="translate(70 105)">
+        <rect width="135" height="120" rx="22" />
+        <rect class="icon-bg green" x="22" y="24" width="46" height="54" rx="8" />
+        <line class="doc-line" x1="34" y1="40" x2="56" y2="40" />
+        <line class="doc-line" x1="34" y1="53" x2="58" y2="53" />
+        <line class="doc-line" x1="34" y1="66" x2="50" y2="66" />
+        <text x="22" y="100" class="node-title">Documents</text>
+        <text x="22" y="124" class="node-subtitle">PDF / DOCX</text>
+      </g>
+
+      <g class="node pulse delay-2" transform="translate(320 105)">
+        <rect width="150" height="120" rx="22" />
+        <rect class="icon-bg yellow" x="22" y="28" width="50" height="42" rx="8" />
+        <line class="doc-line" x1="35" y1="43" x2="60" y2="43" />
+        <line class="doc-line" x1="35" y1="56" x2="55" y2="56" />
+        <text x="22" y="100" class="node-title">Chunking</text>
+        <text x="22" y="124" class="node-subtitle">split + clean</text>
+      </g>
+
+      <g class="node pulse delay-3" transform="translate(610 105)">
+        <rect width="150" height="120" rx="22" />
+        <circle class="icon-bg" cx="47" cy="50" r="25" />
+        <text x="35" y="57" class="mini-text">emb</text>
+        <text x="22" y="100" class="node-title">Embedding</text>
+        <text x="22" y="124" class="node-subtitle">Ollama / API</text>
+      </g>
+
+      <g class="node pulse delay-4" transform="translate(900 105)">
+        <rect width="170" height="120" rx="22" />
+        <ellipse class="icon-bg cyan" cx="52" cy="37" rx="32" ry="12" />
+        <path d="M20 37 v42 c0 7 64 7 64 0 V37" fill="none" stroke="rgba(56,189,248,0.7)" stroke-width="2" />
+        <ellipse cx="52" cy="79" rx="32" ry="12" fill="none" stroke="rgba(56,189,248,0.7)" stroke-width="2" />
+        <text x="22" y="100" class="node-title">ChromaDB</text>
+        <text x="22" y="124" class="node-subtitle">vector store</text>
+      </g>
+
+      <g class="node pulse delay-1" transform="translate(70 322)">
+        <rect width="135" height="120" rx="22" />
+        <rect class="icon-bg cyan" x="22" y="34" width="58" height="38" rx="10" />
+        <text x="34" y="58" class="mini-text">Ask</text>
+        <text x="22" y="100" class="node-title">User query</text>
+        <text x="22" y="124" class="node-subtitle">chat input</text>
+      </g>
+
+      <g class="node pulse delay-2" transform="translate(320 322)">
+        <rect width="150" height="120" rx="22" />
+        <rect class="icon-bg" x="22" y="32" width="76" height="44" rx="12" />
+        <text x="35" y="59" class="mini-text">FastAPI</text>
+        <text x="22" y="100" class="node-title">Backend API</text>
+        <text x="22" y="124" class="node-subtitle">request router</text>
+      </g>
+
+      <g class="node pulse delay-3" transform="translate(610 322)">
+        <rect width="165" height="120" rx="22" />
+        <g transform="translate(25 30)">
+          <rect class="vector-bar" x="0" y="28" width="10" height="30" rx="3" fill="#818cf8" />
+          <rect class="vector-bar" x="18" y="14" width="10" height="44" rx="3" fill="#38bdf8" style="animation-delay:.15s" />
+          <rect class="vector-bar" x="36" y="22" width="10" height="36" rx="3" fill="#10b981" style="animation-delay:.3s" />
+          <rect class="vector-bar" x="54" y="5" width="10" height="53" rx="3" fill="#f59e0b" style="animation-delay:.45s" />
+        </g>
+        <text x="22" y="100" class="node-title">Retrieve</text>
+        <text x="22" y="124" class="node-subtitle">top-k chunks</text>
+      </g>
+
+      <g class="node pulse delay-5" transform="translate(935 352)">
+        <rect width="170" height="145" rx="22" />
+        <rect class="icon-bg yellow" x="22" y="24" width="126" height="50" rx="12" />
+        <line class="doc-line" x1="38" y1="42" x2="90" y2="42" />
+        <line class="doc-line" x1="38" y1="58" x2="126" y2="58" />
+        <text x="22" y="104" class="node-title">Prompt builder</text>
+        <text x="22" y="128" class="node-subtitle">context + query</text>
+      </g>
+
+      <g class="node pulse delay-6" transform="translate(625 375)">
+        <rect width="150" height="120" rx="22" />
+        <circle class="icon-bg green" cx="50" cy="50" r="26" />
+        <path d="M39 50 h22 M50 39 v22" stroke="#22c55e" stroke-width="3" stroke-linecap="round" />
+        <text x="22" y="100" class="node-title">LLM</text>
+        <text x="22" y="124" class="node-subtitle">Ollama / Llama</text>
+      </g>
+
+      <g class="node pulse delay-7" transform="translate(320 525)">
+        <rect width="155" height="120" rx="22" />
+        <rect class="icon-bg" x="22" y="30" width="90" height="46" rx="12" />
+        <text x="36" y="59" class="mini-text">tokens</text>
+        <text x="22" y="100" class="node-title">Streaming</text>
+        <text x="22" y="124" class="node-subtitle">server-sent text</text>
+      </g>
+
+      <g class="node pulse delay-8" transform="translate(685 525)">
+        <rect width="150" height="120" rx="22" />
+        <rect class="icon-bg cyan" x="22" y="28" width="94" height="50" rx="12" />
+        <line class="doc-line" x1="37" y1="44" x2="94" y2="44" />
+        <line class="doc-line" x1="37" y1="60" x2="78" y2="60" />
+        <text x="22" y="100" class="node-title">Frontend</text>
+        <text x="22" y="124" class="node-subtitle">React UI</text>
+      </g>
+
+      <g class="node pulse delay-8" transform="translate(1045 525)">
+        <rect width="165" height="120" rx="22" />
+        <rect class="icon-bg green" x="22" y="25" width="112" height="52" rx="12" />
+        <line class="doc-line" x1="38" y1="42" x2="108" y2="42" />
+        <line class="doc-line" x1="38" y1="59" x2="82" y2="59" />
+        <text x="22" y="100" class="node-title">Answer</text>
+        <text x="22" y="124" class="node-subtitle">response + sources<tspan class="typing">|</tspan></text>
+      </g>
+    </svg>
+  </main>
+</body>
+</html>
