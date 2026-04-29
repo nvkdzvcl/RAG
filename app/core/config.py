@@ -52,6 +52,16 @@ class Settings(BaseSettings):
     reranker_batch_size: int = Field(default=8, alias="RERANKER_BATCH_SIZE")
     reranker_top_k: int = Field(default=6, alias="RERANKER_TOP_K")
     reranker_top_n: int = Field(default=6, alias="RERANKER_TOP_N")
+    rerank_cascade_enabled: bool = Field(default=True, alias="RERANK_CASCADE_ENABLED")
+    rerank_simple_skip_cross_encoder: bool = Field(
+        default=True, alias="RERANK_SIMPLE_SKIP_CROSS_ENCODER"
+    )
+    rerank_min_candidates_for_cross_encoder: int = Field(
+        default=4, alias="RERANK_MIN_CANDIDATES_FOR_CROSS_ENCODER"
+    )
+    rerank_score_gap_threshold: float = Field(
+        default=0.2, alias="RERANK_SCORE_GAP_THRESHOLD"
+    )
 
     ocr_enabled: bool = Field(default=False, alias="OCR_ENABLED")
     ocr_language: str = Field(default="vie+eng", alias="OCR_LANGUAGE")

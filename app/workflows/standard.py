@@ -7,7 +7,7 @@ import logging
 import time
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, Protocol
+from typing import Any, Literal, Protocol
 
 from app.core.async_utils import run_coro_sync
 from app.core.cache import create_cache_group_from_settings
@@ -36,6 +36,7 @@ from app.retrieval import (
     DenseRetriever,
     HybridRetriever,
     PassThroughReranker,
+    ScoreOnlyReranker,
     SparseRetriever,
     create_reranker,
 )
@@ -46,6 +47,7 @@ from app.schemas.ingestion import DocumentChunk
 from app.schemas.retrieval import RetrievalResult
 from app.services.index_runtime import EmptyRetriever
 from app.workflows.query_budget import QueryBudget, choose_query_budget
+from app.workflows.rerank_policy import choose_rerank_policy
 from app.workflows.shared import (
     GroundingPolicy,
     assess_grounding_with_policy,
@@ -77,6 +79,8 @@ class StandardPipelineResult:
     timings: dict[str, int] = field(default_factory=dict)
     retrieval_timing_breakdown_available: bool = False
     query_budget: QueryBudget | None = None
+    rerank_policy: dict[str, Any] = field(default_factory=dict)
+    reranker_used: str = "skipped"
 
 
 class RetrieverLike(Protocol):
@@ -96,6 +100,7 @@ class IndexManagerLike(Protocol):
 class StandardWorkflow:
     """Baseline RAG workflow: retrieve -> rerank -> select context -> generate."""
 
+    _RERANK_TOP_SCORE_THRESHOLD = 0.75
     _LANGUAGE_REWRITE_PROMPT = (
         "Rewrite the answer into $response_language_name while keeping the same grounded meaning.\n"
         "Do not add new facts.\n"
@@ -140,6 +145,21 @@ class StandardWorkflow:
         if best_score <= 1.0:
             return round(best_score, 4)
         return round(best_score / (1.0 + best_score), 4)
+
+    @staticmethod
+    def _reranker_supports_cross_encoder(reranker: BaseReranker) -> bool:
+        name = str(getattr(reranker, "name", reranker.__class__.__name__)).lower()
+        if "cross-encoder" in name or "crossencoder" in name:
+            return True
+        return False
+
+    @staticmethod
+    def _rerank_policy_mode(mode: Mode) -> Literal["standard", "advanced", "compare"]:
+        if mode == Mode.ADVANCED:
+            return "advanced"
+        if mode == Mode.COMPARE:
+            return "compare"
+        return "standard"
 
     def __init__(
         self,
@@ -221,6 +241,18 @@ class StandardWorkflow:
         self.normal_context_chars = max(
             1, int(getattr(settings, "rag_normal_context_chars", 3000))
         )
+        self.rerank_cascade_enabled = bool(
+            getattr(settings, "rerank_cascade_enabled", True)
+        )
+        self.rerank_simple_skip_cross_encoder = bool(
+            getattr(settings, "rerank_simple_skip_cross_encoder", True)
+        )
+        self.rerank_min_candidates_for_cross_encoder = max(
+            1, int(getattr(settings, "rerank_min_candidates_for_cross_encoder", 4))
+        )
+        self.rerank_score_gap_threshold = max(
+            0.0, float(getattr(settings, "rerank_score_gap_threshold", 0.2))
+        )
         self._retrieval_top_k_overridden = hybrid_top_k is not None
 
         self._fallback_retriever: RetrieverLike | None = None
@@ -269,6 +301,7 @@ class StandardWorkflow:
                 device=settings.reranker_device,
                 batch_size=settings.reranker_batch_size,
             )
+        self.score_only_reranker = ScoreOnlyReranker()
         self.context_selector = ContextSelector(
             max_chunks=self.context_top_k, max_chars=self.context_max_chars
         )
@@ -478,13 +511,48 @@ class StandardWorkflow:
             "hybrid_merge_ms",
             retrieval_timing_payload.get("hybrid_merge_ms", 0),
         )
-        with timer.measure("rerank_ms"):
-            reranked = await asyncio.to_thread(
-                self.reranker.rerank,
-                normalized_query,
-                retrieved,
-                rerank_top_k,
-            )
+        policy_mode = self._rerank_policy_mode(mode)
+        reranker_supports_cross_encoder = self._reranker_supports_cross_encoder(
+            self.reranker
+        )
+        rerank_policy = choose_rerank_policy(
+            mode=policy_mode,
+            query_complexity=query_budget.complexity,
+            candidates=retrieved,
+            cascade_enabled=self.rerank_cascade_enabled,
+            simple_skip_cross_encoder=self.rerank_simple_skip_cross_encoder,
+            min_candidates_for_cross_encoder=self.rerank_min_candidates_for_cross_encoder,
+            score_gap_threshold=self.rerank_score_gap_threshold,
+            top_score_threshold=self._RERANK_TOP_SCORE_THRESHOLD,
+            reranker_supports_cross_encoder=reranker_supports_cross_encoder,
+        )
+        if not retrieved:
+            reranker_used = "skipped"
+            timer.record_ms("rerank_ms", 0)
+            reranked = []
+        else:
+            if reranker_supports_cross_encoder and rerank_policy.use_cross_encoder:
+                reranker_used = "cross_encoder"
+                selected_reranker = self.reranker
+            elif reranker_supports_cross_encoder:
+                reranker_used = "score_only"
+                selected_reranker = self.score_only_reranker
+            elif isinstance(self.reranker, ScoreOnlyReranker):
+                reranker_used = "score_only"
+                selected_reranker = self.reranker
+            else:
+                reranker_used = "skipped"
+                selected_reranker = self.reranker
+
+            with timer.measure("rerank_ms"):
+                reranked = await asyncio.to_thread(
+                    selected_reranker.rerank,
+                    normalized_query,
+                    retrieved,
+                    rerank_top_k,
+                )
+        rerank_policy_payload = rerank_policy.as_trace_payload()
+        rerank_policy_payload["reranker_used"] = reranker_used
         with timer.measure("context_select_ms"):
             selected_context = await asyncio.to_thread(
                 context_selector.select,
@@ -499,6 +567,8 @@ class StandardWorkflow:
                 "query": normalized_query,
                 "query_complexity": query_budget.complexity,
                 "query_budget": query_budget.as_trace_payload(),
+                "rerank_policy": rerank_policy_payload,
+                "reranker_used": reranker_used,
                 "retrieved_count": len(retrieved),
                 "reranked_count": len(reranked),
                 "selected_count": len(selected_context),
@@ -600,7 +670,8 @@ class StandardWorkflow:
         logger.info(
             (
                 "Standard retrieval config | complexity=%s | top_k=%s | rerank_top_n=%s "
-                "| context_top_k=%s | context_max_chars=%s | max_tokens=%s | final_context_size=%s"
+                "| context_top_k=%s | context_max_chars=%s | max_tokens=%s "
+                "| reranker_used=%s | final_context_size=%s"
             ),
             query_budget.complexity,
             retrieval_top_k,
@@ -608,6 +679,7 @@ class StandardWorkflow:
             query_budget.context_top_k,
             query_budget.context_max_chars,
             query_budget.max_tokens,
+            reranker_used,
             len(selected_context),
         )
 
@@ -621,6 +693,8 @@ class StandardWorkflow:
             timings=timer.metrics(),
             retrieval_timing_breakdown_available=retrieval_timing_breakdown_available,
             query_budget=query_budget,
+            rerank_policy=rerank_policy_payload,
+            reranker_used=reranker_used,
         )
 
     async def run_async(
@@ -804,6 +878,8 @@ class StandardWorkflow:
                 "provider": getattr(
                     self.reranker, "name", self.reranker.__class__.__name__
                 ),
+                "reranker_used": pipeline.reranker_used,
+                "rerank_policy": pipeline.rerank_policy,
                 "top_k": effective_budget.hybrid_top_k,
                 "rerank_top_n": effective_budget.rerank_top_k,
                 "count": len(pipeline.reranked),
@@ -917,6 +993,8 @@ class StandardWorkflow:
                 ),
                 "query_complexity": effective_budget.complexity,
                 "query_budget": effective_budget.as_trace_payload(),
+                "rerank_policy": pipeline.rerank_policy,
+                "reranker_used": pipeline.reranker_used,
                 "rerank_ms": timings.get("rerank_ms", 0),
                 "context_select_ms": timings.get("context_select_ms", 0),
                 "llm_generate_ms": timings.get("llm_generate_ms", 0),

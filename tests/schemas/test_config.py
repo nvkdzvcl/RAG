@@ -36,6 +36,10 @@ def test_settings_defaults(monkeypatch) -> None:
         "RERANKER_BATCH_SIZE",
         "RERANKER_TOP_K",
         "RERANKER_TOP_N",
+        "RERANK_CASCADE_ENABLED",
+        "RERANK_SIMPLE_SKIP_CROSS_ENCODER",
+        "RERANK_MIN_CANDIDATES_FOR_CROSS_ENCODER",
+        "RERANK_SCORE_GAP_THRESHOLD",
         "OCR_ENABLED",
         "OCR_LANGUAGE",
         "OCR_MIN_TEXT_CHARS",
@@ -94,6 +98,10 @@ def test_settings_defaults(monkeypatch) -> None:
     assert settings.reranker_batch_size == 8
     assert settings.reranker_top_k == 6
     assert settings.reranker_top_n == 6
+    assert settings.rerank_cascade_enabled is True
+    assert settings.rerank_simple_skip_cross_encoder is True
+    assert settings.rerank_min_candidates_for_cross_encoder == 4
+    assert settings.rerank_score_gap_threshold == 0.2
     assert settings.ocr_enabled is False
     assert settings.ocr_language == "vie+eng"
     assert settings.ocr_min_text_chars == 100

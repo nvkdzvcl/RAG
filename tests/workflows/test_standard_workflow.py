@@ -5,7 +5,7 @@ import asyncio
 from app.schemas.retrieval import RetrievalBatch, RetrievalResult
 from app.schemas.api import StandardQueryResponse, validate_query_response
 from app.schemas.common import Mode
-from app.retrieval import ScoreOnlyReranker
+from app.retrieval import BaseReranker, ScoreOnlyReranker
 from app.services import QueryService
 from app.workflows.runner import WorkflowRunner
 from app.workflows.standard import StandardWorkflow
@@ -254,6 +254,242 @@ def test_standard_workflow_can_disable_dynamic_budget(monkeypatch) -> None:
         index_manager.retriever.top_k_calls
         and index_manager.retriever.top_k_calls[-1] == 8
     )
+
+
+def test_standard_simple_query_skips_cross_encoder_via_cascade_policy() -> None:
+    class _Retriever:
+        def retrieve(self, query: str, top_k: int = 5) -> list[RetrievalResult]:
+            _ = query
+            return [
+                RetrievalResult(
+                    chunk_id=f"cascade_simple_{idx}",
+                    doc_id=f"cascade_simple_doc_{idx}",
+                    source="seeded://cascade-simple",
+                    content=f"Điều {idx + 1}. Nội dung căn cứ pháp lý mẫu {idx}.",
+                    score=0.91 - (idx * 0.08),
+                    score_type="hybrid",
+                    rank=idx + 1,
+                )
+                for idx in range(top_k)
+            ]
+
+    class _FakeIndexManager:
+        def __init__(self) -> None:
+            self.retriever = _Retriever()
+
+        def get_retriever(self) -> _Retriever:
+            return self.retriever
+
+        def get_active_source(self) -> str:
+            return "seeded"
+
+    class _SpyCrossEncoderReranker(BaseReranker):
+        name = "cross-encoder-reranker"
+
+        def __init__(self) -> None:
+            self.calls = 0
+
+        def rerank(
+            self,
+            query: str,
+            docs: list[RetrievalResult],
+            top_k: int | None = None,
+        ) -> list[RetrievalResult]:
+            _ = query
+            self.calls += 1
+            limit = len(docs) if top_k is None else max(0, top_k)
+            return list(docs[:limit])
+
+    class _StubLLM:
+        def complete(
+            self,
+            prompt: str,
+            system_prompt: str | None = None,
+            model: str | None = None,
+            max_tokens: int | None = None,
+        ) -> str:
+            _ = prompt
+            _ = system_prompt
+            _ = model
+            _ = max_tokens
+            return '{"answer":"Simple cascade answer.","confidence":0.83,"status":"answered"}'
+
+    reranker = _SpyCrossEncoderReranker()
+    workflow = StandardWorkflow(
+        index_manager=_FakeIndexManager(),
+        llm_client=_StubLLM(),
+        reranker=reranker,
+    )
+    workflow.set_retrieval_top_k(5)
+
+    response = workflow.run(query="Mức phạt tối đa là bao nhiêu?")
+    rerank_step = response.trace[1]
+    context_step = response.trace[2]
+    selected_chunk_ids = {
+        doc["chunk_id"] for doc in context_step.get("docs", []) if "chunk_id" in doc
+    }
+
+    assert reranker.calls == 0
+    assert rerank_step["reranker_used"] == "score_only"
+    assert rerank_step["rerank_policy"]["reason"] == "simple_extractive_skip"
+    assert response.citations
+    assert {item.chunk_id for item in response.citations}.issubset(selected_chunk_ids)
+
+
+def test_standard_complex_query_can_use_cross_encoder_with_cascade_policy() -> None:
+    class _Retriever:
+        def retrieve(self, query: str, top_k: int = 5) -> list[RetrievalResult]:
+            _ = query
+            scores = [0.56, 0.55, 0.54, 0.53, 0.52]
+            return [
+                RetrievalResult(
+                    chunk_id=f"cascade_complex_{idx}",
+                    doc_id=f"cascade_complex_doc_{idx}",
+                    source="seeded://cascade-complex",
+                    content=f"Nội dung so sánh phương án {idx}.",
+                    score=scores[idx],
+                    score_type="hybrid",
+                    rank=idx + 1,
+                )
+                for idx in range(min(top_k, len(scores)))
+            ]
+
+    class _FakeIndexManager:
+        def __init__(self) -> None:
+            self.retriever = _Retriever()
+
+        def get_retriever(self) -> _Retriever:
+            return self.retriever
+
+        def get_active_source(self) -> str:
+            return "seeded"
+
+    class _SpyCrossEncoderReranker(BaseReranker):
+        name = "cross-encoder-reranker"
+
+        def __init__(self) -> None:
+            self.calls = 0
+
+        def rerank(
+            self,
+            query: str,
+            docs: list[RetrievalResult],
+            top_k: int | None = None,
+        ) -> list[RetrievalResult]:
+            _ = query
+            self.calls += 1
+            limit = len(docs) if top_k is None else max(0, top_k)
+            ranked = list(docs[:limit])
+            ranked.reverse()
+            for rank, item in enumerate(ranked, start=1):
+                item.rank = rank
+            return ranked
+
+    class _StubLLM:
+        def complete(
+            self,
+            prompt: str,
+            system_prompt: str | None = None,
+            model: str | None = None,
+            max_tokens: int | None = None,
+        ) -> str:
+            _ = prompt
+            _ = system_prompt
+            _ = model
+            _ = max_tokens
+            return '{"answer":"Complex cascade answer.","confidence":0.81,"status":"answered"}'
+
+    reranker = _SpyCrossEncoderReranker()
+    workflow = StandardWorkflow(
+        index_manager=_FakeIndexManager(),
+        llm_client=_StubLLM(),
+        reranker=reranker,
+    )
+
+    response = workflow.run(query="Phân tích ưu nhược điểm của hai phương án.")
+    rerank_step = response.trace[1]
+
+    assert reranker.calls == 1
+    assert rerank_step["reranker_used"] == "cross_encoder"
+    assert rerank_step["rerank_policy"]["reason"] in {
+        "ambiguous_scores_use_cross_encoder",
+        "advanced_strict_allow_cross_encoder",
+    }
+
+
+def test_standard_can_force_legacy_cross_encoder_by_disabling_cascade() -> None:
+    class _Retriever:
+        def retrieve(self, query: str, top_k: int = 5) -> list[RetrievalResult]:
+            _ = query
+            return [
+                RetrievalResult(
+                    chunk_id=f"cascade_legacy_{idx}",
+                    doc_id=f"cascade_legacy_doc_{idx}",
+                    source="seeded://cascade-legacy",
+                    content=f"Nội dung legacy {idx}.",
+                    score=0.85 - (idx * 0.05),
+                    score_type="hybrid",
+                    rank=idx + 1,
+                )
+                for idx in range(top_k)
+            ]
+
+    class _FakeIndexManager:
+        def __init__(self) -> None:
+            self.retriever = _Retriever()
+
+        def get_retriever(self) -> _Retriever:
+            return self.retriever
+
+        def get_active_source(self) -> str:
+            return "seeded"
+
+    class _SpyCrossEncoderReranker(BaseReranker):
+        name = "cross-encoder-reranker"
+
+        def __init__(self) -> None:
+            self.calls = 0
+
+        def rerank(
+            self,
+            query: str,
+            docs: list[RetrievalResult],
+            top_k: int | None = None,
+        ) -> list[RetrievalResult]:
+            _ = query
+            self.calls += 1
+            limit = len(docs) if top_k is None else max(0, top_k)
+            return list(docs[:limit])
+
+    class _StubLLM:
+        def complete(
+            self,
+            prompt: str,
+            system_prompt: str | None = None,
+            model: str | None = None,
+            max_tokens: int | None = None,
+        ) -> str:
+            _ = prompt
+            _ = system_prompt
+            _ = model
+            _ = max_tokens
+            return '{"answer":"Legacy cascade answer.","confidence":0.79,"status":"answered"}'
+
+    reranker = _SpyCrossEncoderReranker()
+    workflow = StandardWorkflow(
+        index_manager=_FakeIndexManager(),
+        llm_client=_StubLLM(),
+        reranker=reranker,
+    )
+    workflow.rerank_cascade_enabled = False
+    workflow.set_retrieval_top_k(5)
+
+    response = workflow.run(query="Mức phạt tối đa là bao nhiêu?")
+    rerank_step = response.trace[1]
+
+    assert reranker.calls == 1
+    assert rerank_step["reranker_used"] == "cross_encoder"
+    assert rerank_step["rerank_policy"]["reason"] == "cascade_disabled_legacy"
 
 
 def test_standard_workflow_trace_contains_timing_metrics() -> None:
