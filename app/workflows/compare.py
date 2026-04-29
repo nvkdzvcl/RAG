@@ -526,11 +526,12 @@ class CompareWorkflow:
             )
             return result, int((time.perf_counter() - branch_started) * 1000)
 
-        (standard, standard_branch_ms), (advanced, advanced_branch_ms) = (
-            await asyncio.gather(
-                _run_standard_timed(),
-                _run_advanced_timed(),
-            )
+        (
+            (standard, standard_branch_ms),
+            (advanced, advanced_branch_ms),
+        ) = await asyncio.gather(
+            _run_standard_timed(),
+            _run_advanced_timed(),
         )
 
         total_latency_ms = int((time.perf_counter() - started) * 1000)
