@@ -12,6 +12,8 @@ from app.generation.llm_client import (
     FallbackLLMClient,
     OpenAICompatibleLLMClient,
     StubLLMClient,
+    _build_llm_cache_key,
+    _llm_provider_signature,
     complete_with_model,
     create_llm_client,
     did_use_cache,
@@ -315,3 +317,135 @@ def test_complete_with_model_uses_llm_cache_on_repeated_prompt() -> None:
     assert second == "cached-output"
     assert client.calls == 1
     assert did_use_cache(client) is True
+
+
+def test_llm_cache_key_changes_when_api_base_differs() -> None:
+    transport = httpx.MockTransport(
+        lambda request: httpx.Response(  # pragma: no cover - network not exercised.
+            status_code=200,
+            json={"choices": [{"message": {"content": "ok"}}]},
+        )
+    )
+    client_a = httpx.AsyncClient(base_url="http://backend-a/v1/", transport=transport)
+    client_b = httpx.AsyncClient(base_url="http://backend-b/v1/", transport=transport)
+    llm_a = OpenAICompatibleLLMClient(
+        model="qwen2.5:3b",
+        api_base="http://backend-a/v1",
+        api_key="secret-a",
+        temperature=0.2,
+        max_tokens=128,
+        timeout_seconds=10,
+        client=client_a,
+    )
+    llm_b = OpenAICompatibleLLMClient(
+        model="qwen2.5:3b",
+        api_base="http://backend-b/v1",
+        api_key="secret-b",
+        temperature=0.2,
+        max_tokens=128,
+        timeout_seconds=10,
+        client=client_b,
+    )
+    payload = {
+        "prompt": "same prompt",
+        "system_prompt": "same system",
+        "model": "qwen2.5:3b",
+        "max_tokens": 128,
+    }
+
+    key_a = _build_llm_cache_key(llm_a, payload)
+    key_b = _build_llm_cache_key(llm_b, payload)
+
+    asyncio.run(client_a.aclose())
+    asyncio.run(client_b.aclose())
+
+    assert key_a is not None
+    assert key_b is not None
+    assert key_a != key_b
+
+
+def test_fallback_provider_signature_changes_when_nested_clients_change() -> None:
+    class _StaticClient:
+        def __init__(self, *, model: str, api_base: str) -> None:
+            self.model = model
+            self.api_base = api_base
+
+        def complete(
+            self,
+            prompt: str,
+            system_prompt: str | None = None,
+            **kwargs: object,
+        ) -> str:
+            _ = prompt
+            _ = system_prompt
+            _ = kwargs
+            return "ok"
+
+    wrapped_a = FallbackLLMClient(
+        primary=_StaticClient(model="model-a", api_base="http://api-a/v1"),
+        fallback=_StaticClient(
+            model="model-fallback-a", api_base="http://fallback-a/v1"
+        ),
+    )
+    wrapped_b = FallbackLLMClient(
+        primary=_StaticClient(model="model-b", api_base="http://api-b/v1"),
+        fallback=_StaticClient(
+            model="model-fallback-a", api_base="http://fallback-a/v1"
+        ),
+    )
+    wrapped_c = FallbackLLMClient(
+        primary=_StaticClient(model="model-a", api_base="http://api-a/v1"),
+        fallback=_StaticClient(
+            model="model-fallback-c", api_base="http://fallback-c/v1"
+        ),
+    )
+
+    sig_a = _llm_provider_signature(wrapped_a)
+    sig_b = _llm_provider_signature(wrapped_b)
+    sig_c = _llm_provider_signature(wrapped_c)
+
+    assert sig_a != sig_b
+    assert sig_a != sig_c
+    assert sig_b != sig_c
+
+
+def test_llm_provider_signature_excludes_secrets() -> None:
+    transport = httpx.MockTransport(
+        lambda request: httpx.Response(  # pragma: no cover - network not exercised.
+            status_code=200,
+            json={"choices": [{"message": {"content": "ok"}}]},
+        )
+    )
+    async_client = httpx.AsyncClient(
+        base_url="https://public.example.com/v1/",
+        transport=transport,
+    )
+    secret_api_key = "super-secret-api-key"
+    llm = OpenAICompatibleLLMClient(
+        model="qwen2.5:3b",
+        api_base="https://user:very-secret-pass@public.example.com/v1?token=abc123",
+        api_key=secret_api_key,
+        temperature=0.2,
+        max_tokens=128,
+        timeout_seconds=10,
+        client=async_client,
+    )
+    signature = _llm_provider_signature(llm)
+    cache_key = _build_llm_cache_key(
+        llm,
+        {
+            "prompt": "secret safety",
+            "system_prompt": "system",
+            "model": "qwen2.5:3b",
+            "max_tokens": 128,
+        },
+    )
+
+    asyncio.run(async_client.aclose())
+
+    assert secret_api_key not in signature
+    assert "very-secret-pass" not in signature
+    assert "token=abc123" not in signature
+    assert "user@" not in signature
+    assert cache_key is not None
+    assert secret_api_key not in cache_key

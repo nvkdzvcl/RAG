@@ -7,6 +7,7 @@ import json
 import logging
 from collections.abc import Awaitable, Callable
 from typing import Any, Protocol
+from urllib.parse import urlsplit, urlunsplit
 
 import httpx
 
@@ -166,14 +167,211 @@ def _mark_llm_cache_hit(llm_client: LLMClient, *, hit: bool) -> None:
         return
 
 
+_SIGNATURE_BASE_FIELDS: tuple[str, ...] = (
+    "provider_name",
+    "api_base",
+    "base_url",
+    "model",
+    "timeout_seconds",
+    "timeout",
+    "max_retries",
+    "retry_attempts",
+    "retry_count",
+    "retry_backoff_seconds",
+)
+_SIGNATURE_WRAPPER_FIELDS: tuple[str, ...] = ("primary", "fallback")
+_SECRET_FIELD_MARKERS: tuple[str, ...] = (
+    "api_key",
+    "secret",
+    "token",
+    "password",
+    "authorization",
+    "auth_header",
+)
+
+
+def _contains_secret_marker(name: str) -> bool:
+    lowered = name.strip().lower()
+    return any(marker in lowered for marker in _SECRET_FIELD_MARKERS)
+
+
+def _sanitize_url_like(value: str) -> str:
+    raw = value.strip()
+    if not raw:
+        return ""
+    parts = urlsplit(raw)
+    if not parts.scheme:
+        return raw.rstrip("/")
+
+    host = (parts.hostname or "").strip().lower()
+    netloc = host
+    if parts.port is not None and host:
+        netloc = f"{host}:{parts.port}"
+    normalized_path = parts.path.rstrip("/")
+    return urlunsplit(
+        (
+            parts.scheme.lower(),
+            netloc,
+            normalized_path,
+            "",
+            "",
+        )
+    )
+
+
+def _normalize_timeout_value(value: httpx.Timeout) -> dict[str, float | None]:
+    return {
+        "connect": None if value.connect is None else float(value.connect),
+        "read": None if value.read is None else float(value.read),
+        "write": None if value.write is None else float(value.write),
+        "pool": None if value.pool is None else float(value.pool),
+    }
+
+
+def _normalize_signature_value(field: str, value: Any) -> Any:
+    if value is None:
+        return None
+
+    lowered = field.strip().lower()
+    if isinstance(value, httpx.Timeout):
+        return _normalize_timeout_value(value)
+
+    if lowered in {"api_base", "base_url"}:
+        return _sanitize_url_like(str(value))
+
+    if isinstance(value, httpx.URL):
+        return _sanitize_url_like(str(value))
+
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, int):
+        return value
+    if isinstance(value, float):
+        return float(value)
+    if isinstance(value, str):
+        return value.strip()
+
+    if isinstance(value, (list, tuple)):
+        normalized_items: list[Any] = []
+        for item in value:
+            normalized_item = _normalize_signature_value(field, item)
+            if normalized_item is not None:
+                normalized_items.append(normalized_item)
+        return normalized_items
+
+    if isinstance(value, dict):
+        normalized_dict: dict[str, Any] = {}
+        for key, item in sorted(value.items(), key=lambda row: str(row[0])):
+            key_name = str(key).strip()
+            if not key_name or _contains_secret_marker(key_name):
+                continue
+            normalized_item = _normalize_signature_value(key_name, item)
+            if normalized_item is None:
+                continue
+            normalized_dict[key_name] = normalized_item
+        return normalized_dict
+
+    return value.__class__.__name__
+
+
+def _provider_signature_payload(
+    llm_client: LLMClient,
+    *,
+    seen: set[int] | None = None,
+    depth: int = 0,
+) -> dict[str, Any]:
+    client_id = id(llm_client)
+    if seen is None:
+        seen = set()
+
+    payload: dict[str, Any] = {"class_name": llm_client.__class__.__name__}
+    if client_id in seen:
+        payload["cycle_detected"] = True
+        return payload
+
+    if depth > 6:
+        payload["depth_truncated"] = True
+        return payload
+
+    seen.add(client_id)
+    try:
+        for field in _SIGNATURE_BASE_FIELDS:
+            if _contains_secret_marker(field):
+                continue
+            if not hasattr(llm_client, field):
+                continue
+            raw_value = getattr(llm_client, field)
+            normalized = _normalize_signature_value(field, raw_value)
+            if normalized in (None, "", [], {}):
+                continue
+            payload[field] = normalized
+
+        # Include retry/timeout-related dynamic fields when exposed by custom clients.
+        raw_state = getattr(llm_client, "__dict__", {})
+        if isinstance(raw_state, dict):
+            for key in sorted(raw_state.keys()):
+                key_name = str(key).strip()
+                if not key_name or _contains_secret_marker(key_name):
+                    continue
+                lowered = key_name.lower()
+                if key_name in payload:
+                    continue
+                if (
+                    "retry" not in lowered
+                    and "timeout" not in lowered
+                    and "base_url" not in lowered
+                    and "api_base" not in lowered
+                    and lowered != "model"
+                    and lowered != "provider_name"
+                ):
+                    continue
+                normalized = _normalize_signature_value(key_name, raw_state[key])
+                if normalized in (None, "", [], {}):
+                    continue
+                payload[key_name] = normalized
+
+        # Some clients hide runtime HTTP config behind `_client`.
+        http_client = getattr(llm_client, "_client", None)
+        if http_client is not None:
+            if "base_url" not in payload and hasattr(http_client, "base_url"):
+                normalized_base = _normalize_signature_value(
+                    "base_url",
+                    getattr(http_client, "base_url"),
+                )
+                if normalized_base not in (None, ""):
+                    payload["base_url"] = normalized_base
+            if "timeout" not in payload and hasattr(http_client, "timeout"):
+                normalized_timeout = _normalize_signature_value(
+                    "timeout",
+                    getattr(http_client, "timeout"),
+                )
+                if normalized_timeout not in (None, {}, []):
+                    payload["timeout"] = normalized_timeout
+
+        for field in _SIGNATURE_WRAPPER_FIELDS:
+            nested = getattr(llm_client, field, None)
+            if nested is None:
+                continue
+            if not hasattr(nested, "complete"):
+                continue
+            payload[field] = _provider_signature_payload(
+                nested,
+                seen=seen,
+                depth=depth + 1,
+            )
+    finally:
+        seen.discard(client_id)
+    return payload
+
+
 def _llm_provider_signature(llm_client: LLMClient) -> str:
-    parts = [
-        llm_client.__class__.__name__,
-        str(getattr(llm_client, "model", "") or ""),
-        str(getattr(llm_client, "api_base", "") or ""),
-        str(getattr(llm_client, "provider_name", "") or ""),
-    ]
-    return "|".join(parts)
+    payload = _provider_signature_payload(llm_client)
+    return json.dumps(
+        payload,
+        ensure_ascii=True,
+        sort_keys=True,
+        separators=(",", ":"),
+    )
 
 
 def _to_cacheable_value(value: Any) -> Any:
