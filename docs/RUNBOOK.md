@@ -49,6 +49,31 @@
    - chỉ integration: `make test-integration`
    - kiểm tra đầy đủ: `pytest` (hoặc `make test-full`)
 
+## Benchmark Latency (Standard / Advanced / Compare)
+
+Khuyến nghị để đo benchmark ổn định:
+
+1. Dùng model local nhẹ:
+   `LLM_MODEL=qwen2.5:3b`
+2. Chạy backend không dùng autoreload:
+   `uvicorn app.main:app --host 127.0.0.1 --port 8000`
+3. Chạy benchmark non-stream:
+   `python scripts/benchmark_latency.py --api-base-url http://127.0.0.1:8000/api/v1 --mode standard --runs 5 --warmup 1 --concurrency 1`
+4. Chạy benchmark stream:
+   `python scripts/benchmark_latency.py --api-base-url http://127.0.0.1:8000/api/v1 --mode advanced --stream --runs 5 --warmup 1 --concurrency 1`
+5. So sánh trước/sau optimization:
+   - lưu kết quả trước:
+     `python scripts/benchmark_latency.py --mode compare --runs 5 --output-json data/eval/results/latency_before.json`
+   - lưu kết quả sau:
+     `python scripts/benchmark_latency.py --mode compare --runs 5 --output-json data/eval/results/latency_after.json`
+
+Script sẽ in:
+
+- per-query latency từng request
+- tổng hợp `p50/p90/p95/max`
+- backend `latency_ms` (khi response có)
+- với stream: `time_to_first_event_ms`, `time_to_first_token_ms`, `total_stream_ms`
+
 ## Cấu Hình Embedding
 
 Cấu hình embedding đa ngôn ngữ/Vietnamese khuyến nghị:

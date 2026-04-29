@@ -45,6 +45,7 @@ Mỗi dòng JSONL gồm:
 Module CLI:
 
 - `python scripts/run_eval.py`
+- `python scripts/benchmark_latency.py`
 
 Tùy chọn:
 
@@ -58,6 +59,8 @@ Ví dụ:
 ```bash
 python scripts/run_eval.py --dataset data/eval/golden_dataset.jsonl --modes standard advanced compare
 python -m app.evaluation.runner --dataset data/eval/golden.jsonl --predictor stub
+python scripts/benchmark_latency.py --api-base-url http://127.0.0.1:8000/api/v1 --mode compare --runs 5 --warmup 1 --concurrency 1
+python scripts/benchmark_latency.py --api-base-url http://127.0.0.1:8000/api/v1 --mode compare --stream --runs 5 --warmup 1 --concurrency 1
 ```
 
 ## Regression Check Hiện Tại
