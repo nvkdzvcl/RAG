@@ -10,7 +10,7 @@ from pathlib import Path
 from typing import Any, Literal, Protocol
 
 from app.core.async_utils import run_coro_sync
-from app.core.cache import create_cache_group_from_settings
+from app.core.cache import create_cache_group_from_settings, make_cache_key
 from app.core.config import get_settings
 from app.core.json_utils import parse_json_object
 from app.core.timing import StepTimer, has_timing_breakdown, normalize_timing_payload
@@ -81,6 +81,9 @@ class StandardPipelineResult:
     query_budget: QueryBudget | None = None
     rerank_policy: dict[str, Any] = field(default_factory=dict)
     reranker_used: str = "skipped"
+    embedding_cache_hit: bool = False
+    retrieval_cache_hit: bool = False
+    rerank_cache_hit: bool = False
 
 
 class RetrieverLike(Protocol):
@@ -309,8 +312,83 @@ class StandardWorkflow:
         self.generator = BaselineGenerator(
             llm_client=resolved_llm_client,
             prompt_dir=settings.prompt_dir,
+            llm_cache=self.caches.llm,
         )
         self.llm_client = self.generator.llm_client
+
+    @staticmethod
+    def _clone_results(results: list[RetrievalResult]) -> list[RetrievalResult]:
+        return [item.model_copy(deep=True) for item in results]
+
+    @staticmethod
+    def _normalize_cached_results(raw: Any) -> list[RetrievalResult] | None:
+        if not isinstance(raw, list):
+            return None
+        normalized: list[RetrievalResult] = []
+        for item in raw:
+            if isinstance(item, RetrievalResult):
+                normalized.append(item.model_copy(deep=True))
+                continue
+            if isinstance(item, dict):
+                try:
+                    normalized.append(RetrievalResult.model_validate(item))
+                except Exception:
+                    return None
+                continue
+            return None
+        return normalized
+
+    @staticmethod
+    def _reranker_signature(reranker: BaseReranker) -> str:
+        return "|".join(
+            [
+                str(getattr(reranker, "name", reranker.__class__.__name__)),
+                str(getattr(reranker, "model_name", "")),
+                str(getattr(reranker, "device", "")),
+                str(getattr(reranker, "batch_size", "")),
+            ]
+        )
+
+    def _rerank_cache_key(
+        self,
+        *,
+        query: str,
+        docs: list[RetrievalResult],
+        reranker: BaseReranker,
+        top_k: int,
+    ) -> str:
+        ordered_chunk_ids = ",".join(item.chunk_id for item in docs)
+        return make_cache_key(
+            query,
+            top_k,
+            ordered_chunk_ids,
+            self._reranker_signature(reranker),
+        )
+
+    def _rerank_with_cache(
+        self,
+        *,
+        query: str,
+        docs: list[RetrievalResult],
+        reranker: BaseReranker,
+        top_k: int,
+    ) -> tuple[list[RetrievalResult], bool]:
+        cache_key = self._rerank_cache_key(
+            query=query,
+            docs=docs,
+            reranker=reranker,
+            top_k=top_k,
+        )
+        hit, cached = self.caches.rerank.get(cache_key)
+        if hit:
+            normalized = self._normalize_cached_results(cached)
+            if normalized is not None:
+                return normalized, True
+            self.caches.rerank.invalidate()
+
+        reranked = reranker.rerank(query, docs, top_k)
+        self.caches.rerank.put(cache_key, self._clone_results(reranked))
+        return reranked, False
 
     def _build_chunks_from_corpus(self) -> list[DocumentChunk]:
         ingestor = DirectoryIngestor()
@@ -425,6 +503,8 @@ class StandardWorkflow:
         )
         retriever = self._get_retriever(query_filters=query_filters)
         retrieval_debug: dict[str, Any] = {}
+        embedding_cache_hit = False
+        retrieval_cache_hit = False
         retrieval_timing_payload: dict[str, int] = {}
         retrieval_timing_breakdown_available = False
         timed_retrieve_async = getattr(retriever, "retrieve_with_timing_async", None)
@@ -452,6 +532,14 @@ class StandardWorkflow:
                 debug_payload = getattr(batch, "filter_debug", {})
                 if isinstance(debug_payload, dict):
                     retrieval_debug = dict(debug_payload)
+                cache_payload = getattr(batch, "cache_debug", {})
+                if isinstance(cache_payload, dict):
+                    embedding_cache_hit = bool(
+                        cache_payload.get("embedding_cache_hit", False)
+                    )
+                    retrieval_cache_hit = bool(
+                        cache_payload.get("retrieval_cache_hit", False)
+                    )
             elif callable(timed_retrieve):
                 batch = await asyncio.to_thread(
                     timed_retrieve,
@@ -474,6 +562,14 @@ class StandardWorkflow:
                 debug_payload = getattr(batch, "filter_debug", {})
                 if isinstance(debug_payload, dict):
                     retrieval_debug = dict(debug_payload)
+                cache_payload = getattr(batch, "cache_debug", {})
+                if isinstance(cache_payload, dict):
+                    embedding_cache_hit = bool(
+                        cache_payload.get("embedding_cache_hit", False)
+                    )
+                    retrieval_cache_hit = bool(
+                        cache_payload.get("retrieval_cache_hit", False)
+                    )
             elif callable(retrieve_async):
                 retrieved = await retrieve_async(
                     normalized_query, top_k=retrieval_top_k
@@ -499,6 +595,18 @@ class StandardWorkflow:
                     retrieval_timing_breakdown_available = has_timing_breakdown(
                         raw_timing
                     )
+            cache_getter = getattr(retriever, "get_last_cache_debug", None)
+            if callable(cache_getter):
+                cache_payload = cache_getter()
+                if isinstance(cache_payload, dict):
+                    embedding_cache_hit = bool(
+                        cache_payload.get("embedding_cache_hit", False)
+                    )
+                    retrieval_cache_hit = bool(
+                        cache_payload.get("retrieval_cache_hit", False)
+                    )
+        retrieval_debug.setdefault("embedding_cache_hit", embedding_cache_hit)
+        retrieval_debug.setdefault("retrieval_cache_hit", retrieval_cache_hit)
         timer.record_ms(
             "dense_retrieve_ms",
             retrieval_timing_payload.get("dense_retrieve_ms", 0),
@@ -526,6 +634,8 @@ class StandardWorkflow:
             top_score_threshold=self._RERANK_TOP_SCORE_THRESHOLD,
             reranker_supports_cross_encoder=reranker_supports_cross_encoder,
         )
+        reranked: list[RetrievalResult]
+        rerank_cache_hit = False
         if not retrieved:
             reranker_used = "skipped"
             timer.record_ms("rerank_ms", 0)
@@ -544,12 +654,20 @@ class StandardWorkflow:
                 reranker_used = "skipped"
                 selected_reranker = self.reranker
 
-            with timer.measure("rerank_ms"):
-                reranked = await asyncio.to_thread(
-                    selected_reranker.rerank,
-                    normalized_query,
-                    retrieved,
-                    rerank_top_k,
+            rerank_started = time.perf_counter()
+            reranked, rerank_cache_hit = await asyncio.to_thread(
+                self._rerank_with_cache,
+                query=normalized_query,
+                docs=retrieved,
+                reranker=selected_reranker,
+                top_k=rerank_top_k,
+            )
+            if rerank_cache_hit:
+                timer.record_ms("rerank_ms", 0)
+            else:
+                timer.record_ms(
+                    "rerank_ms",
+                    int((time.perf_counter() - rerank_started) * 1000),
                 )
         rerank_policy_payload = rerank_policy.as_trace_payload()
         rerank_policy_payload["reranker_used"] = reranker_used
@@ -577,6 +695,9 @@ class StandardWorkflow:
                 "retrieval_timing_breakdown_available": (
                     retrieval_timing_breakdown_available
                 ),
+                "embedding_cache_hit": embedding_cache_hit,
+                "retrieval_cache_hit": retrieval_cache_hit,
+                "rerank_cache_hit": rerank_cache_hit,
                 "timings_ms": {
                     "normalize_query_ms": timer.get_ms("normalize_query_ms", 0),
                     "retrieval_total_ms": timer.get_ms("retrieval_total_ms", 0),
@@ -659,6 +780,7 @@ class StandardWorkflow:
                     "status": generated.status,
                     "stop_reason": generated.stop_reason,
                     "answer": generated.answer,
+                    "llm_cache_hit": bool(generated.llm_cache_hit),
                     "citation_count": len(generated.citations),
                     "timings_ms": {
                         "llm_generate_ms": timer.get_ms("llm_generate_ms", 0)
@@ -695,6 +817,9 @@ class StandardWorkflow:
             query_budget=query_budget,
             rerank_policy=rerank_policy_payload,
             reranker_used=reranker_used,
+            embedding_cache_hit=embedding_cache_hit,
+            retrieval_cache_hit=retrieval_cache_hit,
+            rerank_cache_hit=rerank_cache_hit,
         )
 
     async def run_async(
@@ -805,6 +930,7 @@ class StandardWorkflow:
         grounding_semantic_used = grounding_eval.grounding_semantic_used
         grounding_cache_hit = grounding_eval.grounding_cache_hit
         llm_fallback_used = bool(pipeline.generated.llm_fallback_used)
+        llm_cache_hit = bool(pipeline.generated.llm_cache_hit)
 
         elapsed_ms = int((time.perf_counter() - start_time) * 1000)
         timings["total_ms"] = elapsed_ms
@@ -872,6 +998,8 @@ class StandardWorkflow:
                 "retrieval_timing_breakdown_available": (
                     pipeline.retrieval_timing_breakdown_available
                 ),
+                "embedding_cache_hit": pipeline.embedding_cache_hit,
+                "retrieval_cache_hit": pipeline.retrieval_cache_hit,
             },
             {
                 "step": "rerank",
@@ -908,6 +1036,7 @@ class StandardWorkflow:
                     for item in pipeline.reranked
                 ],
                 "rerank_ms": timings.get("rerank_ms", 0),
+                "rerank_cache_hit": pipeline.rerank_cache_hit,
             },
             {
                 "step": "context_select",
@@ -947,6 +1076,7 @@ class StandardWorkflow:
                 "grounding_reason": grounding_reason,
                 "hallucination_detected": hallucination_detected,
                 "llm_fallback_used": llm_fallback_used,
+                "llm_cache_hit": llm_cache_hit,
                 "llm_generate_ms": timings.get("llm_generate_ms", 0),
                 "max_tokens": effective_budget.max_tokens,
                 "grounding_policy": grounding_policy,
@@ -972,6 +1102,7 @@ class StandardWorkflow:
                     "hallucination_detected": hallucination_detected,
                     "citation_count": citation_count,
                     "llm_fallback_used": llm_fallback_used,
+                    "llm_cache_hit": llm_cache_hit,
                     "grounding_policy": grounding_policy,
                     "grounding_semantic_used": grounding_semantic_used,
                     "grounding_cache_hit": grounding_cache_hit,
@@ -995,6 +1126,10 @@ class StandardWorkflow:
                 "query_budget": effective_budget.as_trace_payload(),
                 "rerank_policy": pipeline.rerank_policy,
                 "reranker_used": pipeline.reranker_used,
+                "embedding_cache_hit": pipeline.embedding_cache_hit,
+                "retrieval_cache_hit": pipeline.retrieval_cache_hit,
+                "rerank_cache_hit": pipeline.rerank_cache_hit,
+                "llm_cache_hit": llm_cache_hit,
                 "rerank_ms": timings.get("rerank_ms", 0),
                 "context_select_ms": timings.get("context_select_ms", 0),
                 "llm_generate_ms": timings.get("llm_generate_ms", 0),
@@ -1077,6 +1212,7 @@ class StandardWorkflow:
                 system_prompt=build_language_system_prompt(response_language),
                 model=model,
                 max_tokens=self.llm_rewrite_max_tokens,
+                llm_cache=self.caches.llm,
             )
         except Exception:
             return None

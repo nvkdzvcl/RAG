@@ -6,6 +6,7 @@ import asyncio
 from dataclasses import dataclass
 import logging
 import time
+from typing import Any
 
 from app.core.async_utils import run_coro_sync
 from app.core.cache import QueryCache, make_cache_key
@@ -171,6 +172,10 @@ class HybridRetriever:
             "sparse_retrieve_ms": 0,
             "hybrid_merge_ms": 0,
         }
+        self._last_cache_debug: dict[str, bool] = {
+            "embedding_cache_hit": False,
+            "retrieval_cache_hit": False,
+        }
 
     def get_last_timing(self) -> dict[str, int]:
         """Return timing for the most recent retrieval call.
@@ -186,6 +191,44 @@ class HybridRetriever:
         minimum = max(1, int(self.fusion_config.min_candidates_per_retriever))
         return max(top_k, top_k * multiplier, minimum)
 
+    @staticmethod
+    def _clone_results(results: list[RetrievalResult]) -> list[RetrievalResult]:
+        return [item.model_copy(deep=True) for item in results]
+
+    @staticmethod
+    def _normalize_cached_results(raw: Any) -> list[RetrievalResult] | None:
+        if not isinstance(raw, list):
+            return None
+        normalized: list[RetrievalResult] = []
+        for item in raw:
+            if isinstance(item, RetrievalResult):
+                normalized.append(item.model_copy(deep=True))
+                continue
+            if isinstance(item, dict):
+                try:
+                    normalized.append(RetrievalResult.model_validate(item))
+                except Exception:
+                    return None
+                continue
+            return None
+        return normalized
+
+    def _cache_key(self, query: str, *, top_k: int) -> str:
+        dense_revision = int(getattr(self.dense_retriever.vector_index, "revision", 0))
+        return make_cache_key(
+            query,
+            top_k,
+            self.fusion_config.rrf_k,
+            self.fusion_config.dense_weight,
+            self.fusion_config.sparse_weight,
+            self.fusion_config.candidate_multiplier,
+            self.fusion_config.min_candidates_per_retriever,
+            dense_revision,
+        )
+
+    def get_last_cache_debug(self) -> dict[str, bool]:
+        return dict(self._last_cache_debug)
+
     async def retrieve_with_timing_async(
         self, query: str, top_k: int = 5
     ) -> RetrievalBatch:
@@ -197,10 +240,15 @@ class HybridRetriever:
                 "hybrid_merge_ms": 0,
             }
             self._last_timing = timing
+            self._last_cache_debug = {
+                "embedding_cache_hit": False,
+                "retrieval_cache_hit": False,
+            }
             return RetrievalBatch(
                 results=[],
                 timings_ms=timing,
                 timing_breakdown_available=True,
+                cache_debug=self._last_cache_debug,
             )
 
         total_started = time.perf_counter()
@@ -208,9 +256,32 @@ class HybridRetriever:
         # Check retrieval cache.
         cache_key: str | None = None
         if self._retrieval_cache is not None:
-            cache_key = make_cache_key(query, top_k)
+            cache_key = self._cache_key(query, top_k=top_k)
             hit, cached = self._retrieval_cache.get(cache_key)
             if hit:
+                normalized_cached = self._normalize_cached_results(cached)
+                if normalized_cached is None:
+                    self._retrieval_cache.invalidate()
+                else:
+                    self._last_cache_debug = {
+                        "embedding_cache_hit": False,
+                        "retrieval_cache_hit": True,
+                    }
+                    timing = {
+                        "retrieval_total_ms": int(
+                            (time.perf_counter() - total_started) * 1000
+                        ),
+                        "dense_retrieve_ms": 0,
+                        "sparse_retrieve_ms": 0,
+                        "hybrid_merge_ms": 0,
+                    }
+                    self._last_timing = timing
+                    return RetrievalBatch(
+                        results=normalized_cached,
+                        timings_ms=timing,
+                        timing_breakdown_available=True,
+                        cache_debug=self._last_cache_debug,
+                    )
                 timing = {
                     "retrieval_total_ms": int(
                         (time.perf_counter() - total_started) * 1000
@@ -220,11 +291,6 @@ class HybridRetriever:
                     "hybrid_merge_ms": 0,
                 }
                 self._last_timing = timing
-                return RetrievalBatch(
-                    results=cached,
-                    timings_ms=timing,
-                    timing_breakdown_available=True,
-                )
 
         candidate_k = self._resolve_candidate_k(top_k)
         dense_ms = 0
@@ -278,15 +344,26 @@ class HybridRetriever:
             "hybrid_merge_ms": merge_ms,
         }
         self._last_timing = normalize_timing_payload(timing)
+        dense_cache_getter = getattr(self.dense_retriever, "get_last_cache_debug", None)
+        embedding_cache_hit = False
+        if callable(dense_cache_getter):
+            payload = dense_cache_getter()
+            if isinstance(payload, dict):
+                embedding_cache_hit = bool(payload.get("embedding_cache_hit", False))
+        self._last_cache_debug = {
+            "embedding_cache_hit": embedding_cache_hit,
+            "retrieval_cache_hit": False,
+        }
 
         # Store in retrieval cache.
         if self._retrieval_cache is not None and cache_key is not None:
-            self._retrieval_cache.put(cache_key, merged)
+            self._retrieval_cache.put(cache_key, self._clone_results(merged))
 
         return RetrievalBatch(
             results=merged,
             timings_ms=self._last_timing,
             timing_breakdown_available=True,
+            cache_debug=self._last_cache_debug,
         )
 
     async def retrieve_async(self, query: str, top_k: int = 5) -> list[RetrievalResult]:

@@ -7,6 +7,7 @@ from pathlib import Path
 from types import SimpleNamespace
 from typing import Any, cast
 
+from app.core.cache import CacheGroup, QueryCache
 from app.core.config import get_settings
 from app.ingestion.base_loader import build_doc_id
 from app.indexing import BaseEmbeddingProvider
@@ -82,6 +83,43 @@ def test_runtime_index_build_uses_embedding_provider_interface(tmp_path: Path) -
     assert results
     assert (index_dir / "vector_index.json").exists()
     assert (index_dir / "bm25_index.json").exists()
+
+
+def test_runtime_index_manager_runtime_retriever_uses_cache_group(
+    tmp_path: Path,
+) -> None:
+    corpus_dir = tmp_path / "corpus"
+    index_dir = tmp_path / "indexes"
+    corpus_dir.mkdir(parents=True, exist_ok=True)
+    (corpus_dir / "cache-check.txt").write_text(
+        "runtime-cache-check-token-8088 appears in this document.",
+        encoding="utf-8",
+    )
+
+    provider = _CountingEmbeddingProvider(dimension=8)
+    caches = CacheGroup(
+        embedding=QueryCache(maxsize=32, enabled=True),
+        retrieval=QueryCache(maxsize=32, enabled=True),
+        llm=QueryCache(maxsize=0, enabled=False),
+        rerank=QueryCache(maxsize=0, enabled=False),
+    )
+    manager = RuntimeIndexManager(
+        corpus_dir=corpus_dir,
+        index_dir=index_dir,
+        embedding_provider=provider,
+        cache_group=caches,
+    )
+    manager.activate_from_seeded_corpus()
+    retriever = manager.get_retriever()
+
+    first = retriever.retrieve_with_timing("runtime-cache-check-token-8088", top_k=3)
+    second = retriever.retrieve_with_timing("runtime-cache-check-token-8088", top_k=3)
+
+    assert first.results
+    assert second.results
+    assert len(provider.query_inputs) == 1
+    assert first.cache_debug.get("retrieval_cache_hit") is False
+    assert second.cache_debug.get("retrieval_cache_hit") is True
 
 
 def test_runtime_index_manager_uses_configured_provider_factory(

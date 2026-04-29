@@ -7,12 +7,14 @@ import json
 
 import httpx
 
+from app.core.cache import QueryCache
 from app.generation.llm_client import (
     FallbackLLMClient,
     OpenAICompatibleLLMClient,
     StubLLMClient,
     complete_with_model,
     create_llm_client,
+    did_use_cache,
 )
 
 
@@ -256,3 +258,60 @@ def test_stub_responder_supports_legacy_system_param_name() -> None:
     )
 
     assert result == "hello|world"
+
+
+def test_complete_with_model_uses_llm_cache_on_repeated_prompt() -> None:
+    class _CountingClient:
+        def __init__(self) -> None:
+            self.calls = 0
+
+        def complete(
+            self,
+            prompt: str,
+            system_prompt: str | None = None,
+            model: str | None = None,
+            max_tokens: int | None = None,
+            temperature: float | None = None,
+            response_format: dict[str, str] | None = None,
+        ) -> str:
+            _ = prompt
+            _ = system_prompt
+            _ = model
+            _ = max_tokens
+            _ = temperature
+            _ = response_format
+            self.calls += 1
+            return "cached-output"
+
+    client = _CountingClient()
+    cache = QueryCache(maxsize=4, enabled=True)
+
+    first = asyncio.run(
+        complete_with_model(
+            client,
+            "hello",
+            system_prompt="system",
+            model="qwen2.5:3b",
+            max_tokens=128,
+            temperature=0.2,
+            response_format={"type": "json_object"},
+            llm_cache=cache,
+        )
+    )
+    second = asyncio.run(
+        complete_with_model(
+            client,
+            "hello",
+            system_prompt="system",
+            model="qwen2.5:3b",
+            max_tokens=128,
+            temperature=0.2,
+            response_format={"type": "json_object"},
+            llm_cache=cache,
+        )
+    )
+
+    assert first == "cached-output"
+    assert second == "cached-output"
+    assert client.calls == 1
+    assert did_use_cache(client) is True

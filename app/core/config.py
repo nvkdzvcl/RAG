@@ -106,9 +106,14 @@ class Settings(BaseSettings):
     memory_window: int = Field(default=3, alias="MEMORY_WINDOW")
 
     cache_enabled: bool = Field(default=True, alias="CACHE_ENABLED")
+    embedding_cache_enabled: bool = Field(default=True, alias="EMBEDDING_CACHE_ENABLED")
+    retrieval_cache_enabled: bool = Field(default=True, alias="RETRIEVAL_CACHE_ENABLED")
+    llm_cache_enabled: bool = Field(default=True, alias="LLM_CACHE_ENABLED")
+    rerank_cache_enabled: bool = Field(default=True, alias="RERANK_CACHE_ENABLED")
     cache_embedding_maxsize: int = Field(default=256, alias="CACHE_EMBEDDING_MAXSIZE")
     cache_retrieval_maxsize: int = Field(default=128, alias="CACHE_RETRIEVAL_MAXSIZE")
     cache_llm_maxsize: int = Field(default=64, alias="CACHE_LLM_MAXSIZE")
+    cache_rerank_maxsize: int = Field(default=128, alias="CACHE_RERANK_MAXSIZE")
 
     @model_validator(mode="after")
     def _sync_reranker_top_k_legacy_alias(self) -> "Settings":

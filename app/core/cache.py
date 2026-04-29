@@ -119,7 +119,7 @@ def make_cache_key(*parts: str | int | float | None) -> str:
 
 @dataclass
 class CacheGroup:
-    """Bundle of caches for the three pipeline stages."""
+    """Bundle of caches for pipeline stages."""
 
     embedding: QueryCache = field(
         default_factory=lambda: QueryCache(maxsize=0, enabled=False)
@@ -130,35 +130,48 @@ class CacheGroup:
     llm: QueryCache = field(
         default_factory=lambda: QueryCache(maxsize=0, enabled=False)
     )
+    rerank: QueryCache = field(
+        default_factory=lambda: QueryCache(maxsize=0, enabled=False)
+    )
 
     def invalidate_all(self) -> None:
         """Clear every cache (e.g. on index rebuild)."""
         self.embedding.invalidate()
         self.retrieval.invalidate()
         self.llm.invalidate()
+        self.rerank.invalidate()
 
     def stats_dict(self) -> dict[str, Any]:
         return {
             "embedding": self.embedding.stats().__dict__,
             "retrieval": self.retrieval.stats().__dict__,
             "llm": self.llm.stats().__dict__,
+            "rerank": self.rerank.stats().__dict__,
         }
 
 
 def create_cache_group_from_settings(settings: Any) -> CacheGroup:
     """Build caches using application settings with safe defaults."""
-    enabled = bool(getattr(settings, "cache_enabled", False))
+    cache_enabled = bool(getattr(settings, "cache_enabled", False))
+
+    def _enabled(name: str, default: bool = True) -> bool:
+        return cache_enabled and bool(getattr(settings, name, default))
+
     return CacheGroup(
         embedding=QueryCache(
             maxsize=int(getattr(settings, "cache_embedding_maxsize", 256)),
-            enabled=enabled,
+            enabled=_enabled("embedding_cache_enabled"),
         ),
         retrieval=QueryCache(
             maxsize=int(getattr(settings, "cache_retrieval_maxsize", 128)),
-            enabled=enabled,
+            enabled=_enabled("retrieval_cache_enabled"),
         ),
         llm=QueryCache(
             maxsize=int(getattr(settings, "cache_llm_maxsize", 64)),
-            enabled=enabled,
+            enabled=_enabled("llm_cache_enabled"),
+        ),
+        rerank=QueryCache(
+            maxsize=int(getattr(settings, "cache_rerank_maxsize", 128)),
+            enabled=_enabled("rerank_cache_enabled"),
         ),
     )

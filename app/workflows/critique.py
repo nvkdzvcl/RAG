@@ -7,6 +7,7 @@ import re
 from pathlib import Path
 
 from app.core.async_utils import run_coro_sync
+from app.core.cache import QueryCache
 from app.core.config import get_settings
 from app.core.json_utils import parse_json_object
 from app.core.prompting import PromptRepository
@@ -56,9 +57,11 @@ class HeuristicCritic:
         prompt_repository: PromptRepository | None = None,
         prompt_dir: str | Path | None = None,
         use_llm: bool = True,
+        llm_cache: QueryCache | None = None,
     ) -> None:
         settings = get_settings()
         self.llm_client = llm_client
+        self.llm_cache = llm_cache
         self.use_llm = use_llm
         self.memory_window = max(0, int(getattr(settings, "memory_window", 3)))
         self.max_tokens = max(1, int(getattr(settings, "llm_critique_max_tokens", 384)))
@@ -262,6 +265,7 @@ class HeuristicCritic:
                 system_prompt=build_language_system_prompt(response_language),
                 model=model,
                 max_tokens=self.max_tokens,
+                llm_cache=self.llm_cache,
             )
         except Exception:
             return None

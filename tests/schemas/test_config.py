@@ -67,6 +67,15 @@ def test_settings_defaults(monkeypatch) -> None:
         "GROUNDING_SEMANTIC_ADVANCED_ENABLED",
         "MAX_ADVANCED_LOOPS",
         "MEMORY_WINDOW",
+        "CACHE_ENABLED",
+        "EMBEDDING_CACHE_ENABLED",
+        "RETRIEVAL_CACHE_ENABLED",
+        "LLM_CACHE_ENABLED",
+        "RERANK_CACHE_ENABLED",
+        "CACHE_EMBEDDING_MAXSIZE",
+        "CACHE_RETRIEVAL_MAXSIZE",
+        "CACHE_LLM_MAXSIZE",
+        "CACHE_RERANK_MAXSIZE",
         "GROUNDING_SEMANTIC_ENABLED",
         "GROUNDING_SEMANTIC_MODEL",
         "GROUNDING_SEMANTIC_DEVICE",
@@ -127,6 +136,15 @@ def test_settings_defaults(monkeypatch) -> None:
     assert settings.grounding_policy == "adaptive"
     assert settings.grounding_semantic_standard_enabled is False
     assert settings.grounding_semantic_advanced_enabled is True
+    assert settings.cache_enabled is True
+    assert settings.embedding_cache_enabled is True
+    assert settings.retrieval_cache_enabled is True
+    assert settings.llm_cache_enabled is True
+    assert settings.rerank_cache_enabled is True
+    assert settings.cache_embedding_maxsize == 256
+    assert settings.cache_retrieval_maxsize == 128
+    assert settings.cache_llm_maxsize == 64
+    assert settings.cache_rerank_maxsize == 128
     assert settings.memory_window == 3
 
 

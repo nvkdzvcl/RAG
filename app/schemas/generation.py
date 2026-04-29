@@ -30,3 +30,4 @@ class GeneratedAnswer(BaseModel):
     stop_reason: str | None = None
     raw_output: str | None = None
     llm_fallback_used: bool = False
+    llm_cache_hit: bool = False

@@ -8,6 +8,7 @@ from typing import Literal
 import numpy as np
 import pytest
 
+from app.core.cache import QueryCache
 from app.indexing import HashEmbeddingProvider, IndexBuilder
 from app.indexing.vector_index import InMemoryVectorIndex
 from app.ingestion.chunker import Chunker
@@ -329,6 +330,64 @@ def test_hybrid_retriever_runs_dense_and_sparse_concurrently() -> None:
     assert len(dense.calls) == 1
     assert len(sparse.calls) == 1
     assert [item.chunk_id for item in results] == ["dense", "sparse"]
+
+
+def test_hybrid_retrieval_cache_hits_on_repeated_query() -> None:
+    class _FakeDenseRetriever:
+        def __init__(self) -> None:
+            self.calls = 0
+
+        def retrieve(self, query: str, top_k: int = 5) -> list[RetrievalResult]:
+            _ = query
+            self.calls += 1
+            return [
+                _retrieval_result(
+                    f"dense_{idx}", score=0.9 - (idx * 0.05), score_type="dense"
+                )
+                for idx in range(top_k)
+            ]
+
+        def get_last_cache_debug(self) -> dict[str, bool]:
+            return {"embedding_cache_hit": False}
+
+        class _IndexLike:
+            revision = 1
+
+        vector_index = _IndexLike()
+
+    class _FakeSparseRetriever:
+        def __init__(self) -> None:
+            self.calls = 0
+
+        def retrieve(self, query: str, top_k: int = 5) -> list[RetrievalResult]:
+            _ = query
+            self.calls += 1
+            return [
+                _retrieval_result(
+                    f"sparse_{idx}",
+                    score=8.0 - idx,
+                    score_type="sparse",
+                )
+                for idx in range(top_k)
+            ]
+
+    dense = _FakeDenseRetriever()
+    sparse = _FakeSparseRetriever()
+    cache = QueryCache(maxsize=8, enabled=True)
+    hybrid = HybridRetriever(
+        dense_retriever=dense,  # type: ignore[arg-type]
+        sparse_retriever=sparse,  # type: ignore[arg-type]
+        retrieval_cache=cache,
+    )
+
+    first = hybrid.retrieve_with_timing("cache me", top_k=3)
+    second = hybrid.retrieve_with_timing("cache me", top_k=3)
+
+    assert dense.calls == 1
+    assert sparse.calls == 1
+    assert len(first.results) == len(second.results)
+    assert first.cache_debug.get("retrieval_cache_hit") is False
+    assert second.cache_debug.get("retrieval_cache_hit") is True
 
 
 def test_score_only_reranker_output_shape() -> None:

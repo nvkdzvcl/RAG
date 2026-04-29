@@ -8,11 +8,17 @@ from collections.abc import Awaitable, Callable
 from pathlib import Path
 
 from app.core.async_utils import run_coro_sync
+from app.core.cache import QueryCache
 from app.core.config import get_settings
 from app.core.prompting import PromptRepository
 from app.generation.citations import CitationBuilder
 from app.generation.interfaces import Generator
-from app.generation.llm_client import LLMClient, complete_with_model, did_use_fallback
+from app.generation.llm_client import (
+    LLMClient,
+    complete_with_model,
+    did_use_cache,
+    did_use_fallback,
+)
 from app.generation.parser import StructuredOutputParser
 from app.schemas.common import Mode
 from app.schemas.generation import GeneratedAnswer
@@ -126,8 +132,10 @@ class BaselineGenerator(Generator):
         citation_builder: CitationBuilder | None = None,
         prompt_repository: PromptRepository | None = None,
         prompt_dir: str | Path | None = None,
+        llm_cache: QueryCache | None = None,
     ) -> None:
         self.llm_client = llm_client
+        self.llm_cache = llm_cache
         self.parser = parser or StructuredOutputParser()
         self.citation_builder = citation_builder or CitationBuilder()
         settings = get_settings()
@@ -249,6 +257,7 @@ class BaselineGenerator(Generator):
         response_language: str,
         raw_output: str | None = None,
         llm_fallback_used: bool = False,
+        llm_cache_hit: bool = False,
     ) -> GeneratedAnswer:
         return GeneratedAnswer(
             answer=localized_insufficient_evidence(response_language),
@@ -258,6 +267,7 @@ class BaselineGenerator(Generator):
             stop_reason=reason,
             raw_output=raw_output,
             llm_fallback_used=llm_fallback_used,
+            llm_cache_hit=llm_cache_hit,
         )
 
     async def generate_answer_async(
@@ -287,6 +297,7 @@ class BaselineGenerator(Generator):
             return exact_title_answer
 
         llm_fallback_used = False
+        llm_cache_hit = False
         prompt = self._build_prompt(
             query,
             non_empty_context,
@@ -301,15 +312,18 @@ class BaselineGenerator(Generator):
                 system_prompt=build_language_system_prompt(response_language),
                 model=model,
                 max_tokens=max_tokens,
+                llm_cache=self.llm_cache,
                 on_delta=on_llm_delta,
             )
             llm_fallback_used = did_use_fallback(self.llm_client)
+            llm_cache_hit = did_use_cache(self.llm_client)
         except Exception as exc:
             logger.warning("LLM completion failed in BaselineGenerator.", exc_info=exc)
             return self._insufficient(
                 "llm_error",
                 response_language=response_language,
                 llm_fallback_used=did_use_fallback(self.llm_client),
+                llm_cache_hit=did_use_cache(self.llm_client),
             )
         parsed = self.parser.parse(raw_output)
 
@@ -319,6 +333,7 @@ class BaselineGenerator(Generator):
                 response_language=response_language,
                 raw_output=raw_output,
                 llm_fallback_used=llm_fallback_used,
+                llm_cache_hit=llm_cache_hit,
             )
 
         citations = self.citation_builder.build(non_empty_context)
@@ -330,6 +345,7 @@ class BaselineGenerator(Generator):
             stop_reason="generated",
             raw_output=raw_output,
             llm_fallback_used=llm_fallback_used,
+            llm_cache_hit=llm_cache_hit,
         )
 
     def generate_answer(

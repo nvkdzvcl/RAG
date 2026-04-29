@@ -90,23 +90,28 @@ class AdvancedWorkflow:
 
         self.standard_workflow = standard_workflow or StandardWorkflow()
         llm_client = self.standard_workflow.generator.llm_client
+        llm_cache = self.standard_workflow.caches.llm
         self.llm_client = llm_client
 
         self.retrieval_gate = retrieval_gate or HeuristicRetrievalGate(
             llm_client=llm_client,
             prompt_repository=self.standard_workflow.generator.prompt_repository,
+            llm_cache=llm_cache,
         )
         self.query_rewriter = query_rewriter or QueryRewriter(
             llm_client=llm_client,
             prompt_repository=self.standard_workflow.generator.prompt_repository,
+            llm_cache=llm_cache,
         )
         self.critic = critic or HeuristicCritic(
             llm_client=llm_client,
             prompt_repository=self.standard_workflow.generator.prompt_repository,
+            llm_cache=llm_cache,
         )
         self.refiner = refiner or AnswerRefiner(
             llm_client=llm_client,
             prompt_repository=self.standard_workflow.generator.prompt_repository,
+            llm_cache=llm_cache,
         )
         self.citation_builder = CitationBuilder()
 

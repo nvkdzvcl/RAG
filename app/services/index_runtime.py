@@ -13,6 +13,7 @@ from pathlib import Path
 from threading import RLock
 from typing import Any
 
+from app.core.cache import CacheGroup, create_cache_group_from_settings
 from app.core.config import get_settings
 from app.core.timing import has_timing_breakdown, normalize_timing_payload
 from app.indexing import (
@@ -295,6 +296,8 @@ class _ResultFilteringRetriever:
             "applied_filters": self._query_filters.as_debug_payload(),
             "candidate_count_before_filter": 0,
             "candidate_count_after_filter": 0,
+            "embedding_cache_hit": False,
+            "retrieval_cache_hit": False,
         }
         self._last_timing_debug: dict[str, int] = {
             "retrieval_total_ms": 0,
@@ -327,11 +330,16 @@ class _ResultFilteringRetriever:
     def retrieve_with_timing(self, query: str, top_k: int = 5) -> RetrievalBatch:
         started = time.perf_counter()
         applied_filters = self._query_filters.as_debug_payload()
+        cache_debug: dict[str, bool] = {
+            "embedding_cache_hit": False,
+            "retrieval_cache_hit": False,
+        }
         if top_k <= 0:
             self._last_filter_debug = {
                 "applied_filters": applied_filters,
                 "candidate_count_before_filter": 0,
                 "candidate_count_after_filter": 0,
+                **cache_debug,
             }
             self._last_timing_debug = {
                 "retrieval_total_ms": 0,
@@ -358,6 +366,7 @@ class _ResultFilteringRetriever:
                 "candidate_count_before_filter": 0,
                 "candidate_count_after_filter": 0,
                 "filtered_source": self._active_source,
+                **cache_debug,
             }
             self._last_timing_debug = {
                 "retrieval_total_ms": 0,
@@ -386,6 +395,16 @@ class _ResultFilteringRetriever:
             results = list(batch.results)
             base_timing = dict(batch.timings_ms)
             timing_breakdown_available = bool(batch.timing_breakdown_available)
+            raw_cache_debug = getattr(batch, "cache_debug", {})
+            if isinstance(raw_cache_debug, dict):
+                cache_debug = {
+                    "embedding_cache_hit": bool(
+                        raw_cache_debug.get("embedding_cache_hit", False)
+                    ),
+                    "retrieval_cache_hit": bool(
+                        raw_cache_debug.get("retrieval_cache_hit", False)
+                    ),
+                }
         else:
             results = self._retriever.retrieve(query, top_k=candidate_k)
             timing_getter = getattr(self._retriever, "get_last_timing", None)
@@ -394,6 +413,17 @@ class _ResultFilteringRetriever:
             )
             base_timing = normalize_timing_payload(raw_base_timing)
             timing_breakdown_available = has_timing_breakdown(raw_base_timing)
+            cache_getter = getattr(self._retriever, "get_last_cache_debug", None)
+            raw_cache_debug = cache_getter() if callable(cache_getter) else {}
+            if isinstance(raw_cache_debug, dict):
+                cache_debug = {
+                    "embedding_cache_hit": bool(
+                        raw_cache_debug.get("embedding_cache_hit", False)
+                    ),
+                    "retrieval_cache_hit": bool(
+                        raw_cache_debug.get("retrieval_cache_hit", False)
+                    ),
+                }
         filter_started = time.perf_counter()
         filtered = list(results)
         if self._allowed_doc_ids:
@@ -408,6 +438,7 @@ class _ResultFilteringRetriever:
             "applied_filters": applied_filters,
             "candidate_count_before_filter": len(results),
             "candidate_count_after_filter": len(filtered),
+            **cache_debug,
         }
         filter_ms = int((time.perf_counter() - filter_started) * 1000)
         wrapper_ms = int((time.perf_counter() - started) * 1000)
@@ -423,6 +454,7 @@ class _ResultFilteringRetriever:
             timings_ms=dict(self._last_timing_debug),
             timing_breakdown_available=timing_breakdown_available,
             filter_debug=dict(self._last_filter_debug),
+            cache_debug=dict(cache_debug),
         )
 
     def retrieve(self, query: str, top_k: int = 5) -> list[RetrievalResult]:
@@ -433,11 +465,16 @@ class _ResultFilteringRetriever:
     ) -> RetrievalBatch:
         started = time.perf_counter()
         applied_filters = self._query_filters.as_debug_payload()
+        cache_debug: dict[str, bool] = {
+            "embedding_cache_hit": False,
+            "retrieval_cache_hit": False,
+        }
         if top_k <= 0:
             self._last_filter_debug = {
                 "applied_filters": applied_filters,
                 "candidate_count_before_filter": 0,
                 "candidate_count_after_filter": 0,
+                **cache_debug,
             }
             self._last_timing_debug = {
                 "retrieval_total_ms": 0,
@@ -463,6 +500,7 @@ class _ResultFilteringRetriever:
                 "candidate_count_before_filter": 0,
                 "candidate_count_after_filter": 0,
                 "filtered_source": self._active_source,
+                **cache_debug,
             }
             self._last_timing_debug = {
                 "retrieval_total_ms": 0,
@@ -494,11 +532,31 @@ class _ResultFilteringRetriever:
             results = list(batch.results)
             base_timing = dict(batch.timings_ms)
             timing_breakdown_available = bool(batch.timing_breakdown_available)
+            raw_cache_debug = getattr(batch, "cache_debug", {})
+            if isinstance(raw_cache_debug, dict):
+                cache_debug = {
+                    "embedding_cache_hit": bool(
+                        raw_cache_debug.get("embedding_cache_hit", False)
+                    ),
+                    "retrieval_cache_hit": bool(
+                        raw_cache_debug.get("retrieval_cache_hit", False)
+                    ),
+                }
         elif callable(timed_retrieve):
             batch = await asyncio.to_thread(timed_retrieve, query, candidate_k)
             results = list(batch.results)
             base_timing = dict(batch.timings_ms)
             timing_breakdown_available = bool(batch.timing_breakdown_available)
+            raw_cache_debug = getattr(batch, "cache_debug", {})
+            if isinstance(raw_cache_debug, dict):
+                cache_debug = {
+                    "embedding_cache_hit": bool(
+                        raw_cache_debug.get("embedding_cache_hit", False)
+                    ),
+                    "retrieval_cache_hit": bool(
+                        raw_cache_debug.get("retrieval_cache_hit", False)
+                    ),
+                }
         else:
             retrieve_async = getattr(self._retriever, "retrieve_async", None)
             if callable(retrieve_async):
@@ -515,6 +573,17 @@ class _ResultFilteringRetriever:
             )
             base_timing = normalize_timing_payload(raw_base_timing)
             timing_breakdown_available = has_timing_breakdown(raw_base_timing)
+            cache_getter = getattr(self._retriever, "get_last_cache_debug", None)
+            raw_cache_debug = cache_getter() if callable(cache_getter) else {}
+            if isinstance(raw_cache_debug, dict):
+                cache_debug = {
+                    "embedding_cache_hit": bool(
+                        raw_cache_debug.get("embedding_cache_hit", False)
+                    ),
+                    "retrieval_cache_hit": bool(
+                        raw_cache_debug.get("retrieval_cache_hit", False)
+                    ),
+                }
 
         filter_started = time.perf_counter()
         filtered = list(results)
@@ -529,6 +598,7 @@ class _ResultFilteringRetriever:
             "applied_filters": applied_filters,
             "candidate_count_before_filter": len(results),
             "candidate_count_after_filter": len(filtered),
+            **cache_debug,
         }
         filter_ms = int((time.perf_counter() - filter_started) * 1000)
         wrapper_ms = int((time.perf_counter() - started) * 1000)
@@ -544,6 +614,7 @@ class _ResultFilteringRetriever:
             timings_ms=dict(self._last_timing_debug),
             timing_breakdown_available=timing_breakdown_available,
             filter_debug=dict(self._last_filter_debug),
+            cache_debug=dict(cache_debug),
         )
 
     async def retrieve_async(self, query: str, top_k: int = 5) -> list[RetrievalResult]:
@@ -573,6 +644,7 @@ class RuntimeIndexManager:
         embedding_batch_size: int | None = None,
         embedding_normalize: bool | None = None,
         embedding_dimension: int | None = None,
+        cache_group: CacheGroup | None = None,
     ) -> None:
         settings = get_settings()
         resolved_provider_name = (
@@ -619,6 +691,7 @@ class RuntimeIndexManager:
         self.index_store = LocalIndexStore(self.index_dir)
         self.cleaner = TextCleaner()
         self.chunker = Chunker(chunk_size=chunk_size, chunk_overlap=chunk_overlap)
+        self.caches = cache_group or create_cache_group_from_settings(settings)
         self.loaders: list[BaseLoader] = [
             MarkdownLoader(),
             TextLoader(),
@@ -644,6 +717,9 @@ class RuntimeIndexManager:
                 "embedding_dimension": self.embedding_provider.dimension,
             },
         )
+
+    def _invalidate_retrieval_cache(self) -> None:
+        self.caches.retrieval.invalidate()
 
     def _resolve_loader(self, path: Path) -> BaseLoader | None:
         for loader in self.loaders:
@@ -903,9 +979,18 @@ class RuntimeIndexManager:
             or bool(chunk.metadata.get("ocr"))
         )
         chunk_count = len(vector_index.chunks)
-        dense = DenseRetriever(vector_index, self.embedding_provider)
+        self._invalidate_retrieval_cache()
+        dense = DenseRetriever(
+            vector_index,
+            self.embedding_provider,
+            embedding_cache=self.caches.embedding,
+        )
         sparse = SparseRetriever(bm25_index)
-        hybrid = HybridRetriever(dense, sparse)
+        hybrid = HybridRetriever(
+            dense,
+            sparse,
+            retrieval_cache=self.caches.retrieval,
+        )
 
         with self._lock:
             self._retriever = hybrid
@@ -938,6 +1023,7 @@ class RuntimeIndexManager:
             resolved_uploaded_ids = {chunk.doc_id for chunk in chunks}
 
         if not chunks:
+            self._invalidate_retrieval_cache()
             with self._lock:
                 self._retriever = EmptyRetriever()
                 self._active_source = source
@@ -959,9 +1045,18 @@ class RuntimeIndexManager:
             or bool(chunk.metadata.get("ocr"))
         )
         built = IndexBuilder(embedding_provider=self.embedding_provider).build(chunks)
-        dense = DenseRetriever(built.vector_index, self.embedding_provider)
+        self._invalidate_retrieval_cache()
+        dense = DenseRetriever(
+            built.vector_index,
+            self.embedding_provider,
+            embedding_cache=self.caches.embedding,
+        )
         sparse = SparseRetriever(built.bm25_index)
-        hybrid = HybridRetriever(dense, sparse)
+        hybrid = HybridRetriever(
+            dense,
+            sparse,
+            retrieval_cache=self.caches.retrieval,
+        )
 
         self.index_store.save_vector_index(built.vector_index)
         self.index_store.save_bm25_index(built.bm25_index)
@@ -1140,6 +1235,7 @@ class RuntimeIndexManager:
                     "source": "none",
                 }
             self._active_uploaded_doc_ids = set()
+        self._invalidate_retrieval_cache()
         return self._remove_uploaded_persisted_artifacts(
             include_legacy_generic=(previous_source != "seeded"),
         )

@@ -11,6 +11,7 @@ from typing import Any, Protocol
 import httpx
 
 from app.core.async_utils import await_if_needed
+from app.core.cache import QueryCache, make_cache_key
 
 logger = logging.getLogger(__name__)
 
@@ -157,6 +158,85 @@ def _supported_complete_kwargs(
     return selected
 
 
+def _mark_llm_cache_hit(llm_client: LLMClient, *, hit: bool) -> None:
+    try:
+        setattr(llm_client, "last_call_cache_hit", bool(hit))
+    except Exception:
+        # Best-effort diagnostic only.
+        return
+
+
+def _llm_provider_signature(llm_client: LLMClient) -> str:
+    parts = [
+        llm_client.__class__.__name__,
+        str(getattr(llm_client, "model", "") or ""),
+        str(getattr(llm_client, "api_base", "") or ""),
+        str(getattr(llm_client, "provider_name", "") or ""),
+    ]
+    return "|".join(parts)
+
+
+def _to_cacheable_value(value: Any) -> Any:
+    if value is None or isinstance(value, (str, int, float, bool)):
+        return value
+    if isinstance(value, dict):
+        normalized: dict[str, Any] = {}
+        for key in sorted(value.keys(), key=lambda item: str(item)):
+            normalized[str(key)] = _to_cacheable_value(value[key])
+        return normalized
+    if isinstance(value, (list, tuple)):
+        return [_to_cacheable_value(item) for item in value]
+    if hasattr(value, "model_dump") and callable(getattr(value, "model_dump")):
+        return _to_cacheable_value(value.model_dump(mode="json"))
+    raise TypeError(f"unsupported cache key type: {type(value)!r}")
+
+
+def _build_llm_cache_key(
+    llm_client: LLMClient,
+    payload: dict[str, Any],
+) -> str | None:
+    cache_payload: dict[str, Any] = {
+        "provider": _llm_provider_signature(llm_client),
+        "model": payload.get("model"),
+        "prompt": payload.get("prompt"),
+        "system_prompt": payload.get("system_prompt"),
+        "messages": payload.get("messages"),
+        "temperature": payload.get(
+            "temperature", getattr(llm_client, "temperature", None)
+        ),
+        "max_tokens": payload.get(
+            "max_tokens", getattr(llm_client, "max_tokens", None)
+        ),
+        "response_format": payload.get("response_format"),
+    }
+    # Include any remaining deterministic options (e.g. top_p, seed, tool choices, etc.)
+    excluded = {
+        "model",
+        "prompt",
+        "system_prompt",
+        "messages",
+        "temperature",
+        "max_tokens",
+        "response_format",
+        "on_delta",
+    }
+    extras = {key: value for key, value in payload.items() if key not in excluded}
+    if extras:
+        cache_payload["extras"] = extras
+
+    try:
+        normalized = _to_cacheable_value(cache_payload)
+    except TypeError:
+        return None
+    serialized = json.dumps(
+        normalized,
+        ensure_ascii=True,
+        sort_keys=True,
+        separators=(",", ":"),
+    )
+    return make_cache_key(serialized)
+
+
 async def complete_with_model(
     llm_client: LLMClient,
     prompt: str,
@@ -164,6 +244,7 @@ async def complete_with_model(
     system_prompt: str | None = None,
     model: str | None = None,
     max_tokens: int | None = None,
+    llm_cache: QueryCache | None = None,
     **kwargs: Any,
 ) -> str:
     """Invoke completion while safely supporting optional per-call model override."""
@@ -175,11 +256,28 @@ async def complete_with_model(
     )
     if kwargs:
         payload.update(kwargs)
+    cache_key: str | None = None
+    if llm_cache is not None:
+        cache_key = _build_llm_cache_key(llm_client, payload)
+        if cache_key is not None:
+            hit, cached = llm_cache.get(cache_key)
+            if hit and isinstance(cached, str):
+                _mark_llm_cache_hit(llm_client, hit=True)
+                return cached
+
     selected = _supported_complete_kwargs(llm_client, payload)
-    output: str | Awaitable[str] = llm_client.complete(**selected)
-    output = await await_if_needed(output)
-    if not isinstance(output, str):
-        raise TypeError("LLM completion output must be a string.")
+    try:
+        output: str | Awaitable[str] = llm_client.complete(**selected)
+        output = await await_if_needed(output)
+        if not isinstance(output, str):
+            raise TypeError("LLM completion output must be a string.")
+    except Exception:
+        _mark_llm_cache_hit(llm_client, hit=False)
+        raise
+
+    _mark_llm_cache_hit(llm_client, hit=False)
+    if llm_cache is not None and cache_key is not None:
+        llm_cache.put(cache_key, output)
     return output
 
 
@@ -445,6 +543,12 @@ class FallbackLLMClient:
 def did_use_fallback(llm_client: LLMClient) -> bool:
     """Best-effort flag indicating whether the latest call used fallback."""
     value = getattr(llm_client, "last_call_used_fallback", False)
+    return bool(value)
+
+
+def did_use_cache(llm_client: LLMClient) -> bool:
+    """Best-effort flag indicating whether the latest call hit LLM cache."""
+    value = getattr(llm_client, "last_call_cache_hit", False)
     return bool(value)
 
 

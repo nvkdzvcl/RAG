@@ -74,3 +74,4 @@ class RetrievalBatch:
     timings_ms: dict[str, int] = dataclass_field(default_factory=dict)
     timing_breakdown_available: bool = False
     filter_debug: dict[str, Any] = dataclass_field(default_factory=dict)
+    cache_debug: dict[str, Any] = dataclass_field(default_factory=dict)

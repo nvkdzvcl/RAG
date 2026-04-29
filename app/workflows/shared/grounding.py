@@ -104,6 +104,7 @@ _GROUNDING_STANDARD_LOW_LEXICAL_SCORE = max(
     min(1.0, _env_float("GROUNDING_STANDARD_LOW_LEXICAL_SCORE", 0.04)),
 )
 _GROUNDING_POLICY_VERSION = "adaptive-v1"
+_GROUNDING_CACHE_ENABLED = _env_bool("GROUNDING_CACHE_ENABLED", True)
 _GROUNDING_CACHE_MAX_SIZE = _env_int("GROUNDING_CACHE_MAX_SIZE", 512, minimum=1)
 
 
@@ -490,11 +491,15 @@ def _grounding_cache_key(
 
 
 def _cache_get(cache_key: str) -> _CachedGroundingResult | None:
+    if not _GROUNDING_CACHE_ENABLED:
+        return None
     with _GROUNDING_CACHE_LOCK:
         return _GROUNDING_RESULT_CACHE.get(cache_key)
 
 
 def _cache_set(cache_key: str, value: _CachedGroundingResult) -> None:
+    if not _GROUNDING_CACHE_ENABLED:
+        return
     with _GROUNDING_CACHE_LOCK:
         _GROUNDING_RESULT_CACHE[cache_key] = value
         while len(_GROUNDING_RESULT_CACHE) > _GROUNDING_CACHE_MAX_SIZE:

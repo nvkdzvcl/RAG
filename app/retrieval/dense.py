@@ -64,6 +64,7 @@ class DenseRetriever:
         self.vector_index = vector_index
         self.embedding_provider = embedding_provider
         self._embedding_cache = embedding_cache
+        self._last_embedding_cache_hit = False
         self._cached_size = -1
         self._cached_dimension = -1
         self._cached_revision = -1
@@ -98,7 +99,11 @@ class DenseRetriever:
         if self._embedding_cache is not None:
             hit, cached = self._embedding_cache.get(query)
             if hit:
+                self._last_embedding_cache_hit = True
                 return np.asarray(cached, dtype=np.float64)
+            self._last_embedding_cache_hit = False
+        else:
+            self._last_embedding_cache_hit = False
 
         raw = self.embedding_provider.embed_query(query)
         vector = np.asarray(raw, dtype=np.float64)
@@ -106,6 +111,11 @@ class DenseRetriever:
         if self._embedding_cache is not None:
             self._embedding_cache.put(query, vector.tolist())
         return vector
+
+    def get_last_cache_debug(self) -> dict[str, bool]:
+        return {
+            "embedding_cache_hit": bool(self._last_embedding_cache_hit),
+        }
 
     def retrieve(self, query: str, top_k: int = 5) -> list[RetrievalResult]:
         if top_k <= 0:

@@ -139,6 +139,10 @@ class AdvancedPipelineContext:
     grounding_cache_hit: bool = False
     grounding_ms: int = 0
     llm_fallback_used: bool = False
+    embedding_cache_hit: bool = False
+    retrieval_cache_hit: bool = False
+    rerank_cache_hit: bool = False
+    llm_cache_hit: bool = False
 
     terminal_response: AdvancedQueryResponse | None = None
 
@@ -149,6 +153,11 @@ class AdvancedPipelineContext:
         summary: dict[str, Any] = {"step": "timing_summary"}
         for key in ADVANCED_TIMING_KEYS:
             summary[key] = int(self.timings.get(key, 0))
+        summary["embedding_cache_hit"] = bool(self.embedding_cache_hit)
+        summary["retrieval_cache_hit"] = bool(self.retrieval_cache_hit)
+        summary["rerank_cache_hit"] = bool(self.rerank_cache_hit)
+        summary["llm_cache_hit"] = bool(self.llm_cache_hit)
+        summary["grounding_cache_hit"] = bool(self.grounding_cache_hit)
         return summary
 
 
@@ -428,6 +437,10 @@ class CritiqueLoopStage(BasePipelineStage):
                     "retrieval_timing_breakdown_available": (
                         pipeline.retrieval_timing_breakdown_available
                     ),
+                    "embedding_cache_hit": pipeline.embedding_cache_hit,
+                    "retrieval_cache_hit": pipeline.retrieval_cache_hit,
+                    "rerank_cache_hit": pipeline.rerank_cache_hit,
+                    "llm_cache_hit": bool(pipeline.generated.llm_cache_hit),
                     "pipeline_step_timings_ms": dict(pipeline.timings),
                 }
             )
@@ -454,6 +467,11 @@ class CritiqueLoopStage(BasePipelineStage):
         context.current_query = current_query
         context.pipeline = pipeline
         context.critique_result = critique_result
+        if pipeline is not None:
+            context.embedding_cache_hit = pipeline.embedding_cache_hit
+            context.retrieval_cache_hit = pipeline.retrieval_cache_hit
+            context.rerank_cache_hit = pipeline.rerank_cache_hit
+            context.llm_cache_hit = bool(pipeline.generated.llm_cache_hit)
 
         if pipeline is None or critique_result is None:
             context.terminal_response = workflow._build_response(
@@ -809,6 +827,7 @@ class HallucinationGuardStage(BasePipelineStage):
                 context.stop_reason = "very_low_grounding"
 
         llm_fallback_used = bool(pipeline.generated.llm_fallback_used)
+        llm_cache_hit = bool(pipeline.generated.llm_cache_hit)
         prior_stop_reason = context.stop_reason
 
         if hallucination_detected and context.final_status != "insufficient_evidence":
@@ -950,6 +969,7 @@ class HallucinationGuardStage(BasePipelineStage):
         context.grounding_reason = grounding_reason
         context.hallucination_detected = hallucination_detected
         context.llm_fallback_used = llm_fallback_used
+        context.llm_cache_hit = llm_cache_hit
 
         state.final_answer = context.final_answer
         state.citations = context.final_citations
@@ -1021,6 +1041,10 @@ class FinalGroundingStage(BasePipelineStage):
                 "grounding_semantic_used": context.grounding_semantic_used,
                 "grounding_cache_hit": context.grounding_cache_hit,
                 "grounding_ms": context.grounding_ms,
+                "embedding_cache_hit": context.embedding_cache_hit,
+                "retrieval_cache_hit": context.retrieval_cache_hit,
+                "rerank_cache_hit": context.rerank_cache_hit,
+                "llm_cache_hit": context.llm_cache_hit,
             }
         )
 
@@ -1048,10 +1072,14 @@ class FinalGroundingStage(BasePipelineStage):
                 "hallucination_detected": context.hallucination_detected,
                 "citation_count": context.citation_count,
                 "llm_fallback_used": context.llm_fallback_used,
+                "llm_cache_hit": context.llm_cache_hit,
                 "grounding_policy": context.grounding_policy,
                 "grounding_semantic_used": context.grounding_semantic_used,
                 "grounding_cache_hit": context.grounding_cache_hit,
                 "grounding_ms": context.grounding_ms,
+                "embedding_cache_hit": context.embedding_cache_hit,
+                "retrieval_cache_hit": context.retrieval_cache_hit,
+                "rerank_cache_hit": context.rerank_cache_hit,
             }
         )
         stage_ms = int((time.perf_counter() - stage_started) * 1000)

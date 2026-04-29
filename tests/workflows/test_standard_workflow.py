@@ -2,6 +2,7 @@
 
 import asyncio
 
+from app.core.cache import QueryCache
 from app.schemas.retrieval import RetrievalBatch, RetrievalResult
 from app.schemas.api import StandardQueryResponse, validate_query_response
 from app.schemas.common import Mode
@@ -490,6 +491,92 @@ def test_standard_can_force_legacy_cross_encoder_by_disabling_cascade() -> None:
     assert reranker.calls == 1
     assert rerank_step["reranker_used"] == "cross_encoder"
     assert rerank_step["rerank_policy"]["reason"] == "cascade_disabled_legacy"
+
+
+def test_standard_workflow_rerank_cache_returns_stable_order() -> None:
+    class _Retriever:
+        def retrieve(self, query: str, top_k: int = 5) -> list[RetrievalResult]:
+            _ = query
+            return [
+                RetrievalResult(
+                    chunk_id=f"rerank_cache_{idx}",
+                    doc_id=f"rerank_cache_doc_{idx}",
+                    source="seeded://rerank-cache",
+                    content=f"Rerank cache context {idx}",
+                    score=0.9 - (idx * 0.01),
+                    score_type="hybrid",
+                    rank=idx + 1,
+                )
+                for idx in range(top_k)
+            ]
+
+    class _FakeIndexManager:
+        def __init__(self) -> None:
+            self.retriever = _Retriever()
+
+        def get_retriever(self) -> _Retriever:
+            return self.retriever
+
+        def get_active_source(self) -> str:
+            return "seeded"
+
+    class _CountingReranker(BaseReranker):
+        name = "cross-encoder-reranker"
+        model_name = "mock-reranker-v1"
+        device = "cpu"
+        batch_size = 8
+
+        def __init__(self) -> None:
+            self.calls = 0
+
+        def rerank(
+            self,
+            query: str,
+            docs: list[RetrievalResult],
+            top_k: int | None = None,
+        ) -> list[RetrievalResult]:
+            _ = query
+            self.calls += 1
+            limit = len(docs) if top_k is None else max(0, top_k)
+            ranked = list(reversed(docs[:limit]))
+            for rank, item in enumerate(ranked, start=1):
+                item.rank = rank
+            return ranked
+
+    class _StubLLM:
+        def complete(
+            self,
+            prompt: str,
+            system_prompt: str | None = None,
+            model: str | None = None,
+            max_tokens: int | None = None,
+        ) -> str:
+            _ = prompt
+            _ = system_prompt
+            _ = model
+            _ = max_tokens
+            return (
+                '{"answer":"Rerank cache answer.","confidence":0.8,"status":"answered"}'
+            )
+
+    reranker = _CountingReranker()
+    workflow = StandardWorkflow(
+        index_manager=_FakeIndexManager(),
+        llm_client=_StubLLM(),
+        reranker=reranker,
+    )
+    workflow.caches.rerank = QueryCache(maxsize=16, enabled=True)
+    workflow.set_retrieval_top_k(4)
+
+    first = workflow.run("test rerank cache")
+    second = workflow.run("test rerank cache")
+
+    first_rerank = first.trace[1]
+    second_rerank = second.trace[1]
+    assert reranker.calls == 1
+    assert first_rerank["rerank_cache_hit"] is False
+    assert second_rerank["rerank_cache_hit"] is True
+    assert first_rerank["chunk_ids"] == second_rerank["chunk_ids"]
 
 
 def test_standard_workflow_trace_contains_timing_metrics() -> None:

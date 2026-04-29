@@ -12,6 +12,7 @@ from app.generation.llm_client import (
     complete_with_model,
     create_llm_client,
     create_llm_client_from_settings,
+    did_use_cache,
     did_use_fallback,
 )
 from app.generation.parser import StructuredOutputParser
@@ -29,5 +30,6 @@ __all__ = [
     "complete_with_model",
     "create_llm_client",
     "create_llm_client_from_settings",
+    "did_use_cache",
     "did_use_fallback",
 ]
