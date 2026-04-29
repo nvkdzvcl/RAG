@@ -11,7 +11,8 @@ from app.schemas.api import AdvancedQueryResponse
 from app.schemas.common import Citation
 from app.schemas.workflow import CritiqueResult, WorkflowState
 from app.workflows.shared import (
-    assess_grounding,
+    GroundingPolicy,
+    assess_grounding_with_policy,
     is_language_mismatch,
     localized_insufficient_evidence,
 )
@@ -31,9 +32,70 @@ ADVANCED_TIMING_KEYS: tuple[str, ...] = (
     "refine_stage_ms",
     "language_guard_ms",
     "hallucination_guard_ms",
+    "grounding_ms",
     "final_grounding_ms",
     "total_ms",
 )
+
+
+def _grounding_query_complexity(raw: str | None) -> str:
+    normalized = (raw or "normal").strip().lower()
+    if normalized == "simple_extractive":
+        return "simple"
+    if normalized in {"simple", "normal", "complex"}:
+        return normalized
+    return "normal"
+
+
+def _estimate_retrieval_confidence_from_pipeline(
+    pipeline: StandardPipelineResult,
+) -> float | None:
+    best_score: float | None = None
+    for item in pipeline.reranked or pipeline.retrieved:
+        for candidate in (
+            item.rerank_score,
+            item.score,
+            item.dense_score,
+            item.sparse_score,
+        ):
+            if not isinstance(candidate, (int, float)):
+                continue
+            numeric = float(candidate)
+            if numeric != numeric:
+                continue
+            if best_score is None or numeric > best_score:
+                best_score = numeric
+
+    if best_score is None:
+        return None
+    if best_score <= 0.0:
+        return 0.0
+    if best_score <= 1.0:
+        return round(best_score, 4)
+    return round(best_score / (1.0 + best_score), 4)
+
+
+def _build_grounding_policy(
+    *,
+    pipeline: StandardPipelineResult,
+    status: str,
+    answer: str,
+    citation_count: int,
+) -> GroundingPolicy:
+    query_complexity = (
+        pipeline.query_budget.complexity
+        if pipeline.query_budget is not None
+        else "normal"
+    )
+    return GroundingPolicy(
+        mode="advanced",
+        query_complexity=_grounding_query_complexity(query_complexity),
+        generated_status=status,
+        answer_length=len(answer.strip()),
+        citation_count=max(0, int(citation_count)),
+        retrieval_confidence=_estimate_retrieval_confidence_from_pipeline(pipeline),
+        fast_path_used=pipeline.generated.stop_reason.startswith("heuristic_"),
+    )
 
 
 @dataclass
@@ -72,6 +134,10 @@ class AdvancedPipelineContext:
     grounded_score: float = 0.0
     grounding_reason: str = "not_evaluated"
     hallucination_detected: bool = False
+    grounding_policy: str = "not_evaluated"
+    grounding_semantic_used: bool = False
+    grounding_cache_hit: bool = False
+    grounding_ms: int = 0
     llm_fallback_used: bool = False
 
     terminal_response: AdvancedQueryResponse | None = None
@@ -697,16 +763,28 @@ class HallucinationGuardStage(BasePipelineStage):
         workflow = context.workflow
         pipeline = context.pipeline
         citation_count = len(context.final_citations)
-        grounding = assess_grounding(
+        grounding_started = time.perf_counter()
+        grounding_eval = assess_grounding_with_policy(
             context.final_answer,
             context.context_texts,
             citation_count=citation_count,
             has_selected_context=bool(pipeline.selected_context),
             status=context.final_status,
+            policy=_build_grounding_policy(
+                pipeline=pipeline,
+                status=context.final_status,
+                answer=context.final_answer,
+                citation_count=citation_count,
+            ),
         )
+        context.grounding_ms = int((time.perf_counter() - grounding_started) * 1000)
+        grounding = grounding_eval.assessment
         grounded_score = grounding.grounded_score
         grounding_reason = grounding.grounding_reason
         hallucination_detected = grounding.hallucination_detected
+        context.grounding_policy = grounding_eval.grounding_policy
+        context.grounding_semantic_used = grounding_eval.grounding_semantic_used
+        context.grounding_cache_hit = grounding_eval.grounding_cache_hit
 
         if (
             context.has_relevant_context
@@ -747,7 +825,7 @@ class HallucinationGuardStage(BasePipelineStage):
             )
             refined_answer_text = refined_grounded_answer.strip()
             refined_is_insufficient = refined_answer_text == context.insufficient_answer
-            refined_grounding = assess_grounding(
+            refined_grounding_eval = assess_grounding_with_policy(
                 refined_answer_text,
                 context.context_texts,
                 citation_count=citation_count,
@@ -755,7 +833,18 @@ class HallucinationGuardStage(BasePipelineStage):
                 status="insufficient_evidence"
                 if refined_is_insufficient
                 else context.final_status,
+                policy=_build_grounding_policy(
+                    pipeline=pipeline,
+                    status=(
+                        "insufficient_evidence"
+                        if refined_is_insufficient
+                        else context.final_status
+                    ),
+                    answer=refined_answer_text,
+                    citation_count=citation_count,
+                ),
             )
+            refined_grounding = refined_grounding_eval.assessment
             refined_score = refined_grounding.grounded_score
             refined_reason = refined_grounding.grounding_reason
             refined_hallucination = refined_grounding.hallucination_detected
@@ -778,6 +867,11 @@ class HallucinationGuardStage(BasePipelineStage):
                 context.final_answer = refined_answer_text
                 grounded_score = refined_score
                 grounding_reason = refined_reason
+                context.grounding_policy = refined_grounding_eval.grounding_policy
+                context.grounding_semantic_used = (
+                    refined_grounding_eval.grounding_semantic_used
+                )
+                context.grounding_cache_hit = refined_grounding_eval.grounding_cache_hit
                 if refined_score >= workflow.STRONG_GROUNDED_THRESHOLD:
                     context.final_status = "answered"
                 elif refined_score >= workflow.VERY_LOW_GROUNDED_THRESHOLD:
@@ -803,16 +897,30 @@ class HallucinationGuardStage(BasePipelineStage):
                         response_language=context.resolved_language,
                     )
                     context.final_status = "partial"
-                    cautious_grounding = assess_grounding(
+                    cautious_grounding_eval = assess_grounding_with_policy(
                         context.final_answer,
                         context.context_texts,
                         citation_count=len(context.final_citations),
                         has_selected_context=bool(pipeline.selected_context),
                         status=context.final_status,
+                        policy=_build_grounding_policy(
+                            pipeline=pipeline,
+                            status=context.final_status,
+                            answer=context.final_answer,
+                            citation_count=len(context.final_citations),
+                        ),
                     )
+                    cautious_grounding = cautious_grounding_eval.assessment
                     grounded_score = cautious_grounding.grounded_score
                     grounding_reason = cautious_grounding.grounding_reason
                     hallucination_detected = cautious_grounding.hallucination_detected
+                    context.grounding_policy = cautious_grounding_eval.grounding_policy
+                    context.grounding_semantic_used = (
+                        cautious_grounding_eval.grounding_semantic_used
+                    )
+                    context.grounding_cache_hit = (
+                        cautious_grounding_eval.grounding_cache_hit
+                    )
                     if prior_stop_reason != "max_loop_reached":
                         context.stop_reason = "weak_evidence_cautious"
                 else:
@@ -874,17 +982,30 @@ class FinalGroundingStage(BasePipelineStage):
 
         stage_started = time.perf_counter()
         citation_count = len(context.final_citations)
-        final_grounding = assess_grounding(
+        grounding_started = time.perf_counter()
+        final_grounding_eval = assess_grounding_with_policy(
             context.final_answer,
             context.context_texts,
             citation_count=citation_count,
             has_selected_context=bool(context.pipeline.selected_context),
             status=context.final_status,
+            policy=_build_grounding_policy(
+                pipeline=context.pipeline,
+                status=context.final_status,
+                answer=context.final_answer,
+                citation_count=citation_count,
+            ),
         )
+        context.grounding_ms = int((time.perf_counter() - grounding_started) * 1000)
+        context.timings["grounding_ms"] = context.grounding_ms
+        final_grounding = final_grounding_eval.assessment
         context.citation_count = citation_count
         context.grounded_score = final_grounding.grounded_score
         context.grounding_reason = final_grounding.grounding_reason
         context.hallucination_detected = final_grounding.hallucination_detected
+        context.grounding_policy = final_grounding_eval.grounding_policy
+        context.grounding_semantic_used = final_grounding_eval.grounding_semantic_used
+        context.grounding_cache_hit = final_grounding_eval.grounding_cache_hit
 
         context.trace.append(
             {
@@ -896,6 +1017,10 @@ class FinalGroundingStage(BasePipelineStage):
                 "grounding_reason": context.grounding_reason,
                 "hallucination_detected": context.hallucination_detected,
                 "status": context.final_status,
+                "grounding_policy": context.grounding_policy,
+                "grounding_semantic_used": context.grounding_semantic_used,
+                "grounding_cache_hit": context.grounding_cache_hit,
+                "grounding_ms": context.grounding_ms,
             }
         )
 
@@ -923,6 +1048,10 @@ class FinalGroundingStage(BasePipelineStage):
                 "hallucination_detected": context.hallucination_detected,
                 "citation_count": context.citation_count,
                 "llm_fallback_used": context.llm_fallback_used,
+                "grounding_policy": context.grounding_policy,
+                "grounding_semantic_used": context.grounding_semantic_used,
+                "grounding_cache_hit": context.grounding_cache_hit,
+                "grounding_ms": context.grounding_ms,
             }
         )
         stage_ms = int((time.perf_counter() - stage_started) * 1000)

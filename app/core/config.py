@@ -84,6 +84,13 @@ class Settings(BaseSettings):
     rag_normal_context_chars: int = Field(
         default=3000, alias="RAG_NORMAL_CONTEXT_CHARS"
     )
+    grounding_policy: str = Field(default="adaptive", alias="GROUNDING_POLICY")
+    grounding_semantic_standard_enabled: bool = Field(
+        default=False, alias="GROUNDING_SEMANTIC_STANDARD_ENABLED"
+    )
+    grounding_semantic_advanced_enabled: bool = Field(
+        default=True, alias="GROUNDING_SEMANTIC_ADVANCED_ENABLED"
+    )
 
     max_advanced_loops: int = Field(default=1, alias="MAX_ADVANCED_LOOPS")
     memory_window: int = Field(default=3, alias="MEMORY_WINDOW")

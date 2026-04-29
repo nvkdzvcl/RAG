@@ -58,6 +58,9 @@ def test_settings_defaults(monkeypatch) -> None:
         "RAG_COMPLEX_MAX_TOKENS",
         "RAG_SIMPLE_CONTEXT_CHARS",
         "RAG_NORMAL_CONTEXT_CHARS",
+        "GROUNDING_POLICY",
+        "GROUNDING_SEMANTIC_STANDARD_ENABLED",
+        "GROUNDING_SEMANTIC_ADVANCED_ENABLED",
         "MAX_ADVANCED_LOOPS",
         "MEMORY_WINDOW",
         "GROUNDING_SEMANTIC_ENABLED",
@@ -113,6 +116,9 @@ def test_settings_defaults(monkeypatch) -> None:
     assert settings.rag_complex_max_tokens == 1536
     assert settings.rag_simple_context_chars == 1600
     assert settings.rag_normal_context_chars == 3000
+    assert settings.grounding_policy == "adaptive"
+    assert settings.grounding_semantic_standard_enabled is False
+    assert settings.grounding_semantic_advanced_enabled is True
     assert settings.memory_window == 3
 
 

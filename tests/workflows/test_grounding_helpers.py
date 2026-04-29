@@ -102,3 +102,165 @@ def test_grounding_falls_back_to_overlap_when_semantic_unavailable(monkeypatch) 
     assert assessment.hallucination_detected is False
     assert assessment.grounded_score == 0.13
     assert assessment.grounding_reason == "strong_grounding_no_citations"
+
+
+def test_standard_simple_policy_skips_semantic_encoder(monkeypatch) -> None:
+    grounding_mod._clear_grounding_cache()
+    monkeypatch.setattr(grounding_mod, "_GROUNDING_SEMANTIC_ENABLED", True)
+    monkeypatch.setattr(grounding_mod, "_GROUNDING_SEMANTIC_STANDARD_ENABLED", True)
+
+    load_calls = {"count": 0}
+
+    def _record_loader():
+        load_calls["count"] += 1
+        return None
+
+    monkeypatch.setattr(grounding_mod, "_load_semantic_encoder", _record_loader)
+
+    evaluation = grounding_mod.assess_grounding_with_policy(
+        "Tên của Điều 2 là: Quy định chung.",
+        ["Điều 2. Quy định chung."],
+        citation_count=1,
+        has_selected_context=True,
+        status="answered",
+        policy=grounding_mod.GroundingPolicy(
+            mode="standard",
+            query_complexity="simple",
+            generated_status="answered",
+            answer_length=36,
+            citation_count=1,
+            retrieval_confidence=0.8,
+            fast_path_used=False,
+        ),
+    )
+
+    assert evaluation.grounding_semantic_used is False
+    assert load_calls["count"] == 0
+
+
+def test_standard_normal_risky_can_use_semantic_when_adaptive(monkeypatch) -> None:
+    grounding_mod._clear_grounding_cache()
+    monkeypatch.setattr(grounding_mod, "_GROUNDING_SEMANTIC_ENABLED", True)
+    monkeypatch.setattr(grounding_mod, "_GROUNDING_SEMANTIC_STANDARD_ENABLED", True)
+    monkeypatch.setattr(
+        grounding_mod, "grounded_overlap_score", lambda answer, context_chunks: 0.01
+    )
+
+    semantic_calls = {"count": 0}
+
+    def _semantic_score(answer: str, context_chunks: list[str]) -> float:
+        _ = answer
+        _ = context_chunks
+        semantic_calls["count"] += 1
+        return 0.83
+
+    monkeypatch.setattr(grounding_mod, "_semantic_context_similarity", _semantic_score)
+    evaluation = grounding_mod.assess_grounding_with_policy(
+        "Câu trả lời dài nhưng thiếu trích dẫn cụ thể.",
+        ["Ngữ cảnh có bằng chứng nhưng độ khớp lexical thấp."],
+        citation_count=0,
+        has_selected_context=True,
+        status="answered",
+        policy=grounding_mod.GroundingPolicy(
+            mode="standard",
+            query_complexity="normal",
+            generated_status="answered",
+            answer_length=420,
+            citation_count=0,
+            retrieval_confidence=0.19,
+            fast_path_used=False,
+        ),
+    )
+
+    assert semantic_calls["count"] == 1
+    assert evaluation.grounding_semantic_used is True
+
+
+def test_advanced_policy_can_use_semantic_grounding(monkeypatch) -> None:
+    grounding_mod._clear_grounding_cache()
+    monkeypatch.setattr(grounding_mod, "_GROUNDING_SEMANTIC_ENABLED", True)
+    monkeypatch.setattr(grounding_mod, "_GROUNDING_SEMANTIC_ADVANCED_ENABLED", True)
+    monkeypatch.setattr(
+        grounding_mod, "grounded_overlap_score", lambda answer, context_chunks: 0.0
+    )
+
+    semantic_calls = {"count": 0}
+
+    def _semantic_score(answer: str, context_chunks: list[str]) -> float:
+        _ = answer
+        _ = context_chunks
+        semantic_calls["count"] += 1
+        return 0.88
+
+    monkeypatch.setattr(grounding_mod, "_semantic_context_similarity", _semantic_score)
+
+    evaluation = grounding_mod.assess_grounding_with_policy(
+        "Nội dung này được giải thích theo cách diễn giải.",
+        ["Điều khoản gốc mô tả cùng ý nghĩa nhưng khác từ ngữ."],
+        citation_count=0,
+        has_selected_context=True,
+        status="answered",
+        policy=grounding_mod.GroundingPolicy(
+            mode="advanced",
+            query_complexity="normal",
+            generated_status="answered",
+            answer_length=240,
+            citation_count=0,
+            retrieval_confidence=0.21,
+            fast_path_used=False,
+        ),
+    )
+
+    assert semantic_calls["count"] == 1
+    assert evaluation.grounding_semantic_used is True
+    assert evaluation.assessment.grounded_score >= 0.12
+
+
+def test_grounding_cache_hit_avoids_semantic_recompute(monkeypatch) -> None:
+    grounding_mod._clear_grounding_cache()
+    monkeypatch.setattr(grounding_mod, "_GROUNDING_SEMANTIC_ENABLED", True)
+    monkeypatch.setattr(grounding_mod, "_GROUNDING_SEMANTIC_ADVANCED_ENABLED", True)
+    monkeypatch.setattr(
+        grounding_mod, "grounded_overlap_score", lambda answer, context_chunks: 0.03
+    )
+
+    semantic_calls = {"count": 0}
+
+    def _semantic_score(answer: str, context_chunks: list[str]) -> float:
+        _ = answer
+        _ = context_chunks
+        semantic_calls["count"] += 1
+        return 0.84
+
+    monkeypatch.setattr(grounding_mod, "_semantic_context_similarity", _semantic_score)
+
+    policy = grounding_mod.GroundingPolicy(
+        mode="advanced",
+        query_complexity="complex",
+        generated_status="answered",
+        answer_length=420,
+        citation_count=0,
+        retrieval_confidence=0.18,
+        fast_path_used=False,
+    )
+    kwargs = {
+        "citation_count": 0,
+        "has_selected_context": True,
+        "status": "answered",
+        "policy": policy,
+    }
+
+    first = grounding_mod.assess_grounding_with_policy(
+        "Phần trả lời đã được diễn giải dài hơn từ cùng bằng chứng.",
+        ["Bằng chứng nguồn mô tả cùng nội dung theo cách khác."],
+        **kwargs,
+    )
+    second = grounding_mod.assess_grounding_with_policy(
+        "Phần trả lời đã được diễn giải dài hơn từ cùng bằng chứng.",
+        ["Bằng chứng nguồn mô tả cùng nội dung theo cách khác."],
+        **kwargs,
+    )
+
+    assert first.grounding_cache_hit is False
+    assert second.grounding_cache_hit is True
+    assert semantic_calls["count"] == 1

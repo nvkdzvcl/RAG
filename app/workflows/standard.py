@@ -47,7 +47,8 @@ from app.schemas.retrieval import RetrievalResult
 from app.services.index_runtime import EmptyRetriever
 from app.workflows.query_budget import QueryBudget, choose_query_budget
 from app.workflows.shared import (
-    assess_grounding,
+    GroundingPolicy,
+    assess_grounding_with_policy,
     build_chat_history_context,
     build_language_system_prompt,
     detect_response_language,
@@ -104,6 +105,41 @@ class StandardWorkflow:
         "question: $question\n"
         "answer:\n$draft_answer"
     )
+
+    @staticmethod
+    def _grounding_query_complexity(value: str | None) -> str:
+        raw = (value or "normal").strip().lower()
+        if raw == "simple_extractive":
+            return "simple"
+        if raw in {"simple", "normal", "complex"}:
+            return raw
+        return "normal"
+
+    @staticmethod
+    def _estimate_retrieval_confidence(results: list[RetrievalResult]) -> float | None:
+        best_score: float | None = None
+        for item in results:
+            for candidate in (
+                item.rerank_score,
+                item.score,
+                item.dense_score,
+                item.sparse_score,
+            ):
+                if not isinstance(candidate, (int, float)):
+                    continue
+                numeric = float(candidate)
+                if numeric != numeric:
+                    continue
+                if best_score is None or numeric > best_score:
+                    best_score = numeric
+
+        if best_score is None:
+            return None
+        if best_score <= 0.0:
+            return 0.0
+        if best_score <= 1.0:
+            return round(best_score, 4)
+        return round(best_score / (1.0 + best_score), 4)
 
     def __init__(
         self,
@@ -664,18 +700,36 @@ class StandardWorkflow:
 
         final_citations = list(pipeline.generated.citations)
         citation_count = len(final_citations)
+        grounding_policy_input = GroundingPolicy(
+            mode="standard",
+            query_complexity=self._grounding_query_complexity(
+                effective_budget.complexity
+            ),
+            generated_status=pipeline.generated.status,
+            answer_length=len(final_answer.strip()),
+            citation_count=citation_count,
+            retrieval_confidence=self._estimate_retrieval_confidence(
+                pipeline.reranked or pipeline.retrieved
+            ),
+            fast_path_used=pipeline.generated.stop_reason.startswith("heuristic_"),
+        )
         grounding_started = time.perf_counter()
-        grounding = assess_grounding(
+        grounding_eval = assess_grounding_with_policy(
             final_answer,
             context_texts,
             citation_count=citation_count,
             has_selected_context=bool(pipeline.selected_context),
             status=pipeline.generated.status,
+            policy=grounding_policy_input,
         )
         timings["grounding_ms"] = int((time.perf_counter() - grounding_started) * 1000)
+        grounding = grounding_eval.assessment
         grounded_score = grounding.grounded_score
         grounding_reason = grounding.grounding_reason
         hallucination_detected = grounding.hallucination_detected
+        grounding_policy = grounding_eval.grounding_policy
+        grounding_semantic_used = grounding_eval.grounding_semantic_used
+        grounding_cache_hit = grounding_eval.grounding_cache_hit
         llm_fallback_used = bool(pipeline.generated.llm_fallback_used)
 
         elapsed_ms = int((time.perf_counter() - start_time) * 1000)
@@ -819,6 +873,10 @@ class StandardWorkflow:
                 "llm_fallback_used": llm_fallback_used,
                 "llm_generate_ms": timings.get("llm_generate_ms", 0),
                 "max_tokens": effective_budget.max_tokens,
+                "grounding_policy": grounding_policy,
+                "grounding_semantic_used": grounding_semantic_used,
+                "grounding_cache_hit": grounding_cache_hit,
+                "grounding_ms": timings.get("grounding_ms", 0),
             },
         ]
 
@@ -838,6 +896,9 @@ class StandardWorkflow:
                     "hallucination_detected": hallucination_detected,
                     "citation_count": citation_count,
                     "llm_fallback_used": llm_fallback_used,
+                    "grounding_policy": grounding_policy,
+                    "grounding_semantic_used": grounding_semantic_used,
+                    "grounding_cache_hit": grounding_cache_hit,
                     "grounding_ms": timings.get("grounding_ms", 0),
                 }
             )
@@ -859,6 +920,9 @@ class StandardWorkflow:
                 "rerank_ms": timings.get("rerank_ms", 0),
                 "context_select_ms": timings.get("context_select_ms", 0),
                 "llm_generate_ms": timings.get("llm_generate_ms", 0),
+                "grounding_policy": grounding_policy,
+                "grounding_semantic_used": grounding_semantic_used,
+                "grounding_cache_hit": grounding_cache_hit,
                 "grounding_ms": timings.get("grounding_ms", 0),
                 "total_ms": timings.get("total_ms", elapsed_ms),
             }

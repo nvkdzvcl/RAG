@@ -27,7 +27,10 @@ from app.workflows.shared.language import (
 # -- grounding --------------------------------------------------------------
 from app.workflows.shared.grounding import (
     GroundingAssessment,
+    GroundingEvaluation,
+    GroundingPolicy,
     assess_grounding,
+    assess_grounding_with_policy,
     detect_hallucination,
     grounded_overlap_score,
     grounded_score,
@@ -50,7 +53,10 @@ __all__ = [
     "response_language_name",
     # grounding
     "GroundingAssessment",
+    "GroundingEvaluation",
+    "GroundingPolicy",
     "assess_grounding",
+    "assess_grounding_with_policy",
     "detect_hallucination",
     "grounded_overlap_score",
     "grounded_score",

@@ -151,6 +151,13 @@ def test_advanced_workflow_trace_contains_timing_metrics() -> None:
     ):
         assert key in timing_summary
         assert isinstance(timing_summary[key], int)
+    grounding_step = next(
+        step for step in response.trace if step.get("step") == "grounding_check"
+    )
+    assert isinstance(grounding_step.get("grounding_policy"), str)
+    assert isinstance(grounding_step.get("grounding_semantic_used"), bool)
+    assert isinstance(grounding_step.get("grounding_cache_hit"), bool)
+    assert isinstance(grounding_step.get("grounding_ms"), int)
 
 
 def test_advanced_workflow_records_real_stage_durations() -> None:
