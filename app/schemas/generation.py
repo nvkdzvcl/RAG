@@ -31,3 +31,5 @@ class GeneratedAnswer(BaseModel):
     raw_output: str | None = None
     llm_fallback_used: bool = False
     llm_cache_hit: bool = False
+    fast_path: bool = False
+    fast_path_type: str | None = None

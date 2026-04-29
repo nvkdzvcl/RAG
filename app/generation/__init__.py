@@ -2,6 +2,7 @@
 
 from app.generation.baseline import BaselineGenerator
 from app.generation.citations import CitationBuilder
+from app.generation.extractive import ExtractiveAnswerer
 from app.generation.interfaces import Generator
 from app.generation.llm_client import (
     FallbackLLMClient,
@@ -20,6 +21,7 @@ from app.generation.parser import StructuredOutputParser
 __all__ = [
     "BaselineGenerator",
     "CitationBuilder",
+    "ExtractiveAnswerer",
     "FallbackLLMClient",
     "Generator",
     "LLMClient",

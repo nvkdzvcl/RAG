@@ -822,6 +822,70 @@ def test_standard_workflow_uses_ingested_files_instead_of_memory_corpus() -> Non
     )
 
 
+def test_standard_workflow_extractive_fast_path_skips_llm() -> None:
+    class _Retriever:
+        def retrieve(self, query: str, top_k: int = 5) -> list[RetrievalResult]:
+            _ = query
+            _ = top_k
+            return [
+                RetrievalResult(
+                    chunk_id="extractive_001",
+                    doc_id="extractive_doc_001",
+                    source="seeded://extractive",
+                    content=(
+                        "Điều 5. Nguyên tắc xử lý\n"
+                        "Tổ chức, cá nhân phải tuân thủ quy định pháp luật hiện hành.\n"
+                        "Việc xử lý phải bảo đảm khách quan, công khai và đúng thẩm quyền.\n"
+                        "Điều 6. Trách nhiệm thi hành"
+                    ),
+                    score=0.92,
+                    score_type="hybrid",
+                    rank=1,
+                )
+            ]
+
+    class _FakeIndexManager:
+        def get_retriever(self) -> _Retriever:
+            return _Retriever()
+
+        def get_active_source(self) -> str:
+            return "seeded"
+
+    class _FailIfCalledLLM:
+        def complete(
+            self,
+            prompt: str,
+            system_prompt: str | None = None,
+            model: str | None = None,
+            max_tokens: int | None = None,
+        ) -> str:
+            _ = prompt
+            _ = system_prompt
+            _ = model
+            _ = max_tokens
+            raise AssertionError(
+                "LLM should not be called when extractive fast path is used."
+            )
+
+    workflow = StandardWorkflow(
+        index_manager=_FakeIndexManager(),
+        llm_client=_FailIfCalledLLM(),
+        reranker=ScoreOnlyReranker(),
+    )
+    response = workflow.run(query="Điều 5 quy định gì?", response_language="vi")
+
+    generate_step = next(
+        step for step in response.trace if step.get("step") == "generate"
+    )
+
+    assert response.status == "answered"
+    assert response.stop_reason == "heuristic_extractive_article"
+    assert "Điều 5 quy định:" in response.answer
+    assert generate_step["fast_path_attempted"] is True
+    assert generate_step["fast_path_used"] is True
+    assert generate_step["fast_path_reason"] == "article_content_match"
+
+
 def test_standard_runner_route_and_contract() -> None:
     runner = WorkflowRunner()
 

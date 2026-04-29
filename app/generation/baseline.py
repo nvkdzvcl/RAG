@@ -248,6 +248,8 @@ class BaselineGenerator(Generator):
             stop_reason="heuristic_exact_title",
             raw_output=None,
             llm_fallback_used=False,
+            fast_path=True,
+            fast_path_type="title",
         )
 
     def _insufficient(

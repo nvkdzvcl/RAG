@@ -16,6 +16,7 @@ from app.core.json_utils import parse_json_object
 from app.core.timing import StepTimer, has_timing_breakdown, normalize_timing_payload
 from app.generation import (
     BaselineGenerator,
+    ExtractiveAnswerer,
     LLMClient,
     close_llm_client,
     create_llm_client_from_settings,
@@ -84,6 +85,9 @@ class StandardPipelineResult:
     embedding_cache_hit: bool = False
     retrieval_cache_hit: bool = False
     rerank_cache_hit: bool = False
+    fast_path_attempted: bool = False
+    fast_path_used: bool = False
+    fast_path_reason: str = "not_attempted"
 
 
 class RetrieverLike(Protocol):
@@ -314,6 +318,7 @@ class StandardWorkflow:
             prompt_dir=settings.prompt_dir,
             llm_cache=self.caches.llm,
         )
+        self.extractive_answerer = ExtractiveAnswerer()
         self.llm_client = self.generator.llm_client
 
     @staticmethod
@@ -711,6 +716,9 @@ class StandardWorkflow:
             },
         )
         if not selected_context:
+            fast_path_attempted = False
+            fast_path_used = False
+            fast_path_reason = "no_context"
             timer.record_ms("llm_generate_ms", 0)
             generated = GeneratedAnswer(
                 answer=localized_insufficient_evidence(response_language),
@@ -734,60 +742,100 @@ class StandardWorkflow:
                 },
             )
         else:
+            fast_path_decision = self.extractive_answerer.answer(
+                query=normalized_query,
+                selected_context=selected_context,
+                response_language=response_language,
+            )
+            fast_path_attempted = fast_path_decision.attempted
+            fast_path_used = fast_path_decision.used
+            fast_path_reason = fast_path_decision.reason
             history_context = build_chat_history_context(
                 chat_history,
                 memory_window=self.memory_window,
             )
-            await emit_stream_event(
-                event_handler,
-                {
-                    "type": "generation",
-                    "mode": mode.value,
-                    "phase": "started",
-                    "context_count": len(selected_context),
-                    **context_payload,
-                },
-            )
-
-            async def _on_llm_delta(delta: str) -> None:
+            if fast_path_decision.answer is not None:
+                generated = fast_path_decision.answer
+                timer.record_ms("llm_generate_ms", 0)
                 await emit_stream_event(
                     event_handler,
                     {
-                        "type": "generation_delta",
+                        "type": "generation",
                         "mode": mode.value,
-                        "delta": delta,
+                        "phase": "skipped",
+                        "reason": "fast_path_extractive",
+                        "status": generated.status,
+                        "stop_reason": generated.stop_reason,
+                        "answer": generated.answer,
+                        "fast_path_attempted": fast_path_attempted,
+                        "fast_path_used": fast_path_used,
+                        "fast_path_reason": fast_path_reason,
+                        "citation_count": len(generated.citations),
+                        "timings_ms": {
+                            "llm_generate_ms": timer.get_ms("llm_generate_ms", 0)
+                        },
+                        **context_payload,
+                    },
+                )
+            else:
+                await emit_stream_event(
+                    event_handler,
+                    {
+                        "type": "generation",
+                        "mode": mode.value,
+                        "phase": "started",
+                        "context_count": len(selected_context),
+                        "fast_path_attempted": fast_path_attempted,
+                        "fast_path_used": fast_path_used,
+                        "fast_path_reason": fast_path_reason,
                         **context_payload,
                     },
                 )
 
-            async with timer.measure_async("llm_generate_ms"):
-                generated = await self.generator.generate_answer_async(
-                    query=normalized_query,
-                    context=selected_context,
-                    mode=mode,
-                    model=model,
-                    max_tokens=query_budget.max_tokens,
-                    response_language=response_language,
-                    chat_history_context=history_context,
-                    on_llm_delta=_on_llm_delta if event_handler is not None else None,
-                )
-            await emit_stream_event(
-                event_handler,
-                {
-                    "type": "generation",
-                    "mode": mode.value,
-                    "phase": "completed",
-                    "status": generated.status,
-                    "stop_reason": generated.stop_reason,
-                    "answer": generated.answer,
-                    "llm_cache_hit": bool(generated.llm_cache_hit),
-                    "citation_count": len(generated.citations),
-                    "timings_ms": {
-                        "llm_generate_ms": timer.get_ms("llm_generate_ms", 0)
+                async def _on_llm_delta(delta: str) -> None:
+                    await emit_stream_event(
+                        event_handler,
+                        {
+                            "type": "generation_delta",
+                            "mode": mode.value,
+                            "delta": delta,
+                            **context_payload,
+                        },
+                    )
+
+                async with timer.measure_async("llm_generate_ms"):
+                    generated = await self.generator.generate_answer_async(
+                        query=normalized_query,
+                        context=selected_context,
+                        mode=mode,
+                        model=model,
+                        max_tokens=query_budget.max_tokens,
+                        response_language=response_language,
+                        chat_history_context=history_context,
+                        on_llm_delta=(
+                            _on_llm_delta if event_handler is not None else None
+                        ),
+                    )
+                await emit_stream_event(
+                    event_handler,
+                    {
+                        "type": "generation",
+                        "mode": mode.value,
+                        "phase": "completed",
+                        "status": generated.status,
+                        "stop_reason": generated.stop_reason,
+                        "answer": generated.answer,
+                        "llm_cache_hit": bool(generated.llm_cache_hit),
+                        "fast_path_attempted": fast_path_attempted,
+                        "fast_path_used": fast_path_used,
+                        "fast_path_reason": fast_path_reason,
+                        "citation_count": len(generated.citations),
+                        "timings_ms": {
+                            "llm_generate_ms": timer.get_ms("llm_generate_ms", 0)
+                        },
+                        **context_payload,
                     },
-                    **context_payload,
-                },
-            )
+                )
 
         logger.info(
             (
@@ -820,6 +868,9 @@ class StandardWorkflow:
             embedding_cache_hit=embedding_cache_hit,
             retrieval_cache_hit=retrieval_cache_hit,
             rerank_cache_hit=rerank_cache_hit,
+            fast_path_attempted=fast_path_attempted,
+            fast_path_used=fast_path_used,
+            fast_path_reason=fast_path_reason,
         )
 
     async def run_async(
@@ -1072,6 +1123,10 @@ class StandardWorkflow:
                 "stop_reason": stop_reason,
                 "response_language": resolved_language,
                 "language_mismatch": language_mismatch,
+                "fast_path_attempted": pipeline.fast_path_attempted,
+                "fast_path_used": pipeline.fast_path_used,
+                "fast_path_reason": pipeline.fast_path_reason,
+                "fast_path_type": pipeline.generated.fast_path_type,
                 "grounded_score": grounded_score,
                 "grounding_reason": grounding_reason,
                 "hallucination_detected": hallucination_detected,
@@ -1130,6 +1185,10 @@ class StandardWorkflow:
                 "retrieval_cache_hit": pipeline.retrieval_cache_hit,
                 "rerank_cache_hit": pipeline.rerank_cache_hit,
                 "llm_cache_hit": llm_cache_hit,
+                "fast_path_attempted": pipeline.fast_path_attempted,
+                "fast_path_used": pipeline.fast_path_used,
+                "fast_path_reason": pipeline.fast_path_reason,
+                "fast_path_type": pipeline.generated.fast_path_type,
                 "rerank_ms": timings.get("rerank_ms", 0),
                 "context_select_ms": timings.get("context_select_ms", 0),
                 "llm_generate_ms": timings.get("llm_generate_ms", 0),
