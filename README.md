@@ -64,6 +64,48 @@ Kiểm tra nhanh:
 curl http://127.0.0.1:8000/api/v1/health
 ```
 
+### Khởi động Backend API trên Windows (Ollama + WSL)
+
+Nếu bạn chạy backend trong WSL nhưng muốn dùng Ollama từ Windows (GPU), dùng lại luồng này:
+
+1. Windows PowerShell (Admin):
+
+```powershell
+Get-Process ollama | Stop-Process -Force
+$env:OLLAMA_HOST="0.0.0.0:11434"
+ollama serve
+```
+
+2. Trong WSL, đảm bảo không chạy Ollama local:
+
+```bash
+sudo snap stop ollama
+curl http://127.0.0.1:11434/api/tags
+```
+
+3. Kiểm tra WSL gọi được Ollama Windows (thay IP cho đúng máy bạn):
+
+```bash
+curl http://172.25.80.1:11434/api/tags
+```
+
+4. Cập nhật `.env`:
+
+```env
+OLLAMA_BASE_URL=http://172.25.80.1:11434
+LLM_PROVIDER=openai_compatible
+LLM_MODEL=qwen2.5:3b
+LLM_API_BASE=http://172.25.80.1:11434/v1
+LLM_API_KEY=ollama
+```
+
+5. Chạy backend từ WSL:
+
+```bash
+source .venv/bin/activate
+uvicorn app.main:app --reload
+```
+
 ### Frontend
 
 ```bash
