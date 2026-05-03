@@ -116,9 +116,14 @@ def test_settings_defaults(monkeypatch) -> None:
         == "uploaded_vector_index.metadata.json"
     )
     assert settings.faiss_seeded_index_filename == "seeded_vector_index.faiss"
-    assert settings.faiss_seeded_metadata_filename == "seeded_vector_index.metadata.json"
+    assert (
+        settings.faiss_seeded_metadata_filename == "seeded_vector_index.metadata.json"
+    )
     assert settings.faiss_index_path == Path("data/indexes") / "vector_index.faiss"
-    assert settings.faiss_metadata_path == Path("data/indexes") / "vector_index.metadata.json"
+    assert (
+        settings.faiss_metadata_path
+        == Path("data/indexes") / "vector_index.metadata.json"
+    )
     assert (
         settings.faiss_uploaded_index_path
         == Path("data/indexes") / "uploaded_vector_index.faiss"
@@ -282,7 +287,9 @@ def test_vector_index_backend_allows_faiss_and_falls_back_for_invalid_values(
     assert settings_invalid.vector_index_backend == "inmemory"
 
 
-def test_faiss_filenames_are_sanitized_and_resolved_under_index_dir(monkeypatch) -> None:
+def test_faiss_filenames_are_sanitized_and_resolved_under_index_dir(
+    monkeypatch,
+) -> None:
     monkeypatch.setenv("INDEX_DIR", "custom-index-dir")
     monkeypatch.setenv("FAISS_INDEX_FILENAME", "/tmp/override.faiss")
     monkeypatch.setenv("FAISS_METADATA_FILENAME", "../override.meta.json")
@@ -292,6 +299,5 @@ def test_faiss_filenames_are_sanitized_and_resolved_under_index_dir(monkeypatch)
     assert settings.faiss_metadata_filename == "override.meta.json"
     assert settings.faiss_index_path == Path("custom-index-dir") / "override.faiss"
     assert (
-        settings.faiss_metadata_path
-        == Path("custom-index-dir") / "override.meta.json"
+        settings.faiss_metadata_path == Path("custom-index-dir") / "override.meta.json"
     )

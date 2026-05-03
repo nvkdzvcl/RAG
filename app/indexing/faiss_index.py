@@ -111,7 +111,9 @@ class FaissVectorIndex(VectorIndex):
         self._revision += 1
         self._build_faiss_index()
 
-    def search(self, query_vector: list[float], top_k: int = 5) -> list[tuple[int, float]]:
+    def search(
+        self, query_vector: list[float], top_k: int = 5
+    ) -> list[tuple[int, float]]:
         if top_k <= 0:
             return []
         if self.size == 0:

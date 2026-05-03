@@ -729,9 +729,11 @@ class RuntimeIndexManager:
         return candidate if candidate else fallback
 
     def _uses_faiss_backend(self) -> bool:
-        backend = str(
-            getattr(self._settings, "vector_index_backend", "inmemory")
-        ).strip().lower()
+        backend = (
+            str(getattr(self._settings, "vector_index_backend", "inmemory"))
+            .strip()
+            .lower()
+        )
         return backend == "faiss"
 
     def _faiss_artifact_filenames(self, *, source: str) -> tuple[str, str]:
