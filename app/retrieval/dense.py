@@ -176,11 +176,11 @@ class DenseRetriever:
             ranked = search_index.search(query_vector.tolist(), top_k=top_k)
             chunks = search_index.chunks
 
-            results: list[RetrievalResult] = []
+            search_results: list[RetrievalResult] = []
             for rank, (idx, score) in enumerate(ranked, start=1):
                 chunk = chunks[idx]
                 dense_score = float(score)
-                results.append(
+                search_results.append(
                     RetrievalResult.from_chunk(
                         chunk,
                         score=dense_score,
@@ -189,7 +189,7 @@ class DenseRetriever:
                         rank=rank,
                     )
                 )
-            return results
+            return search_results
 
         self._refresh_index_cache_if_needed()
         query_vector = self._embed_query(query)

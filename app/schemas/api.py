@@ -17,6 +17,7 @@ class QueryRequest(BaseModel):
     mode: Mode = Mode.STANDARD
     chat_history: list[dict[str, str]] = Field(default_factory=list)
     model: str | None = Field(default=None, min_length=1)
+    response_language: str | None = Field(default=None, min_length=2, max_length=8)
     doc_ids: list[str] | None = None
     filenames: list[str] | None = None
     file_types: list[str] | None = None

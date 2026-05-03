@@ -11,6 +11,26 @@ from app.schemas.ingestion import DocumentChunk
 class VectorIndex(ABC):
     """Abstract vector index contract."""
 
+    @property
+    @abstractmethod
+    def size(self) -> int:
+        """Number of indexed chunks."""
+
+    @property
+    @abstractmethod
+    def dimension(self) -> int:
+        """Embedding dimension of the index."""
+
+    @property
+    @abstractmethod
+    def revision(self) -> int:
+        """Monotonic revision incremented when index contents change."""
+
+    @property
+    @abstractmethod
+    def chunks(self) -> list[DocumentChunk]:
+        """Indexed chunks in internal order."""
+
     @abstractmethod
     def build(self, chunks: list[DocumentChunk], vectors: list[list[float]]) -> None:
         """Build index from chunks and pre-computed vectors."""

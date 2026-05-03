@@ -118,6 +118,7 @@ class QueryService:
                 mode=payload.mode,
                 chat_history=payload.chat_history,
                 model=payload.model,
+                response_language=payload.response_language,
                 query_filters=query_filters or None,
                 event_handler=event_handler,
                 event_context=event_context,
@@ -127,6 +128,7 @@ class QueryService:
             "mode": payload.mode,
             "chat_history": payload.chat_history,
             "model": payload.model,
+            "response_language": payload.response_language,
             "query_filters": query_filters or None,
         }
         if event_handler is not None:
