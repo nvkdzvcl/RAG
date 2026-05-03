@@ -723,6 +723,154 @@ class RuntimeIndexManager:
     def _invalidate_retrieval_cache(self) -> None:
         self.caches.retrieval.invalidate()
 
+    @staticmethod
+    def _safe_filename(value: str, fallback: str) -> str:
+        candidate = Path(str(value).strip()).name
+        return candidate if candidate else fallback
+
+    def _uses_faiss_backend(self) -> bool:
+        backend = str(
+            getattr(self._settings, "vector_index_backend", "inmemory")
+        ).strip().lower()
+        return backend == "faiss"
+
+    def _faiss_artifact_filenames(self, *, source: str) -> tuple[str, str]:
+        if source == "uploaded":
+            return (
+                self._safe_filename(
+                    str(
+                        getattr(
+                            self._settings,
+                            "faiss_uploaded_index_filename",
+                            "uploaded_vector_index.faiss",
+                        )
+                    ),
+                    "uploaded_vector_index.faiss",
+                ),
+                self._safe_filename(
+                    str(
+                        getattr(
+                            self._settings,
+                            "faiss_uploaded_metadata_filename",
+                            "uploaded_vector_index.metadata.json",
+                        )
+                    ),
+                    "uploaded_vector_index.metadata.json",
+                ),
+            )
+        if source == "seeded":
+            return (
+                self._safe_filename(
+                    str(
+                        getattr(
+                            self._settings,
+                            "faiss_seeded_index_filename",
+                            "seeded_vector_index.faiss",
+                        )
+                    ),
+                    "seeded_vector_index.faiss",
+                ),
+                self._safe_filename(
+                    str(
+                        getattr(
+                            self._settings,
+                            "faiss_seeded_metadata_filename",
+                            "seeded_vector_index.metadata.json",
+                        )
+                    ),
+                    "seeded_vector_index.metadata.json",
+                ),
+            )
+
+        return (
+            self._safe_filename(
+                str(
+                    getattr(
+                        self._settings,
+                        "faiss_index_filename",
+                        "vector_index.faiss",
+                    )
+                ),
+                "vector_index.faiss",
+            ),
+            self._safe_filename(
+                str(
+                    getattr(
+                        self._settings,
+                        "faiss_metadata_filename",
+                        "vector_index.metadata.json",
+                    )
+                ),
+                "vector_index.metadata.json",
+            ),
+        )
+
+    def _uploaded_vector_artifact_filenames(self) -> list[str]:
+        binary_filename, metadata_filename = self._faiss_artifact_filenames(
+            source="uploaded"
+        )
+        return [
+            self.UPLOADED_VECTOR_FILENAME,
+            binary_filename,
+            metadata_filename,
+        ]
+
+    def _generic_vector_artifact_filenames(self) -> list[str]:
+        binary_filename, metadata_filename = self._faiss_artifact_filenames(
+            source="generic"
+        )
+        return [
+            "vector_index.json",
+            binary_filename,
+            metadata_filename,
+        ]
+
+    def _save_vector_index_artifacts(self, *, vector_index: Any, source: str) -> None:
+        if self._uses_faiss_backend():
+            generic_binary, generic_metadata = self._faiss_artifact_filenames(
+                source="generic"
+            )
+            self.index_store.save_faiss_vector_index(
+                vector_index,
+                binary_filename=generic_binary,
+                metadata_filename=generic_metadata,
+            )
+            if source in {"uploaded", "seeded"}:
+                source_binary, source_metadata = self._faiss_artifact_filenames(
+                    source=source
+                )
+                self.index_store.save_faiss_vector_index(
+                    vector_index,
+                    binary_filename=source_binary,
+                    metadata_filename=source_metadata,
+                )
+            return
+
+        self.index_store.save_vector_index(vector_index)
+        if source == "uploaded":
+            self.index_store.save_vector_index(
+                vector_index,
+                filename=self.UPLOADED_VECTOR_FILENAME,
+            )
+        elif source == "seeded":
+            self.index_store.save_vector_index(
+                vector_index,
+                filename=self.SEEDED_VECTOR_FILENAME,
+            )
+
+    def _load_uploaded_vector_index(self) -> Any:
+        if self._uses_faiss_backend():
+            uploaded_binary, uploaded_metadata = self._faiss_artifact_filenames(
+                source="uploaded"
+            )
+            return self.index_store.load_faiss_vector_index(
+                binary_filename=uploaded_binary,
+                metadata_filename=uploaded_metadata,
+            )
+        return self.index_store.load_vector_index(
+            filename=self.UPLOADED_VECTOR_FILENAME
+        )
+
     def _resolve_loader(self, path: Path) -> BaseLoader | None:
         for loader in self.loaders:
             if loader.supports(path):
@@ -914,12 +1062,14 @@ class RuntimeIndexManager:
         deleted_files = 0
         index_root = self.index_dir.resolve()
         target_filenames = [
-            self.UPLOADED_VECTOR_FILENAME,
+            *self._uploaded_vector_artifact_filenames(),
             self.UPLOADED_BM25_FILENAME,
             self.UPLOADED_MANIFEST_FILENAME,
         ]
         if include_legacy_generic:
-            target_filenames.extend(["vector_index.json", "bm25_index.json"])
+            target_filenames.extend(
+                [*self._generic_vector_artifact_filenames(), "bm25_index.json"]
+            )
 
         for filename in target_filenames:
             candidate = (self.index_dir / filename).resolve()
@@ -961,9 +1111,7 @@ class RuntimeIndexManager:
             return None
 
         try:
-            vector_index = self.index_store.load_vector_index(
-                filename=self.UPLOADED_VECTOR_FILENAME
-            )
+            vector_index = self._load_uploaded_vector_index()
             bm25_index = self.index_store.load_bm25_index(
                 filename=self.UPLOADED_BM25_FILENAME
             )
@@ -1064,13 +1212,12 @@ class RuntimeIndexManager:
             retrieval_cache=self.caches.retrieval,
         )
 
-        self.index_store.save_vector_index(built.vector_index)
         self.index_store.save_bm25_index(built.bm25_index)
+        self._save_vector_index_artifacts(
+            vector_index=built.vector_index,
+            source=source,
+        )
         if source == "uploaded":
-            self.index_store.save_vector_index(
-                built.vector_index,
-                filename=self.UPLOADED_VECTOR_FILENAME,
-            )
             self.index_store.save_bm25_index(
                 built.bm25_index,
                 filename=self.UPLOADED_BM25_FILENAME,
@@ -1081,10 +1228,6 @@ class RuntimeIndexManager:
             )
             self._save_uploaded_manifest(manifest)
         elif source == "seeded":
-            self.index_store.save_vector_index(
-                built.vector_index,
-                filename=self.SEEDED_VECTOR_FILENAME,
-            )
             self.index_store.save_bm25_index(
                 built.bm25_index,
                 filename=self.SEEDED_BM25_FILENAME,
