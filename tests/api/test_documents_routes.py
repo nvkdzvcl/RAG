@@ -235,6 +235,23 @@ def test_upload_endpoint_accepts_docx(
     assert body["status"] == "ready"
 
 
+def test_upload_endpoint_rejects_unsupported_file_type(
+    isolated_client: tuple[TestClient, Path],
+) -> None:
+    client, _ = isolated_client
+
+    response = client.post(
+        "/api/v1/documents/upload",
+        files={"file": ("unsupported.csv", b"a,b,c\n1,2,3", "text/csv")},
+    )
+
+    assert response.status_code == 400
+    detail = response.json().get("detail", "")
+    assert "Unsupported file type" in detail
+    assert "TXT" in detail
+    assert "Markdown" in detail
+
+
 def test_document_status_endpoint_returns_saved_state(
     isolated_client: tuple[TestClient, Path],
 ) -> None:
@@ -267,6 +284,45 @@ def test_document_status_endpoint_returns_saved_state(
     listed_body = listed.json()
     assert "documents" in listed_body
     assert any(item["document_id"] == document_id for item in listed_body["documents"])
+
+
+def test_query_uses_uploaded_markdown_chunks_when_available(
+    isolated_client: tuple[TestClient, Path],
+) -> None:
+    client, _ = isolated_client
+
+    upload_response = client.post(
+        "/api/v1/documents/upload",
+        files={
+            "file": (
+                "guide.md",
+                b"# Guide\n\nUnique markdown token: md-route-token-741.",
+                "text/markdown",
+            )
+        },
+    )
+    assert upload_response.status_code == 201
+    uploaded_document_id = upload_response.json()["document_id"]
+
+    query_response = client.post(
+        "/api/v1/query",
+        json={
+            "query": "md-route-token-741 la gi?",
+            "mode": "standard",
+            "chat_history": [],
+        },
+    )
+    assert query_response.status_code == 200
+
+    body = query_response.json()
+    citations = body["citations"]
+    assert citations
+    assert any(citation["doc_id"] == uploaded_document_id for citation in citations)
+    assert any(
+        "md-route-token-741" in (citation.get("content") or "")
+        for citation in citations
+    )
+    assert body["trace"][0]["index_source"] == "uploaded"
 
 
 def test_query_uses_uploaded_document_chunks_when_available(
@@ -302,6 +358,61 @@ def test_query_uses_uploaded_document_chunks_when_available(
     assert citations
     assert any(citation["doc_id"] == uploaded_document_id for citation in citations)
     assert body["trace"][0]["index_source"] == "uploaded"
+
+
+def test_query_retrieval_works_after_indexing_txt_and_md(
+    isolated_client: tuple[TestClient, Path],
+) -> None:
+    client, _ = isolated_client
+
+    upload_txt = client.post(
+        "/api/v1/documents/upload",
+        files={
+            "file": (
+                "notes.txt",
+                b"unique-txt-token-557 appears only in txt document.",
+                "text/plain",
+            )
+        },
+    )
+    upload_md = client.post(
+        "/api/v1/documents/upload",
+        files={
+            "file": (
+                "playbook.md",
+                b"# Playbook\n\nunique-md-token-884 appears only in markdown document.",
+                "text/markdown",
+            )
+        },
+    )
+    assert upload_txt.status_code == 201
+    assert upload_md.status_code == 201
+    txt_doc_id = upload_txt.json()["document_id"]
+    md_doc_id = upload_md.json()["document_id"]
+
+    txt_query = client.post(
+        "/api/v1/query",
+        json={
+            "query": "unique-txt-token-557 nằm ở đâu?",
+            "mode": "standard",
+            "chat_history": [],
+        },
+    )
+    assert txt_query.status_code == 200
+    txt_body = txt_query.json()
+    assert any(citation["doc_id"] == txt_doc_id for citation in txt_body["citations"])
+
+    md_query = client.post(
+        "/api/v1/query",
+        json={
+            "query": "unique-md-token-884 nằm ở đâu?",
+            "mode": "standard",
+            "chat_history": [],
+        },
+    )
+    assert md_query.status_code == 200
+    md_body = md_query.json()
+    assert any(citation["doc_id"] == md_doc_id for citation in md_body["citations"])
 
 
 def test_query_trace_and_citations_include_uploaded_file_metadata(

@@ -5,7 +5,7 @@ from __future__ import annotations
 from pathlib import Path
 
 from app.ingestion.parsers.base import BaseDocumentParser
-from app.ingestion.parsers.utils import split_paragraphs
+from app.ingestion.parsers.utils import read_text_with_fallback, split_paragraphs
 from app.schemas.ingestion import DocumentBlock
 
 
@@ -61,7 +61,7 @@ class MarkdownParser(BaseDocumentParser):
         return stripped.startswith("![") and "](" in stripped and stripped.endswith(")")
 
     def parse(self, path: Path) -> list[DocumentBlock]:
-        lines = path.read_text(encoding="utf-8").splitlines()
+        lines = read_text_with_fallback(path).splitlines()
         blocks: list[DocumentBlock] = []
         text_buffer: list[str] = []
         table_buffer: list[str] = []

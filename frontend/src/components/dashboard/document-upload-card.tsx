@@ -4,9 +4,7 @@ import {
   AlertCircle,
   CheckCircle2,
   Circle,
-  FileText,
   Loader2,
-  Trash2,
   UploadCloud,
 } from "lucide-react";
 
@@ -22,18 +20,13 @@ import {
 } from "@/lib/upload-files";
 
 type DocumentUploadCardProps = {
-  documents: DocumentRecord[];
   activeDocument: DocumentRecord | null;
   isUploading: boolean;
-  isDeletingDocuments?: boolean;
-  deletingDocumentId?: string | null;
   uploadMessage: string | null;
   uploadError: string | null;
   uploadBatchItems?: UploadBatchItem[];
   uploadBatchSummary?: string | null;
   onUploadFiles: (files: File[]) => Promise<void>;
-  onRequestDeleteDocument?: (document: DocumentRecord) => void;
-  onRequestDeleteAllDocuments?: () => void;
 };
 
 type StageState = "pending" | "in_progress" | "done";
@@ -44,30 +37,7 @@ const STAGES: Array<{ id: ProcessingStage; label: string }> = [
   { id: "indexing", label: "Xây dựng chỉ mục" },
   { id: "ready", label: "Sẵn sàng" },
 ];
-
-function formatCreatedTime(value: string | null): string {
-  if (!value) {
-    return "n/a";
-  }
-  const date = new Date(value);
-  if (Number.isNaN(date.getTime())) {
-    return value;
-  }
-  return date.toLocaleString();
-}
-
-function statusBadgeClass(status: DocumentRecord["status"]): string {
-  if (status === "ready") {
-    return "border-emerald-300 bg-emerald-50 text-emerald-700";
-  }
-  if (status === "error") {
-    return "border-rose-300 bg-rose-50 text-rose-700";
-  }
-  if (status === "uploading") {
-    return "border-blue-300 bg-blue-50 text-blue-700";
-  }
-  return "border-violet-300 bg-violet-50 text-violet-700";
-}
+const COMPLETED_STEPS_SUMMARY = `Đã xử lý xong (${STAGES.length} bước)`;
 
 function uploadBatchStatusLabel(status: UploadBatchItem["status"]): string {
   if (status === "pending") {
@@ -84,15 +54,15 @@ function uploadBatchStatusLabel(status: UploadBatchItem["status"]): string {
 
 function uploadBatchStatusClass(status: UploadBatchItem["status"]): string {
   if (status === "success") {
-    return "border-emerald-300 bg-emerald-50 text-emerald-700";
+    return "border-success/35 bg-success/10 text-success";
   }
   if (status === "error") {
-    return "border-rose-300 bg-rose-50 text-rose-700";
+    return "border-destructive/35 bg-destructive/10 text-destructive";
   }
   if (status === "uploading") {
-    return "border-blue-300 bg-blue-50 text-blue-700";
+    return "border-primary/35 bg-primary/10 text-primary";
   }
-  return "border-slate-300 bg-slate-50 text-slate-600";
+  return "border-border bg-muted text-muted-foreground";
 }
 
 function stageState(active: DocumentRecord | null, stage: ProcessingStage): StageState {
@@ -123,12 +93,12 @@ function stageState(active: DocumentRecord | null, stage: ProcessingStage): Stag
 
 function StageIndicator({ state }: { state: StageState }) {
   if (state === "done") {
-    return <CheckCircle2 className="h-4 w-4 text-emerald-600" />;
+    return <CheckCircle2 className="h-4 w-4 text-success" />;
   }
   if (state === "in_progress") {
-    return <Loader2 className="h-4 w-4 animate-spin text-blue-600" />;
+    return <Loader2 className="h-4 w-4 animate-spin text-primary" />;
   }
-  return <Circle className="h-4 w-4 text-slate-400" />;
+  return <Circle className="h-4 w-4 text-muted-foreground" />;
 }
 
 function isFileDrag(event: DragEvent | ReactDragEvent<HTMLElement>): boolean {
@@ -136,25 +106,34 @@ function isFileDrag(event: DragEvent | ReactDragEvent<HTMLElement>): boolean {
 }
 
 export function DocumentUploadCard({
-  documents,
   activeDocument,
   isUploading,
-  isDeletingDocuments = false,
-  deletingDocumentId = null,
   uploadMessage,
   uploadError,
   uploadBatchItems = [],
   uploadBatchSummary = null,
   onUploadFiles,
-  onRequestDeleteDocument,
-  onRequestDeleteAllDocuments,
 }: DocumentUploadCardProps) {
   const [isDragging, setIsDragging] = useState(false);
   const [fileSelectionErrors, setFileSelectionErrors] = useState<string[]>([]);
+  const [showCompletedSteps, setShowCompletedSteps] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const dragDepthRef = useRef(0);
 
   const activeProgress = activeDocument?.uploadProgress;
+  const isActivelyProcessing =
+    isUploading || activeDocument?.status === "uploading" || activeDocument?.status === "processing";
+  const isProcessingComplete = !!activeDocument && activeDocument.status === "ready";
+  const shouldRenderProcessingPanel = isActivelyProcessing || isProcessingComplete;
+  const showProcessingSteps = isActivelyProcessing || showCompletedSteps;
+  const normalizedUploadMessage = uploadMessage?.trim() ?? "";
+  const normalizedBatchSummary = uploadBatchSummary?.trim() ?? "";
+  const isRedundantUploadSuccessMessage =
+    normalizedUploadMessage.length > 0
+    && (
+      normalizedUploadMessage === normalizedBatchSummary
+      || /^Đã tải lên\s+\d+\/\d+\s+tệp$/i.test(normalizedUploadMessage)
+    );
 
   useEffect(() => {
     const preventPageFileDrop = (event: DragEvent) => {
@@ -171,6 +150,18 @@ export function DocumentUploadCard({
       window.removeEventListener("drop", preventPageFileDrop);
     };
   }, []);
+
+  useEffect(() => {
+    if (isActivelyProcessing) {
+      setShowCompletedSteps(true);
+      return;
+    }
+    if (isProcessingComplete) {
+      setShowCompletedSteps(false);
+      return;
+    }
+    setShowCompletedSteps(false);
+  }, [isActivelyProcessing, isProcessingComplete, activeDocument?.id]);
 
   const resetDragState = () => {
     dragDepthRef.current = 0;
@@ -236,11 +227,11 @@ export function DocumentUploadCard({
   };
 
   return (
-    <Card className="border-slate-200 shadow-sm">
+    <Card className="shadow-sm">
       <CardHeader className="pb-3">
         <CardTitle className="text-base">{translations.upload.title}</CardTitle>
       </CardHeader>
-      <CardContent className="space-y-4">
+      <CardContent className="space-y-3">
         <input
           ref={fileInputRef}
           type="file"
@@ -254,62 +245,133 @@ export function DocumentUploadCard({
         />
 
         <div
-          className={`rounded-xl border border-dashed px-4 py-5 transition ${
-            isDragging ? "border-blue-500 bg-blue-50 ring-2 ring-blue-100" : "border-slate-300 bg-slate-50"
-          }`}
+          className={`group flex min-h-[236px] flex-col items-center justify-center rounded-2xl border-2 border-dashed px-6 py-8 text-center transition ${
+            isDragging
+              ? "border-primary bg-primary/10 shadow-subtle"
+              : "border-border bg-background hover:border-primary/40 hover:bg-muted/30"
+          } ${isUploading ? "cursor-not-allowed opacity-80" : "cursor-pointer"}`}
+          role="button"
+          tabIndex={isUploading ? -1 : 0}
+          aria-disabled={isUploading}
           onDragEnter={handleDragEnter}
           onDragOver={handleDragOver}
           onDragLeave={handleDragLeave}
           onDrop={handleDrop}
+          onClick={() => {
+            if (!isUploading) {
+              fileInputRef.current?.click();
+            }
+          }}
+          onKeyDown={(event) => {
+            if (isUploading) {
+              return;
+            }
+            if (event.key === "Enter" || event.key === " ") {
+              event.preventDefault();
+              fileInputRef.current?.click();
+            }
+          }}
         >
-          <div className="flex flex-col items-center gap-2 text-center">
-            <UploadCloud className="h-6 w-6 text-blue-600" />
-            <p className="text-sm font-medium text-slate-700">Kéo thả tài liệu PDF hoặc DOCX vào đây</p>
-            <p className="text-xs text-slate-500">hoặc nhấn để chọn tệp</p>
-            <p className="text-xs font-medium text-slate-500">Hỗ trợ PDF, DOCX • Tối đa 50MB mỗi tệp</p>
+          <div className="flex flex-col items-center gap-3 text-center">
+            <div className="rounded-2xl border border-border bg-card p-4 shadow-sm transition group-hover:border-primary/35 group-hover:bg-primary/5">
+              <UploadCloud className="h-8 w-8 text-primary" />
+            </div>
+            <p className="text-base font-semibold text-foreground">Kéo thả PDF, DOCX, TXT hoặc MD vào đây</p>
+            <p className="text-sm text-muted-foreground">hoặc nhấn để chọn tệp</p>
+            <p className="text-xs font-medium text-muted-foreground">Hỗ trợ PDF, DOCX, TXT, MD · Tối đa 50MB mỗi tệp</p>
             <Button
               type="button"
-              variant="outline"
-              size="sm"
-              className="mt-1 bg-accent hover:bg-accent/90"
-              onClick={() => fileInputRef.current?.click()}
+              size="default"
+              className="mt-2"
+              onClick={(event) => {
+                event.stopPropagation();
+                fileInputRef.current?.click();
+              }}
               disabled={isUploading}
             >
-              {translations.upload.button}
+              Chọn tài liệu
             </Button>
           </div>
         </div>
 
-        {typeof activeProgress === "number" && (isUploading || activeDocument?.status !== "ready") ? (
-          <div className="space-y-2 rounded-lg border border-slate-200 bg-white px-3 py-2">
-            <div className="flex items-center justify-between text-xs text-slate-500">
-              <span>Tiến trình tải lên</span>
-              <span>{activeProgress}%</span>
+        {shouldRenderProcessingPanel ? (
+          <section className="space-y-2 rounded-xl border border-border bg-card px-3 py-2.5">
+            <div className="flex items-center justify-between gap-3">
+              <div>
+                <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">Tiến trình xử lý</p>
+                <p className="text-sm text-foreground">
+                  {isActivelyProcessing ? "Đang xử lý tài liệu" : COMPLETED_STEPS_SUMMARY}
+                </p>
+              </div>
+              {!isActivelyProcessing ? (
+                <Button
+                  type="button"
+                  size="sm"
+                  variant="outline"
+                  className="h-8 text-xs"
+                  onClick={() => setShowCompletedSteps((previous) => !previous)}
+                >
+                  {showCompletedSteps ? "Thu gọn" : "Xem chi tiết"}
+                </Button>
+              ) : (
+                <Badge variant="outline" className="border-primary/35 bg-primary/10 text-primary">
+                  processing
+                </Badge>
+              )}
             </div>
-            <div className="h-2 rounded-full bg-slate-200">
-              <div
-                className="h-2 rounded-full bg-primary transition-all"
-                style={{ width: `${Math.max(0, Math.min(100, activeProgress))}%` }}
-              />
-            </div>
-          </div>
+            {showProcessingSteps ? (
+              <div className="space-y-2">
+                {typeof activeProgress === "number" && isActivelyProcessing ? (
+                  <div className="space-y-2 rounded-lg border border-border bg-background px-3 py-2">
+                    <div className="flex items-center justify-between text-xs text-muted-foreground">
+                      <span>Tiến trình tải lên</span>
+                      <span>{activeProgress}%</span>
+                    </div>
+                    <div className="h-2 rounded-full bg-muted">
+                      <div
+                        className="h-2 rounded-full bg-primary transition-all"
+                        style={{ width: `${Math.max(0, Math.min(100, activeProgress))}%` }}
+                      />
+                    </div>
+                  </div>
+                ) : null}
+
+                <ol className="space-y-2">
+                  {STAGES.map((stage) => {
+                    const state = stageState(activeDocument, stage.id);
+                    return (
+                      <li key={stage.id} className="flex items-center justify-between rounded-lg border border-border bg-background px-3 py-1.5">
+                        <div className="flex items-center gap-2">
+                          <StageIndicator state={state} />
+                          <span className="text-sm text-foreground">{stage.label}</span>
+                        </div>
+                        <span className="text-xs uppercase tracking-wide text-muted-foreground">
+                          {state === "done" ? "complete" : state === "in_progress" ? "processing" : "pending"}
+                        </span>
+                      </li>
+                    );
+                  })}
+                </ol>
+              </div>
+            ) : null}
+          </section>
         ) : null}
 
         {uploadBatchItems.length > 0 ? (
-          <div className="space-y-2 rounded-lg border border-slate-200 bg-white px-3 py-2">
+          <div className="space-y-2 rounded-lg border border-border bg-background px-3 py-2">
             <div className="flex items-center justify-between gap-2">
-              <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">Danh sách tải lên</p>
-              {uploadBatchSummary ? <p className="text-xs font-medium text-slate-600">{uploadBatchSummary}</p> : null}
+              <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">Danh sách tải lên</p>
+              {uploadBatchSummary ? <p className="text-xs font-medium text-muted-foreground">{uploadBatchSummary}</p> : null}
             </div>
-            <ul className="max-h-32 space-y-1 overflow-y-auto pr-1">
+            <ul className="space-y-1">
               {uploadBatchItems.map((item) => (
-                <li key={item.id} className="flex items-center justify-between gap-2 rounded-md bg-slate-50 px-2 py-1">
+                <li key={item.id} className="flex items-center justify-between gap-2 rounded-md bg-muted/40 px-2 py-1">
                   <div className="min-w-0">
-                    <p className="truncate text-xs font-medium text-slate-700">{item.filename}</p>
+                    <p className="truncate text-xs font-medium text-foreground">{item.filename}</p>
                     {item.message ? (
-                      <p className="truncate text-[11px] text-slate-500">{item.message}</p>
+                      <p className="truncate text-[11px] text-muted-foreground">{item.message}</p>
                     ) : item.status === "uploading" && typeof item.progress === "number" ? (
-                      <p className="text-[11px] text-slate-500">{item.progress}%</p>
+                      <p className="text-[11px] text-muted-foreground">{item.progress}%</p>
                     ) : null}
                   </div>
                   <Badge variant="outline" className={`shrink-0 ${uploadBatchStatusClass(item.status)}`}>
@@ -321,21 +383,21 @@ export function DocumentUploadCard({
           </div>
         ) : null}
 
-        {uploadMessage ? (
-          <div className="rounded-lg border border-emerald-200 bg-emerald-50 px-3 py-2 text-sm text-emerald-700">
+        {uploadMessage && !isRedundantUploadSuccessMessage ? (
+          <div className="rounded-lg border border-success/35 bg-success/10 px-3 py-2 text-sm text-success">
             {uploadMessage}
           </div>
         ) : null}
 
         {uploadError ? (
-          <div className="flex items-center gap-2 rounded-lg border border-rose-200 bg-rose-50 px-3 py-2 text-sm text-rose-700">
+          <div className="flex items-center gap-2 rounded-lg border border-destructive/35 bg-destructive/10 px-3 py-2 text-sm text-destructive">
             <AlertCircle className="h-4 w-4" />
             <span>{uploadError}</span>
           </div>
         ) : null}
 
         {fileSelectionErrors.length > 0 ? (
-          <div className="flex gap-2 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-800">
+          <div className="flex gap-2 rounded-lg border border-warning/35 bg-warning/10 px-3 py-2 text-sm text-warning">
             <AlertCircle className="mt-0.5 h-4 w-4 shrink-0" />
             <div className="space-y-1">
               {fileSelectionErrors.map((message) => (
@@ -344,89 +406,6 @@ export function DocumentUploadCard({
             </div>
           </div>
         ) : null}
-
-        <div className="space-y-2">
-          <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">Các giai đoạn xử lý</p>
-          <ul className="space-y-1.5 rounded-lg border border-slate-200 bg-white px-3 py-3">
-            {STAGES.map((stage) => {
-              const state = stageState(activeDocument, stage.id);
-              return (
-                <li key={stage.id} className="flex items-center justify-between">
-                  <div className="flex items-center gap-2">
-                    <StageIndicator state={state} />
-                    <span className="text-sm text-slate-700">{stage.label}</span>
-                  </div>
-                  <span className="text-xs uppercase tracking-wide text-slate-400">
-                    {state === "done" ? "hoàn tất" : state === "in_progress" ? "đang chạy" : "chờ"}
-                  </span>
-                </li>
-              );
-            })}
-          </ul>
-        </div>
-
-        <div className="space-y-2">
-          <div className="flex items-center justify-between gap-2">
-            <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">Tài liệu đã xử lý</p>
-            {onRequestDeleteAllDocuments ? (
-              <Button
-                type="button"
-                size="sm"
-                variant="outline"
-                disabled={documents.length === 0 || isDeletingDocuments || isUploading}
-                onClick={onRequestDeleteAllDocuments}
-                className="h-8 gap-1 border-rose-300 bg-rose-50 px-2 text-rose-700 hover:bg-rose-100 disabled:cursor-not-allowed disabled:opacity-50"
-              >
-                <Trash2 className="h-3.5 w-3.5" />
-                <span className="text-xs">Xóa tất cả</span>
-              </Button>
-            ) : null}
-          </div>
-          {documents.length === 0 ? (
-            <div className="rounded-lg border border-slate-200 bg-white px-3 py-3 text-sm text-slate-500">
-              {translations.upload.noDocuments}. {translations.upload.uploadFirst}.
-            </div>
-          ) : (
-            <ul className="max-h-44 space-y-2 overflow-y-auto pr-1">
-              {documents.map((document) => {
-                const isDeletingThisDocument = deletingDocumentId === document.id;
-                const canDelete = !!onRequestDeleteDocument && !isUploading && !isDeletingDocuments;
-                return (
-                  <li key={document.id} className="rounded-lg border border-slate-200 bg-white px-3 py-2">
-                    <div className="flex items-center justify-between gap-2">
-                      <div className="flex min-w-0 items-center gap-2">
-                        <FileText className="h-4 w-4 shrink-0 text-slate-500" />
-                        <p className="line-clamp-1 text-sm font-medium text-slate-700">{document.filename}</p>
-                      </div>
-                      <div className="flex items-center gap-2">
-                        <Badge variant="outline" className={`capitalize ${statusBadgeClass(document.status)}`}>
-                          {document.status === "ready" ? "sẵn sàng" : document.status === "error" ? "lỗi" : document.status === "uploading" ? "đang tải" : "đang xử lý"}
-                        </Badge>
-                        {onRequestDeleteDocument ? (
-                          <Button
-                            type="button"
-                            size="sm"
-                            variant="outline"
-                            disabled={!canDelete}
-                            onClick={() => onRequestDeleteDocument(document)}
-                            className="h-8 gap-1 border-rose-300 bg-rose-50 px-2 text-rose-700 hover:bg-rose-100 disabled:cursor-not-allowed disabled:opacity-50"
-                            title={isDeletingThisDocument ? "Đang xóa tài liệu..." : "Xóa tài liệu"}
-                          >
-                            <Trash2 className="h-3.5 w-3.5" />
-                            <span className="text-xs">{isDeletingThisDocument ? "Đang xóa" : "Xóa"}</span>
-                          </Button>
-                        ) : null}
-                      </div>
-                    </div>
-                    <div className="mt-1 text-xs text-slate-500">
-                      số đoạn: {document.chunkCount ?? "n/a"} • tạo lúc: {formatCreatedTime(document.createdAt)}
-                    </div>
-                  </li>
-                );
-              })}
-            </ul>
-          )}
-        </div>
       </CardContent>
     </Card>
   );

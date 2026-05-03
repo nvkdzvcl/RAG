@@ -11,6 +11,7 @@ from app.ingestion.base_loader import (
     build_doc_id,
 )
 from app.ingestion.parsers import MarkdownParser
+from app.ingestion.parsers.utils import read_text_with_fallback
 from app.schemas.ingestion import DocumentBlock, LoadedDocument
 
 
@@ -40,7 +41,7 @@ class MarkdownLoader(BaseLoader):
         try:
             blocks = self.parser.parse(path)
         except Exception:
-            raw = path.read_text(encoding="utf-8")
+            raw = read_text_with_fallback(path)
             blocks = [
                 DocumentBlock(
                     type="text",

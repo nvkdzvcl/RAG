@@ -11,6 +11,7 @@ from app.ingestion.base_loader import (
     build_doc_id,
 )
 from app.ingestion.parsers import TextParser
+from app.ingestion.parsers.utils import read_text_with_fallback
 from app.schemas.ingestion import DocumentBlock, LoadedDocument
 
 
@@ -43,7 +44,7 @@ class TextLoader(BaseLoader):
             blocks = [
                 DocumentBlock(
                     type="text",
-                    content=path.read_text(encoding="utf-8"),
+                    content=read_text_with_fallback(path),
                     metadata={
                         "page": None,
                         "section": None,

@@ -7,6 +7,7 @@ from types import SimpleNamespace
 
 from app.ingestion.chunker import Chunker
 from app.ingestion.parsers.docx_parser import DocxParser
+from app.ingestion.parsers.markdown_parser import MarkdownParser
 from app.ingestion.parsers.pdf_parser import PDFParser
 from app.ingestion.parsers.text_parser import TextParser
 from app.ingestion.text_loader import TextLoader
@@ -102,6 +103,33 @@ def test_text_parser_splits_paragraphs_without_losing_utf8(tmp_path: Path) -> No
     assert len(blocks) == 2
     assert blocks[0].content == "Đoạn một."
     assert "Đoạn hai" in blocks[1].content
+
+
+def test_text_parser_supports_cp1258_encoded_text(tmp_path: Path) -> None:
+    path = tmp_path / "cp1258.txt"
+    content = "Café token cp1258-551."
+    path.write_bytes(content.encode("cp1258"))
+
+    blocks = TextParser().parse(path)
+
+    assert blocks
+    assert any("cp1258-551" in block.content for block in blocks)
+
+
+def test_markdown_parser_supports_utf8_sig_and_preserves_heading_section(
+    tmp_path: Path,
+) -> None:
+    path = tmp_path / "guide.md"
+    path.write_text(
+        "# Mục lục\n\nNội dung markdown với token md-sig-551.",
+        encoding="utf-8-sig",
+    )
+
+    blocks = MarkdownParser().parse(path)
+
+    assert blocks
+    assert any(block.metadata.get("section") == "Mục lục" for block in blocks)
+    assert any("md-sig-551" in block.content for block in blocks)
 
 
 def test_pdf_parser_ocr_disabled_does_not_invoke_ocr(monkeypatch) -> None:

@@ -143,7 +143,7 @@ export function QueryFilters({
           <summary className="cursor-pointer text-xs font-medium text-foreground">
             Chọn tài liệu ({selectedDocuments.length}/{readyDocuments.length})
           </summary>
-          <div className="mt-2 max-h-28 space-y-1 overflow-y-auto pr-1">
+          <div className="mt-2 space-y-1">
             {readyDocuments.map((document) => {
               const checked = selectedSet.has(document.id);
               return (

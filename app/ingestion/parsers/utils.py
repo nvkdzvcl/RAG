@@ -3,6 +3,14 @@
 from __future__ import annotations
 
 import re
+from pathlib import Path
+
+TEXT_DECODE_FALLBACK_ENCODINGS: tuple[str, ...] = (
+    "utf-8-sig",
+    "utf-8",
+    "cp1258",
+    "latin-1",
+)
 
 
 def split_paragraphs(text: str) -> list[str]:
@@ -10,6 +18,17 @@ def split_paragraphs(text: str) -> list[str]:
     normalized = text.replace("\r\n", "\n").replace("\r", "\n")
     parts = re.split(r"\n\s*\n+", normalized)
     return [part.strip() for part in parts if part and part.strip()]
+
+
+def read_text_with_fallback(path: Path) -> str:
+    """Read text using a safe encoding fallback chain."""
+    payload = path.read_bytes()
+    for encoding in TEXT_DECODE_FALLBACK_ENCODINGS:
+        try:
+            return payload.decode(encoding=encoding)
+        except UnicodeDecodeError:
+            continue
+    return payload.decode(encoding="latin-1")
 
 
 def rows_to_markdown_table(rows: list[list[str | None]]) -> str:

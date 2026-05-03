@@ -1,16 +1,20 @@
 import { useEffect, useMemo, useRef, useState } from "react";
+import type { KeyboardEvent as ReactKeyboardEvent } from "react";
 import { CheckCircle2, Clock3, X } from "lucide-react";
 
 import { ApiRequestError, getHealthStatus, isQueryStreamEnabled, postQuery, postQueryStream } from "@/api/client";
 import type { ApiQueryRequest, ApiQueryResponse, ApiRetrievalMode } from "@/api/types";
 import { apiToUi } from "@/api/transform";
 import { AppShell } from "@/components/dashboard/app-shell";
-import { DocumentUploadCard } from "@/components/dashboard/document-upload-card";
+import { DocumentChunksPanel } from "@/components/dashboard/document-chunks-panel";
 import {
-  QueryFilters,
-  type QueryFileTypeFilter,
-  type QueryOcrFilter,
-} from "@/components/dashboard/query-filters";
+  DocumentPreviewPanel,
+  type DocumentPreviewChunk,
+  type DocumentPreviewStats,
+} from "@/components/dashboard/document-preview-panel";
+import { DocumentUploadCard } from "@/components/dashboard/document-upload-card";
+import { DocumentsManagementPanel } from "@/components/dashboard/documents-management-panel";
+import { type QueryFileTypeFilter, type QueryOcrFilter } from "@/components/dashboard/query-filters";
 import { SettingsModal, type SettingsChangePayload } from "@/components/dashboard/settings-modal";
 import { ChatContainer } from "@/components/rag/chat-container";
 import { CitationPreviewModal } from "@/components/rag/citation-preview-modal";
@@ -38,7 +42,7 @@ import {
   readThemePreference,
   type ThemeMode,
 } from "@/lib/theme";
-import type { Mode, QueryResult, SingleMode } from "@/types/chat";
+import type { Mode, QueryResult, SingleMode, SourceReference } from "@/types/chat";
 import type { ChatSession, ChatSessionMessage } from "@/types/chat-session";
 import type { DocumentRecord } from "@/types/document";
 
@@ -188,6 +192,120 @@ function firstUserMessageTitle(messages: ChatSessionMessage[]): string {
   return derived || defaultSessionTitle();
 }
 
+function normalizeFileName(value: string): string {
+  return value.trim().toLowerCase();
+}
+
+function sourceTextForPreview(source: SourceReference): string {
+  const content = source.content?.trim();
+  if (content) {
+    return content;
+  }
+  const text = source.text?.trim();
+  if (text) {
+    return text;
+  }
+  return source.snippet?.trim() ?? "";
+}
+
+function sourceMatchesDocument(source: SourceReference, document: DocumentRecord): boolean {
+  if (source.docId === document.id) {
+    return true;
+  }
+  const sourceName = source.fileName ? normalizeFileName(source.fileName) : "";
+  if (!sourceName) {
+    return false;
+  }
+  return sourceName === normalizeFileName(document.filename);
+}
+
+function previewSourcesByBranch(result: QueryResult | null): Array<{ branchLabel: string; sources: SourceReference[] }> {
+  if (!result) {
+    return [];
+  }
+  if (result.mode === "compare") {
+    return [
+      { branchLabel: "Standard", sources: result.standard.sources },
+      { branchLabel: "Advanced", sources: result.advanced.sources },
+    ];
+  }
+  return [{ branchLabel: result.mode === "advanced" ? "Advanced" : "Standard", sources: result.sources }];
+}
+
+function extractDocumentChunks(result: QueryResult | null, document: DocumentRecord): DocumentPreviewChunk[] {
+  const byBranch = previewSourcesByBranch(result);
+  if (byBranch.length === 0) {
+    return [];
+  }
+
+  const dedupe = new Set<string>();
+  const chunks: DocumentPreviewChunk[] = [];
+  for (const branch of byBranch) {
+    for (const source of branch.sources) {
+      if (!sourceMatchesDocument(source, document)) {
+        continue;
+      }
+      const text = sourceTextForPreview(source);
+      if (!text) {
+        continue;
+      }
+      const key = `${branch.branchLabel}:${source.chunkId}:${text}`;
+      if (dedupe.has(key)) {
+        continue;
+      }
+      dedupe.add(key);
+      chunks.push({
+        chunkId: source.chunkId,
+        text,
+        branchLabel: branch.branchLabel,
+        blockType: source.blockType ?? null,
+        page: typeof source.page === "number" ? source.page : null,
+      });
+    }
+  }
+  return chunks;
+}
+
+function formatFileTypeLabel(filename: string): string | null {
+  const parts = filename.split(".");
+  if (parts.length < 2) {
+    return null;
+  }
+  const extension = parts[parts.length - 1]?.trim().toLowerCase();
+  if (!extension) {
+    return null;
+  }
+  return extension.toUpperCase();
+}
+
+function estimateTokensFromChunks(chunks: DocumentPreviewChunk[]): number | null {
+  if (chunks.length === 0) {
+    return null;
+  }
+  let total = 0;
+  for (const chunk of chunks) {
+    const wordCount = chunk.text.trim().split(/\s+/u).filter(Boolean).length;
+    total += wordCount;
+  }
+  return total > 0 ? total : null;
+}
+
+function buildPreviewStats(
+  document: DocumentRecord | null,
+  chunks: DocumentPreviewChunk[],
+): DocumentPreviewStats | null {
+  if (!document) {
+    return null;
+  }
+  const chunkCount = document.chunkCount ?? (chunks.length > 0 ? chunks.length : null);
+  return {
+    chunkCount,
+    estimatedTokens: estimateTokensFromChunks(chunks),
+    fileType: formatFileTypeLabel(document.filename),
+    uploadedAt: document.createdAt,
+  };
+}
+
 export function ChatPage() {
   const [sessions, setSessions] = useState<ChatSession[]>(() => initialSessions());
   const [activeSessionId, setActiveSessionId] = useState<string | null>(null);
@@ -202,6 +320,7 @@ export function ChatPage() {
   const [activeCitationId, setActiveCitationId] = useState<string | null>(null);
   const [previewCitation, setPreviewCitation] = useState<CitationPanelItem | null>(null);
   const [showDocumentsModal, setShowDocumentsModal] = useState(false);
+  const [activeTab, setActiveTab] = useState<"upload" | "documents">("upload");
   const [toastMessage, setToastMessage] = useState<string | null>(null);
   const [chunkSize, setChunkSize] = useState(1000);
   const [chunkOverlap, setChunkOverlap] = useState(100);
@@ -214,6 +333,17 @@ export function ChatPage() {
   const [selectedDocumentForDelete, setSelectedDocumentForDelete] = useState<DocumentRecord | null>(null);
   const [isDeletingAllDocuments, setIsDeletingAllDocuments] = useState(false);
   const [isDeletingSingleDocument, setIsDeletingSingleDocument] = useState(false);
+  const [showDeleteSelectedDialog, setShowDeleteSelectedDialog] = useState(false);
+  const [isDeletingSelectedDocuments, setIsDeletingSelectedDocuments] = useState(false);
+  const [pendingDeleteSelectedIds, setPendingDeleteSelectedIds] = useState<string[]>([]);
+  const [previewDocument, setPreviewDocument] = useState<DocumentRecord | null>(null);
+  const [previewChunks, setPreviewChunks] = useState<DocumentPreviewChunk[]>([]);
+  const [isPreviewLoading, setIsPreviewLoading] = useState(false);
+  const [previewError, setPreviewError] = useState<string | null>(null);
+  const [chunksDocument, setChunksDocument] = useState<DocumentRecord | null>(null);
+  const [documentChunks, setDocumentChunks] = useState<DocumentPreviewChunk[]>([]);
+  const [isChunksLoading, setIsChunksLoading] = useState(false);
+  const [chunksError, setChunksError] = useState<string | null>(null);
   const [showSettingsModal, setShowSettingsModal] = useState(false);
   const [selectedFilterDocIds, setSelectedFilterDocIds] = useState<string[]>([]);
   const [selectedFileTypes, setSelectedFileTypes] = useState<QueryFileTypeFilter[]>([]);
@@ -221,9 +351,13 @@ export function ChatPage() {
   const [uploadedBefore, setUploadedBefore] = useState("");
   const [ocrFilter, setOcrFilter] = useState<QueryOcrFilter>("all");
   const abortControllerRef = useRef<AbortController | null>(null);
+  const uploadTabButtonRef = useRef<HTMLButtonElement | null>(null);
+  const documentsTabButtonRef = useRef<HTMLButtonElement | null>(null);
 
   const {
     documents,
+    isDocumentsLoading,
+    documentsError,
     activeDocument,
     isUploading,
     isDeletingDocuments,
@@ -237,6 +371,7 @@ export function ChatPage() {
     uploadFiles,
     clearAllUploadedDocuments,
     deleteUploadedDocument,
+    refreshDocuments,
     reindexDocuments,
     updateRetrievalSettings,
   } = useDocumentIngestion();
@@ -271,6 +406,10 @@ export function ChatPage() {
   const activeSession = useMemo(
     () => sessions.find((item) => item.id === activeSessionId) ?? sessions[0] ?? null,
     [sessions, activeSessionId],
+  );
+  const previewStats = useMemo(
+    () => buildPreviewStats(previewDocument, previewChunks),
+    [previewDocument, previewChunks],
   );
 
   useEffect(() => {
@@ -738,6 +877,9 @@ export function ChatPage() {
   };
 
   const handleClearVectorStore = async () => {
+    if (isDeletingAllDocuments || isDeletingSingleDocument || isDeletingSelectedDocuments) {
+      return false;
+    }
     setError(null);
     setNotice(null);
     setIsDeletingAllDocuments(true);
@@ -761,6 +903,9 @@ export function ChatPage() {
   };
 
   const handleDeleteSingleDocument = async () => {
+    if (isDeletingSingleDocument || isDeletingSelectedDocuments || isDeletingAllDocuments) {
+      return false;
+    }
     if (!selectedDocumentForDelete) {
       return false;
     }
@@ -784,6 +929,151 @@ export function ChatPage() {
     } finally {
       setIsDeletingSingleDocument(false);
     }
+  };
+
+  const handleDeleteSelectedDocuments = async () => {
+    if (isDeletingSelectedDocuments || isDeletingSingleDocument || isDeletingAllDocuments) {
+      return false;
+    }
+    if (pendingDeleteSelectedIds.length === 0) {
+      return true;
+    }
+
+    setError(null);
+    setNotice(null);
+    setIsDeletingSelectedDocuments(true);
+    const deletingIds = [...new Set(pendingDeleteSelectedIds)];
+    const deletedIds = new Set<string>();
+    let failureCount = 0;
+
+    try {
+      for (const documentId of deletingIds) {
+        try {
+          const deleted = await deleteUploadedDocument(documentId);
+          deletedIds.add(deleted.documentId);
+        } catch {
+          failureCount += 1;
+        }
+      }
+
+      if (deletedIds.size > 0) {
+        setSelectedFilterDocIds((previous) => previous.filter((item) => !deletedIds.has(item)));
+        if (activeSession && resultReferencesDeletedDocuments(activeSession.lastResult ?? null, deletedIds)) {
+          clearCurrentSessionResult(activeSession.id);
+        }
+        setNotice(`Đã xóa ${deletedIds.size} tài liệu đã chọn.`);
+      }
+
+      if (failureCount > 0) {
+        setError(`Không thể xóa ${failureCount} tài liệu đã chọn.`);
+      }
+
+      setPendingDeleteSelectedIds([]);
+      return true;
+    } finally {
+      setIsDeletingSelectedDocuments(false);
+    }
+  };
+
+  const handleCloseDocumentPreview = () => {
+    setPreviewDocument(null);
+    setPreviewChunks([]);
+    setPreviewError(null);
+    setIsPreviewLoading(false);
+  };
+
+  const handleOpenDocumentPreview = async (document: DocumentRecord) => {
+    setChunksDocument(null);
+    setDocumentChunks([]);
+    setChunksError(null);
+    setIsChunksLoading(false);
+    setPreviewDocument(document);
+    setPreviewError(null);
+    setIsPreviewLoading(true);
+    try {
+      await Promise.resolve();
+      const nextChunks = extractDocumentChunks(activeSession?.lastResult ?? result ?? null, document);
+      setPreviewChunks(nextChunks);
+    } catch (requestError) {
+      setPreviewChunks([]);
+      setPreviewError(
+        requestError instanceof Error && requestError.message.trim().length > 0
+          ? requestError.message
+          : "Không thể chuẩn bị preview cho tài liệu này.",
+      );
+    } finally {
+      setIsPreviewLoading(false);
+    }
+  };
+
+  const handleCloseDocumentChunks = () => {
+    setChunksDocument(null);
+    setDocumentChunks([]);
+    setChunksError(null);
+    setIsChunksLoading(false);
+  };
+
+  const handleOpenDocumentChunks = async (document: DocumentRecord) => {
+    setPreviewDocument(null);
+    setPreviewChunks([]);
+    setPreviewError(null);
+    setIsPreviewLoading(false);
+    setChunksDocument(document);
+    setChunksError(null);
+    setIsChunksLoading(true);
+    try {
+      await Promise.resolve();
+      const nextChunks = extractDocumentChunks(activeSession?.lastResult ?? result ?? null, document);
+      setDocumentChunks(nextChunks);
+    } catch (requestError) {
+      setDocumentChunks([]);
+      setChunksError(
+        requestError instanceof Error && requestError.message.trim().length > 0
+          ? requestError.message
+          : "Không thể tải chunks cho tài liệu này.",
+      );
+    } finally {
+      setIsChunksLoading(false);
+    }
+  };
+
+  const openDocumentsModal = (tab: "upload" | "documents" = "upload") => {
+    setActiveTab(tab);
+    setShowDocumentsModal(true);
+  };
+
+  const closeDocumentsModal = () => {
+    setShowDocumentsModal(false);
+    handleCloseDocumentPreview();
+    handleCloseDocumentChunks();
+  };
+
+  const handleDocumentsTabsKeyDown = (event: ReactKeyboardEvent<HTMLDivElement>) => {
+    if (!["ArrowLeft", "ArrowRight", "Home", "End"].includes(event.key)) {
+      return;
+    }
+    event.preventDefault();
+    const tabOrder: Array<"upload" | "documents"> = ["upload", "documents"];
+    const currentIndex = tabOrder.indexOf(activeTab);
+    let nextIndex = currentIndex;
+
+    if (event.key === "ArrowRight") {
+      nextIndex = (currentIndex + 1) % tabOrder.length;
+    } else if (event.key === "ArrowLeft") {
+      nextIndex = (currentIndex - 1 + tabOrder.length) % tabOrder.length;
+    } else if (event.key === "Home") {
+      nextIndex = 0;
+    } else if (event.key === "End") {
+      nextIndex = tabOrder.length - 1;
+    }
+
+    const nextTab = tabOrder[nextIndex];
+    setActiveTab(nextTab);
+    if (nextTab === "upload") {
+      uploadTabButtonRef.current?.focus();
+      return;
+    }
+    documentsTabButtonRef.current?.focus();
   };
 
   const handleSettingsChange = async (payload: SettingsChangePayload) => {
@@ -960,7 +1250,7 @@ export function ChatPage() {
         notice={notice}
         streamProgress={streamProgress}
         canQuery={canQuery}
-        onOpenDocuments={() => setShowDocumentsModal(true)}
+        onOpenDocuments={() => openDocumentsModal("upload")}
         onCitationClick={handleCitationClick}
         onCopied={handleCopyNotice}
         onRegenerate={handleRegenerate}
@@ -1006,7 +1296,7 @@ export function ChatPage() {
             onDeleteChat={handleDeleteChat}
             documentsCount={documents.length}
             readyDocumentsCount={readyDocuments.length}
-            onOpenDocuments={() => setShowDocumentsModal(true)}
+            onOpenDocuments={() => openDocumentsModal("documents")}
             onClearHistory={() => setShowClearHistoryDialog(true)}
             onClearVectorStore={() => setShowClearVectorDialog(true)}
             onOpenSettings={() => setShowSettingsModal(true)}
@@ -1018,7 +1308,7 @@ export function ChatPage() {
       />
 
       {showDocumentsModal ? (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-3 backdrop-blur-sm dark:bg-black/70">
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-background/75 p-3 backdrop-blur-sm">
           <div className="flex max-h-[90vh] w-full max-w-4xl flex-col rounded-xl border border-border bg-background shadow-soft">
             <div className="flex shrink-0 items-center justify-between border-b border-border px-4 py-3">
               <div>
@@ -1031,44 +1321,153 @@ export function ChatPage() {
                 type="button"
                 variant="ghost"
                 size="icon"
-                onClick={() => setShowDocumentsModal(false)}
+                onClick={closeDocumentsModal}
                 className="text-muted-foreground hover:text-foreground"
                 title="Close documents"
+                aria-label="Đóng modal tài liệu"
               >
                 <X className="h-4 w-4" />
               </Button>
             </div>
-            <div className="min-h-0 flex-1 space-y-4 overflow-y-auto p-4 dark:[&_.bg-blue-50]:!bg-primary/10 dark:[&_.bg-emerald-50]:!bg-success/10 dark:[&_.bg-rose-50]:!bg-destructive/10 dark:[&_.bg-slate-100]:!bg-card dark:[&_.bg-slate-50]:!bg-card dark:[&_.bg-white]:!bg-background dark:[&_.border-blue-300]:!border-primary/30 dark:[&_.border-emerald-200]:!border-success/25 dark:[&_.border-rose-200]:!border-destructive/25 dark:[&_.border-slate-100]:!border-border dark:[&_.border-slate-200]:!border-border dark:[&_.border-slate-300]:!border-muted dark:[&_.text-blue-600]:!text-primary dark:[&_.text-emerald-700]:!text-success dark:[&_.text-rose-700]:!text-destructive dark:[&_.text-slate-400]:!text-muted-foreground dark:[&_.text-slate-500]:!text-muted-foreground dark:[&_.text-slate-600]:!text-muted-foreground dark:[&_.text-slate-700]:!text-foreground dark:[&_.text-slate-800]:!text-foreground dark:[&_.text-slate-900]:!text-foreground">
-              <DocumentUploadCard
-                documents={documents}
-                activeDocument={activeDocument}
-                isUploading={isUploading}
-                isDeletingDocuments={isDeletingDocuments}
-                deletingDocumentId={deletingDocumentId}
-                uploadMessage={uploadMessage}
-                uploadError={uploadError}
-                uploadBatchItems={uploadBatchItems}
-                uploadBatchSummary={uploadBatchSummary}
-                onUploadFiles={uploadFiles}
-                onRequestDeleteDocument={(document) => setSelectedDocumentForDelete(document)}
-                onRequestDeleteAllDocuments={() => setShowClearVectorDialog(true)}
-              />
-              <QueryFilters
-                documents={documents}
-                selectedDocIds={selectedFilterDocIds}
-                onSelectedDocIdsChange={setSelectedFilterDocIds}
-                selectedFileTypes={selectedFileTypes}
-                onSelectedFileTypesChange={setSelectedFileTypes}
-                uploadedAfter={uploadedAfter}
-                onUploadedAfterChange={setUploadedAfter}
-                uploadedBefore={uploadedBefore}
-                onUploadedBeforeChange={setUploadedBefore}
-                ocrFilter={ocrFilter}
-                onOcrFilterChange={setOcrFilter}
-                disabled={isLoading}
-              />
+            <div
+              role="tablist"
+              aria-label="Documents tabs"
+              className="flex shrink-0 items-center gap-2 border-b border-border px-4 py-2"
+              onKeyDown={handleDocumentsTabsKeyDown}
+            >
+              <Button
+                ref={uploadTabButtonRef}
+                type="button"
+                size="sm"
+                variant={activeTab === "upload" ? "default" : "outline"}
+                className={activeTab === "upload" ? "h-8" : "h-8 text-muted-foreground"}
+                onClick={() => setActiveTab("upload")}
+                role="tab"
+                id="documents-tab-upload"
+                aria-controls="documents-panel-upload"
+                aria-selected={activeTab === "upload"}
+                tabIndex={activeTab === "upload" ? 0 : -1}
+              >
+                Upload
+              </Button>
+              <Button
+                ref={documentsTabButtonRef}
+                type="button"
+                size="sm"
+                variant={activeTab === "documents" ? "default" : "outline"}
+                className={activeTab === "documents" ? "h-8" : "h-8 text-muted-foreground"}
+                onClick={() => setActiveTab("documents")}
+                role="tab"
+                id="documents-tab-documents"
+                aria-controls="documents-panel-documents"
+                aria-selected={activeTab === "documents"}
+                tabIndex={activeTab === "documents" ? 0 : -1}
+              >
+                Documents
+              </Button>
+            </div>
+            <div
+              role="tabpanel"
+              id={activeTab === "upload" ? "documents-panel-upload" : "documents-panel-documents"}
+              aria-labelledby={activeTab === "upload" ? "documents-tab-upload" : "documents-tab-documents"}
+              className="min-h-0 flex-1 overflow-y-auto p-4"
+            >
+              {activeTab === "upload" ? (
+                <DocumentUploadCard
+                  activeDocument={activeDocument}
+                  isUploading={isUploading}
+                  uploadMessage={uploadMessage}
+                  uploadError={uploadError}
+                  uploadBatchItems={uploadBatchItems}
+                  uploadBatchSummary={uploadBatchSummary}
+                  onUploadFiles={uploadFiles}
+                />
+              ) : (
+                <div className="space-y-4">
+                  <DocumentsManagementPanel
+                    documents={documents}
+                    isDocumentsLoading={isDocumentsLoading}
+                    documentsError={documentsError}
+                    selectedDocIds={selectedFilterDocIds}
+                    onSelectedDocIdsChange={setSelectedFilterDocIds}
+                    selectedFileTypes={selectedFileTypes}
+                    onSelectedFileTypesChange={setSelectedFileTypes}
+                    uploadedAfter={uploadedAfter}
+                    onUploadedAfterChange={setUploadedAfter}
+                    uploadedBefore={uploadedBefore}
+                    onUploadedBeforeChange={setUploadedBefore}
+                    ocrFilter={ocrFilter}
+                    onOcrFilterChange={setOcrFilter}
+                    disabled={isLoading}
+                    isUploading={isUploading}
+                    isDeletingDocuments={
+                      isDeletingDocuments
+                      || isDeletingSingleDocument
+                      || isDeletingSelectedDocuments
+                      || isDeletingAllDocuments
+                    }
+                    deletingDocumentId={deletingDocumentId}
+                    onRetryLoadDocuments={() => void refreshDocuments()}
+                    onGoToUploadTab={() => setActiveTab("upload")}
+                    onRequestDeleteDocument={(document) => {
+                      if (isDeletingSingleDocument || isDeletingSelectedDocuments || isDeletingAllDocuments) {
+                        return;
+                      }
+                      setSelectedDocumentForDelete(document);
+                    }}
+                    onRequestDeleteSelected={(documentIds) => {
+                      if (isDeletingSingleDocument || isDeletingSelectedDocuments || isDeletingAllDocuments) {
+                        return;
+                      }
+                      if (documentIds.length === 0) {
+                        return;
+                      }
+                      setPendingDeleteSelectedIds(documentIds);
+                      setShowDeleteSelectedDialog(true);
+                    }}
+                    onRequestPreviewDocument={(document) => {
+                      void handleOpenDocumentPreview(document);
+                    }}
+                    onRequestViewDetails={(document) => {
+                      void handleOpenDocumentPreview(document);
+                    }}
+                    onRequestViewChunks={(document) => {
+                      void handleOpenDocumentChunks(document);
+                    }}
+                  />
+                </div>
+              )}
             </div>
           </div>
+
+          <DocumentPreviewPanel
+            open={previewDocument !== null}
+            documentName={previewDocument?.filename ?? ""}
+            chunks={previewChunks}
+            stats={previewStats}
+            isLoading={isPreviewLoading}
+            error={previewError}
+            onClose={handleCloseDocumentPreview}
+            onRetry={() => {
+              if (previewDocument) {
+                void handleOpenDocumentPreview(previewDocument);
+              }
+            }}
+          />
+
+          <DocumentChunksPanel
+            open={chunksDocument !== null}
+            documentName={chunksDocument?.filename ?? ""}
+            chunks={documentChunks}
+            isLoading={isChunksLoading}
+            error={chunksError}
+            onClose={handleCloseDocumentChunks}
+            onRetry={() => {
+              if (chunksDocument) {
+                void handleOpenDocumentChunks(chunksDocument);
+              }
+            }}
+          />
         </div>
       ) : null}
 
@@ -1132,8 +1531,8 @@ export function ChatPage() {
         title="Xóa tài liệu"
         description={
           selectedDocumentForDelete
-            ? `Bạn có chắc chắn muốn xóa "${selectedDocumentForDelete.filename}"? Chỉ mục truy hồi sẽ được cập nhật lại.`
-            : "Bạn có chắc chắn muốn xóa tài liệu này?"
+            ? `Bạn có chắc muốn xóa tài liệu này?\n\nTệp: "${selectedDocumentForDelete.filename}". Chỉ mục truy hồi sẽ được cập nhật lại.`
+            : "Bạn có chắc muốn xóa tài liệu này?"
         }
         onConfirm={handleDeleteSingleDocument}
         confirmText={isDeletingSingleDocument ? "Đang xóa..." : "Xóa"}
@@ -1141,6 +1540,28 @@ export function ChatPage() {
         variant="destructive"
         confirmDisabled={isDeletingSingleDocument}
         cancelDisabled={isDeletingSingleDocument}
+      />
+
+      <AlertDialog
+        open={showDeleteSelectedDialog}
+        onOpenChange={(open) => {
+          setShowDeleteSelectedDialog(open);
+          if (!open) {
+            setPendingDeleteSelectedIds([]);
+          }
+        }}
+        title="Xóa tài liệu đã chọn"
+        description={`Bạn có chắc chắn muốn xóa ${pendingDeleteSelectedIds.length} tài liệu đã chọn? Chỉ mục truy hồi sẽ được cập nhật lại.`}
+        onConfirm={handleDeleteSelectedDocuments}
+        confirmText={
+          isDeletingSelectedDocuments
+            ? `Đang xóa ${pendingDeleteSelectedIds.length} tài liệu...`
+            : `Xóa ${pendingDeleteSelectedIds.length} tài liệu`
+        }
+        cancelText="Hủy"
+        variant="destructive"
+        confirmDisabled={isDeletingSelectedDocuments}
+        cancelDisabled={isDeletingSelectedDocuments}
       />
     </>
   );

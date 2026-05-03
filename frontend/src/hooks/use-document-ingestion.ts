@@ -123,6 +123,8 @@ type BackendAvailability = "unknown" | "available" | "unavailable";
 
 export type UseDocumentIngestionResult = {
   documents: DocumentRecord[];
+  isDocumentsLoading: boolean;
+  documentsError: string | null;
   activeDocument: DocumentRecord | null;
   isUploading: boolean;
   isDeletingDocuments: boolean;
@@ -137,6 +139,7 @@ export type UseDocumentIngestionResult = {
   uploadFiles: (files: File[]) => Promise<void>;
   clearAllUploadedDocuments: () => Promise<{ deletedDocuments: number; deletedFiles: number }>;
   deleteUploadedDocument: (documentId: string) => Promise<{ documentId: string; remainingDocuments: number }>;
+  refreshDocuments: () => Promise<void>;
   reindexDocuments: (payload: {
     mode: ApiChunkingMode;
     chunkSize: number;
@@ -163,6 +166,8 @@ export type UseDocumentIngestionResult = {
 
 export function useDocumentIngestion(): UseDocumentIngestionResult {
   const [documents, setDocuments] = useState<DocumentRecord[]>([]);
+  const [isDocumentsLoading, setIsDocumentsLoading] = useState(true);
+  const [documentsError, setDocumentsError] = useState<string | null>(null);
   const [backendAvailability, setBackendAvailability] = useState<BackendAvailability>("unknown");
   const [isUploading, setIsUploading] = useState(false);
   const [isDeletingDocuments, setIsDeletingDocuments] = useState(false);
@@ -220,14 +225,22 @@ export function useDocumentIngestion(): UseDocumentIngestionResult {
   );
 
   const refreshDocuments = useCallback(async () => {
+    setIsDocumentsLoading(true);
     try {
       const payload = await listDocuments();
       setDocuments(payload.map(mapApiDocument));
       setBackendAvailability("available");
+      setDocumentsError(null);
     } catch (error) {
       if (shouldFallback(error)) {
         setBackendAvailability("unavailable");
+        setDocumentsError("Không thể tải danh sách tài liệu lúc này. Vui lòng thử lại.");
+        return;
       }
+      const message = toErrorMessage(error, "Không thể tải danh sách tài liệu.");
+      setDocumentsError(message);
+    } finally {
+      setIsDocumentsLoading(false);
     }
   }, []);
 
@@ -284,6 +297,7 @@ export function useDocumentIngestion(): UseDocumentIngestionResult {
     let cancelled = false;
 
     const bootstrapDocuments = async () => {
+      setIsDocumentsLoading(true);
       try {
         const payload = await listDocuments();
         if (cancelled) {
@@ -293,6 +307,7 @@ export function useDocumentIngestion(): UseDocumentIngestionResult {
         const mapped = payload.map(mapApiDocument);
         setDocuments(mapped);
         setBackendAvailability("available");
+        setDocumentsError(null);
 
         for (const document of mapped) {
           if (document.status === "processing" || document.status === "uploading") {
@@ -305,11 +320,17 @@ export function useDocumentIngestion(): UseDocumentIngestionResult {
         }
         if (shouldFallback(error)) {
           setBackendAvailability("unavailable");
+          setDocumentsError("Không thể tải danh sách tài liệu lúc này. Bạn vẫn có thể tải tệp mới.");
           return;
         }
 
         setBackendAvailability("unavailable");
         setUploadError("Unable to load document list. You can still use local upload simulation.");
+        setDocumentsError("Không thể tải danh sách tài liệu. Vui lòng thử lại sau.");
+      } finally {
+        if (!cancelled) {
+          setIsDocumentsLoading(false);
+        }
       }
     };
 
@@ -531,6 +552,7 @@ export function useDocumentIngestion(): UseDocumentIngestionResult {
   const clearAllUploadedDocuments = useCallback(async () => {
     setUploadError(null);
     setUploadMessage(null);
+    setDocumentsError(null);
     setUploadBatchItems([]);
     setUploadBatchSummary(null);
     setIsDeletingDocuments(true);
@@ -568,6 +590,7 @@ export function useDocumentIngestion(): UseDocumentIngestionResult {
   const deleteUploadedDocument = useCallback(async (documentId: string) => {
     setUploadError(null);
     setUploadMessage(null);
+    setDocumentsError(null);
     setDeletingDocumentId(documentId);
     setIsDeletingDocuments(true);
 
@@ -697,7 +720,7 @@ export function useDocumentIngestion(): UseDocumentIngestionResult {
     if (!hasReady) {
       return {
         canQuery: false,
-        reason: "Upload and process a PDF first.",
+        reason: "Upload and process a document first.",
       };
     }
     if (hasProcessing) {
@@ -715,6 +738,8 @@ export function useDocumentIngestion(): UseDocumentIngestionResult {
 
   return {
     documents,
+    isDocumentsLoading,
+    documentsError,
     activeDocument,
     isUploading,
     isDeletingDocuments,
@@ -729,6 +754,7 @@ export function useDocumentIngestion(): UseDocumentIngestionResult {
     uploadFiles,
     clearAllUploadedDocuments,
     deleteUploadedDocument,
+    refreshDocuments,
     reindexDocuments,
     updateRetrievalSettings,
   };

@@ -27,20 +27,31 @@ export function AlertDialog({
   confirmDisabled = false,
   cancelDisabled = false,
 }: AlertDialogProps) {
+  const [isSubmitting, setIsSubmitting] = React.useState(false);
+
+  React.useEffect(() => {
+    if (!open) {
+      setIsSubmitting(false);
+    }
+  }, [open]);
+
   if (!open) return null;
 
   const handleConfirm = async () => {
-    if (confirmDisabled) {
+    if (confirmDisabled || isSubmitting) {
       return;
     }
+    setIsSubmitting(true);
     try {
       const result = await onConfirm();
       if (result === false) {
+        setIsSubmitting(false);
         return;
       }
       onOpenChange(false);
     } catch {
       // Keep dialog open when confirm action fails.
+      setIsSubmitting(false);
     }
   };
 
@@ -56,18 +67,18 @@ export function AlertDialog({
             <Button
               type="button"
               variant="outline"
-              disabled={cancelDisabled}
+              disabled={cancelDisabled || isSubmitting}
               onClick={() => onOpenChange(false)}
             >
               {cancelText}
             </Button>
             <Button
               type="button"
-              disabled={confirmDisabled}
+              disabled={confirmDisabled || isSubmitting}
               onClick={handleConfirm}
               className={
                 variant === "destructive"
-                  ? "bg-destructive text-destructive-foreground hover:bg-destructive/90"
+                  ? "border border-destructive/40 bg-destructive/10 text-destructive hover:bg-destructive/15"
                   : "bg-primary text-primary-foreground hover:bg-primary/90"
               }
             >
