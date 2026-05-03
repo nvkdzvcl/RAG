@@ -34,9 +34,9 @@ Mục tiêu của repo là một hệ thống rõ ràng, module hóa, dễ test 
 
 ## 3) Kiến trúc lưu trữ hiện tại
 
-- Vector index: `InMemoryVectorIndex` và persist JSON tại `data/indexes`.
+- Vector index: hỗ trợ `InMemoryVectorIndex` (mặc định) và `FaissVectorIndex` (tuỳ chọn).
 - Sparse index: BM25 local.
-- Chưa dùng ChromaDB/FAISS trong codebase hiện tại.
+- Persist index tại `data/indexes` (JSON metadata + file `.faiss` khi dùng backend FAISS).
 
 ## 4) Cài đặt nhanh
 
@@ -57,6 +57,22 @@ uvicorn app.main:app --reload
 ```
 
 Backend chạy tại `http://127.0.0.1:8000`.
+
+### Bật backend FAISS (tuỳ chọn)
+
+Repo ưu tiên dùng gói `faiss-cpu` cho backend FAISS. Để bật:
+
+```bash
+export VECTOR_INDEX_BACKEND=faiss
+```
+
+Hoặc thêm vào `.env`:
+
+```env
+VECTOR_INDEX_BACKEND=faiss
+```
+
+Nếu không đặt biến này, hệ thống mặc định chạy `inmemory` và không yêu cầu FAISS ở runtime path đó.
 
 Kiểm tra nhanh:
 

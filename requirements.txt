@@ -13,6 +13,7 @@ cryptography==47.0.0
 cuda-bindings==13.2.0
 cuda-pathfinder==1.5.3
 cuda-toolkit==13.0.2
+faiss-cpu==1.13.2
 fastapi==0.136.1
 filelock==3.29.0
 fsspec==2026.3.0
