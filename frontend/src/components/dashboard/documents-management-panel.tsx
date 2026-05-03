@@ -47,6 +47,8 @@ type DocumentsManagementPanelProps = {
 const FILE_TYPE_OPTIONS: Array<{ value: QueryFileTypeFilter; label: string }> = [
   { value: "pdf", label: "PDF" },
   { value: "docx", label: "DOCX" },
+  { value: "txt", label: "TXT" },
+  { value: "md", label: "MD" },
 ];
 const DOCUMENT_ROW_SKELETON_COUNT = 6;
 
@@ -113,10 +115,10 @@ function fileTypeFromFilename(filename: string): QueryFileTypeFilter | "other" {
     return "docx";
   }
   if (normalized.endsWith(".txt")) {
-    return "txt" as QueryFileTypeFilter;
+    return "txt";
   }
   if (normalized.endsWith(".md") || normalized.endsWith(".markdown")) {
-    return "md" as QueryFileTypeFilter;
+    return "md";
   }
   return "other";
 }

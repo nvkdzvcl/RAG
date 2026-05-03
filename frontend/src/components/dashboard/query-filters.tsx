@@ -2,7 +2,7 @@ import { useMemo } from "react";
 
 import type { DocumentRecord } from "@/types/document";
 
-export type QueryFileTypeFilter = "pdf" | "docx";
+export type QueryFileTypeFilter = "pdf" | "docx" | "txt" | "md";
 export type QueryOcrFilter = "all" | "only" | "exclude";
 
 type QueryFiltersProps = {
@@ -23,6 +23,8 @@ type QueryFiltersProps = {
 const FILE_TYPE_OPTIONS: Array<{ value: QueryFileTypeFilter; label: string }> = [
   { value: "pdf", label: "PDF" },
   { value: "docx", label: "DOCX" },
+  { value: "txt", label: "TXT" },
+  { value: "md", label: "MD" },
 ];
 
 function sortedReadyDocuments(documents: DocumentRecord[]): DocumentRecord[] {
