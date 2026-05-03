@@ -121,6 +121,10 @@ def test_faiss_vector_index_to_dict_from_dict_roundtrip_preserves_metadata(
     restored = FaissVectorIndex.from_dict(payload)
     ranked = restored.search([0.4, 0.4, 0.1], top_k=1)
 
+    assert "entries" in payload
+    assert len(payload["entries"]) == 3
+    assert payload["entries"][0]["chunk"]["chunk_id"] == "chunk_0"
+    assert isinstance(payload["entries"][0]["vector"], list)
     assert payload["id_map"] == ["chunk_0", "chunk_1", "chunk_2"]
     assert restored.size == index.size
     assert restored.dimension == index.dimension
@@ -131,6 +135,37 @@ def test_faiss_vector_index_to_dict_from_dict_roundtrip_preserves_metadata(
     assert restored.chunks[0].metadata["source_type"] == "unit_test"
     assert ranked
     assert restored.chunks[ranked[0][0]].chunk_id == "chunk_2"
+
+
+def test_faiss_vector_index_from_dict_supports_legacy_chunks_vectors_payload(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _install_fake_faiss(monkeypatch)
+    chunks = _build_chunks()
+    index = FaissVectorIndex()
+    index.build(
+        chunks,
+        [
+            [1.0, 0.0, 0.0],
+            [0.0, 1.0, 0.0],
+            [0.0, 0.0, 1.0],
+        ],
+    )
+    payload = index.to_dict()
+
+    legacy_payload = {
+        "dimension": payload["dimension"],
+        "revision": payload["revision"],
+        "id_map": payload["id_map"],
+        "chunks": [entry["chunk"] for entry in payload["entries"]],
+        "vectors": [entry["vector"] for entry in payload["entries"]],
+    }
+    restored = FaissVectorIndex.from_dict(legacy_payload)
+    ranked = restored.search([1.0, 0.0, 0.0], top_k=1)
+
+    assert restored.size == 3
+    assert ranked
+    assert restored.chunks[ranked[0][0]].chunk_id == "chunk_0"
 
 
 def test_faiss_vector_index_handles_empty_index_safely() -> None:

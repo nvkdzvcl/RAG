@@ -3,7 +3,6 @@
 from app.indexing.bm25_index import BM25Index
 from app.indexing.builder import BuiltIndexes, IndexBuilder
 from app.indexing.embeddings import BaseEmbeddingProvider, EmbeddingProvider
-from app.indexing.faiss_index import FaissVectorIndex
 from app.indexing.persistence import LocalIndexStore
 from app.indexing.providers.factory import create_embedding_provider
 from app.indexing.providers.hash_embedding import HashEmbeddingProvider
@@ -17,7 +16,6 @@ __all__ = [
     "BM25Index",
     "BuiltIndexes",
     "EmbeddingProvider",
-    "FaissVectorIndex",
     "HashEmbeddingProvider",
     "InMemoryVectorIndex",
     "IndexBuilder",

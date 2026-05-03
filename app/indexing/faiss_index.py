@@ -145,8 +145,13 @@ class FaissVectorIndex(VectorIndex):
             "dimension": self._dimension,
             "revision": self._revision,
             "id_map": list(self._id_map),
-            "chunks": [chunk.model_dump() for chunk in self._chunks],
-            "vectors": [list(vector) for vector in self._vectors],
+            "entries": [
+                {
+                    "chunk": chunk.model_dump(),
+                    "vector": vector,
+                }
+                for chunk, vector in zip(self._chunks, self._vectors)
+            ],
         }
 
     @classmethod
@@ -154,26 +159,25 @@ class FaissVectorIndex(VectorIndex):
         index = cls()
         persisted_revision = payload.get("revision")
 
-        raw_chunks = payload.get("chunks")
-        raw_vectors = payload.get("vectors")
-
         chunks: list[DocumentChunk] = []
         vectors: list[list[float]] = []
-
-        if isinstance(raw_chunks, list) and isinstance(raw_vectors, list):
-            chunks = [DocumentChunk.model_validate(item) for item in raw_chunks]
-            vectors = [
-                [float(value) for value in vector]
-                for vector in raw_vectors
-                if isinstance(vector, list)
-            ]
-            if len(vectors) != len(raw_vectors):
-                raise ValueError("Invalid vector payload for FaissVectorIndex")
-        else:
-            entries = payload.get("entries", [])
+        entries = payload.get("entries")
+        if isinstance(entries, list):
             for entry in entries:
                 chunks.append(DocumentChunk.model_validate(entry["chunk"]))
                 vectors.append([float(value) for value in entry["vector"]])
+        else:
+            raw_chunks = payload.get("chunks")
+            raw_vectors = payload.get("vectors")
+            if isinstance(raw_chunks, list) and isinstance(raw_vectors, list):
+                chunks = [DocumentChunk.model_validate(item) for item in raw_chunks]
+                vectors = [
+                    [float(value) for value in vector]
+                    for vector in raw_vectors
+                    if isinstance(vector, list)
+                ]
+                if len(vectors) != len(raw_vectors):
+                    raise ValueError("Invalid vector payload for FaissVectorIndex")
 
         if chunks:
             index.build(chunks, vectors)
