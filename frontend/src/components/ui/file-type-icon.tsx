@@ -1,4 +1,5 @@
-import { FileText } from "lucide-react";
+import { FileCode, FileText } from "lucide-react";
+import type { LucideIcon } from "lucide-react";
 
 /**
  * Supported file types for the FileTypeIcon component.
@@ -71,57 +72,67 @@ function detectFileType(
 type FileTypeVisual = {
   label: string;
   ariaLabel: string;
-  /** Tailwind classes for background, border, and text tint. */
-  containerClass: string;
-  /** Tailwind class for the label text color (slightly more saturated). */
-  labelClass: string;
+  /** Lucide icon component to render inside the tile. */
+  icon: LucideIcon;
+  /**
+   * Inline CSS background (gradient). Used via `style` so Tailwind doesn't
+   * need to know every possible gradient value.
+   */
+  bgStyle: React.CSSProperties;
+  /**
+   * Tailwind border class – a translucent tint of the tile colour so the
+   * edge is visible without being heavy.
+   */
+  borderClass: string;
 };
 
 const VISUALS: Record<FileType, FileTypeVisual> = {
   pdf: {
     label: "PDF",
     ariaLabel: "PDF file",
-    containerClass:
-      "border-red-300/60 bg-red-50 text-red-600 dark:border-red-500/30 dark:bg-red-950/40 dark:text-red-400",
-    labelClass: "text-red-700 dark:text-red-300",
+    icon: FileText,
+    bgStyle: { background: "linear-gradient(135deg, #dc2626 0%, #991b1b 100%)" },
+    borderClass: "border-red-400/30 dark:border-red-300/20",
   },
   docx: {
     label: "DOCX",
     ariaLabel: "DOCX file",
-    containerClass:
-      "border-blue-300/60 bg-blue-50 text-blue-600 dark:border-blue-500/30 dark:bg-blue-950/40 dark:text-blue-400",
-    labelClass: "text-blue-700 dark:text-blue-300",
+    icon: FileText,
+    bgStyle: { background: "linear-gradient(135deg, #2563eb 0%, #1e3a8a 100%)" },
+    borderClass: "border-blue-400/30 dark:border-blue-300/20",
   },
   txt: {
     label: "TXT",
     ariaLabel: "TXT file",
-    containerClass:
-      "border-slate-300/60 bg-slate-50 text-slate-500 dark:border-slate-500/30 dark:bg-slate-800/40 dark:text-slate-400",
-    labelClass: "text-slate-600 dark:text-slate-300",
+    icon: FileText,
+    bgStyle: { background: "linear-gradient(135deg, #64748b 0%, #334155 100%)" },
+    borderClass: "border-slate-400/30 dark:border-slate-300/20",
   },
   md: {
     label: "MD",
     ariaLabel: "Markdown file",
-    containerClass:
-      "border-violet-300/60 bg-violet-50 text-violet-600 dark:border-violet-500/30 dark:bg-violet-950/40 dark:text-violet-400",
-    labelClass: "text-violet-700 dark:text-violet-300",
+    icon: FileCode,
+    bgStyle: { background: "linear-gradient(135deg, #7c3aed 0%, #4c1d95 100%)" },
+    borderClass: "border-violet-400/30 dark:border-violet-300/20",
   },
   generic: {
     label: "FILE",
     ariaLabel: "File",
-    containerClass:
-      "border-border bg-muted/50 text-muted-foreground",
-    labelClass: "text-muted-foreground",
+    icon: FileText,
+    bgStyle: { background: "linear-gradient(135deg, #94a3b8 0%, #475569 100%)" },
+    borderClass: "border-slate-400/25 dark:border-slate-300/15",
   },
 };
 
 // ─── Component ───────────────────────────────────────────────────────────────
 
 /**
- * A compact, polished file-type icon badge.
+ * A compact, polished file-type tile icon.
  *
- * Renders a small card (≈36×36px) with a lucide FileText icon and a short
- * label (PDF, DOCX, TXT, MD, FILE) tinted to match the file type.
+ * Renders a filled gradient square (≈36×36 px) with a white lucide icon
+ * and a tiny white label (PDF, DOCX, TXT, MD, FILE).  The tile uses a
+ * subtle shadow and translucent border so it looks great in both light
+ * and dark modes.
  *
  * Detects type in order: extension → MIME → explicit prop → generic.
  */
@@ -133,18 +144,18 @@ export function FileTypeIcon({
 }: FileTypeIconProps) {
   const resolved = detectFileType(fileName, mimeType, fileType);
   const visual = VISUALS[resolved];
+  const Icon = visual.icon;
 
   return (
     <div
-      className={`inline-flex h-9 w-9 shrink-0 flex-col items-center justify-center gap-0.5 rounded-lg border ${visual.containerClass} ${className}`}
+      className={`inline-flex h-9 w-9 shrink-0 flex-col items-center justify-center gap-0.5 rounded-xl border shadow-sm ${visual.borderClass} ${className}`}
+      style={visual.bgStyle}
       role="img"
       aria-label={visual.ariaLabel}
       title={visual.ariaLabel}
     >
-      <FileText className="h-3.5 w-3.5" strokeWidth={2} />
-      <span
-        className={`text-[8px] font-bold uppercase leading-none tracking-wide ${visual.labelClass}`}
-      >
+      <Icon className="h-3.5 w-3.5 text-white/90" strokeWidth={2.2} />
+      <span className="text-[7px] font-extrabold uppercase leading-none tracking-wider text-white/80">
         {visual.label}
       </span>
     </div>
