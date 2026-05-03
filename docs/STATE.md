@@ -1,146 +1,88 @@
 # Project State
 
-Last updated: 2026-04-29 (Asia/Bangkok)
+Last updated: 2026-05-03 (Asia/Bangkok)
 
 ## Repository snapshot
 - Branch: `main`
-- HEAD: `5218fa63` (`reranker cascade: skip cross-encoder CPU khi không cần`)
+- HEAD: `40d325be`
 - Working tree: clean.
 
 ## Current status
-- Standard mode, Advanced mode, Compare mode run end-to-end.
-- Retrieval timing is request-scoped where supported (`RetrievalBatch`) and avoids shared timing races where possible.
-- Dynamic query budget for Standard mode is implemented (`simple_extractive` / `normal` / `complex`).
-- Adaptive grounding is implemented with policy, lazy semantic usage, and grounding cache.
-- Cascade reranking is implemented to reduce cross-encoder CPU overhead for cheap/high-confidence cases.
-- Advanced mode uses adaptive LLM-call policy to skip gate/critic/refine calls when signals are strong, while preserving strict/risky safety paths.
-- Compare mode now defaults to sequential execution and can reuse Standard pipeline output in Advanced loop-1 to avoid duplicate retrieval/rerank/generation.
-- Response schema compatibility is preserved (`latency_ms` and existing fields intact).
+- Standard mode, Advanced mode, Compare mode remain available end-to-end.
+- Vector index backend is now selectable via config:
+  - `VECTOR_INDEX_BACKEND=inmemory` (default, unchanged behavior)
+  - `VECTOR_INDEX_BACKEND=faiss`
+- FAISS integration is implemented behind the existing vector-index contract and factory selection.
+- Existing uploaded/seeded split and uploaded manifest stale-check mechanism are preserved.
+- InMemory persistence flow remains unchanged.
 
-## Recently completed
+## Recently completed (indexing/retrieval track)
 
-### 1) Dynamic query budget
-- Deterministic query complexity classifier (no LLM).
-- Per-profile budget for retrieval/rerank/context/max_tokens.
-- Standard pipeline uses selected budget for:
-  - retrieval top_k
-  - rerank top_k
-  - context limits
-  - generation max_tokens
+### 1) Configurable vector backend + FAISS paths
+- Added backend selector and safe fallback to `inmemory` for unsupported values.
+- Added FAISS filenames resolved under existing `INDEX_DIR`.
+- Updated `.env.example` with backend and FAISS filename variables.
 - Key files:
-  - `app/workflows/query_budget.py`
-  - `app/workflows/standard.py`
-  - `tests/workflows/test_query_budget.py`
+  - `app/core/config.py`
+  - `.env.example`
 
-### 2) Adaptive grounding
-- Grounding policy inputs:
-  - mode (`standard` / `advanced` / `compare`)
-  - query complexity
-  - status
-  - answer length
-  - citation count
-  - retrieval confidence (if available)
-  - fast-path flag
-- Standard path is lexical-first; semantic is policy-controlled and lazy-loaded.
-- Grounding cache key includes answer + selected context text + policy version.
-- Added trace fields:
-  - `grounding_policy`
-  - `grounding_semantic_used`
-  - `grounding_cache_hit`
-  - `grounding_ms`
+### 2) FAISS vector index class with same public contract
+- Added `FaissVectorIndex` with contract-compatible methods:
+  - `build(...)`
+  - `search(...)`
+  - `to_dict(...)`
+  - `from_dict(...)`
+  - required properties (`size`, `dimension`, `revision`, `chunks`, `vectors`)
+- Uses `faiss.IndexFlatIP` and L2 normalization for cosine-like similarity.
+- Keeps metadata/ID mapping JSON-serializable; FAISS binary stores vectors.
+- Handles empty index and dimension mismatch paths safely.
+- Key file:
+  - `app/indexing/faiss_index.py`
+
+### 3) Backend factory wiring
+- Added vector index factory and wired runtime index build path to it.
+- Lazy import of FAISS kept isolated to selected backend path.
 - Key files:
-  - `app/workflows/shared/grounding.py`
-  - `app/workflows/standard.py`
-  - `app/workflows/advanced_pipeline.py`
-  - `tests/workflows/test_grounding_helpers.py`
+  - `app/indexing/vector_factory.py`
+  - `app/services/index_runtime.py`
 
-### 3) Cascade reranking
-- Added deterministic `RerankPolicy`.
-- Policy behavior:
-  - `simple_extractive` -> skip cross-encoder
-  - few candidates -> skip cross-encoder
-  - high top score + clear gap -> skip cross-encoder
-  - ambiguous normal/complex -> allow cross-encoder
-  - advanced mode keeps quality path available
-- Uses existing `ScoreOnlyReranker` for cheap path.
-- Added trace fields:
-  - `rerank_policy`
-  - `reranker_used` (`score_only` / `cross_encoder` / `skipped`)
-  - `rerank_ms`
+### 4) FAISS persistence integrated with uploaded/seeded + manifest stale-check
+- Added FAISS persistence methods in `LocalIndexStore`:
+  - save/load FAISS binary index
+  - save/load JSON metadata payload (`entries` + optional `id_map` etc.)
+- Runtime now persists vector artifacts per source while preserving current manifest workflow:
+  - uploaded: uploaded FAISS artifacts + uploaded BM25 + uploaded manifest
+  - seeded: seeded FAISS artifacts + seeded BM25
+  - generic artifacts still maintained where runtime expects them
+- Uploaded stale manifest mismatch still triggers stale cleanup + rebuild.
+- No new `documents.json` introduced; document registry ownership unchanged.
 - Key files:
-  - `app/workflows/rerank_policy.py`
-  - `app/workflows/standard.py`
-  - `tests/workflows/test_rerank_policy.py`
-  - `tests/workflows/test_standard_workflow.py`
+  - `app/indexing/persistence.py`
+  - `app/services/index_runtime.py`
 
-### 4) Adaptive advanced-mode LLM call policy
-- Added `AdvancedPolicy` to control when to use:
-  - retrieval gate LLM (`heuristic` vs `llm`)
-  - critique LLM (`heuristic` vs `llm` / `skipped`)
-  - hallucination strict refine
-- Retrieval gate now defaults to heuristic and escalates to LLM only for ambiguity/risk/strictness.
-- Critique now runs heuristic-first and escalates to LLM only when risk/grounding/retrieval signals require it.
-- Refine step runs only when critique requires changes.
-- Language guard remains deterministic-first (LLM rewrite only on mismatch).
-- Added advanced trace/timing fields:
-  - `gate_strategy`
-  - `critique_strategy`
-  - `refine_used`
-  - `language_rewrite_used`
-  - `hallucination_refine_used`
-  - `llm_call_count_estimate`
+### 5) Tests added/updated
+- Added backend selection tests.
+- Added FAISS vector index contract tests.
+- Added FAISS runtime persistence tests for:
+  - uploaded index persistence
+  - seeded index persistence
+  - stale manifest rebuild trigger
+  - restart/reload search consistency
 - Key files:
-  - `app/workflows/advanced_policy.py`
-  - `app/workflows/advanced.py`
-  - `app/workflows/advanced_pipeline.py`
-  - `app/workflows/retrieval_gate.py`
-  - `app/workflows/critique.py`
-  - `tests/workflows/test_advanced_workflow.py`
-
-### 5) Compare-mode standard-result reuse
-- Compare mode runs Standard first by default and passes precomputed `StandardPipelineResult` to Advanced.
-- Advanced loop 1 consumes precomputed result when reusable, then continues critique/refine/grounding.
-- Fallback safety:
-  - if query/filter compatibility fails, Advanced falls back to legacy pipeline call and emits trace reason.
-- Added trace fields:
-  - `reused_standard_result`
-  - `standard_reuse_saved_steps`
-  - `standard_reuse_reason`
-- Key files:
-  - `app/workflows/standard.py`
-  - `app/workflows/compare.py`
-  - `app/workflows/advanced.py`
-  - `app/workflows/advanced_pipeline.py`
-  - `tests/workflows/test_compare_workflow.py`
-  - `tests/workflows/test_advanced_workflow.py`
-
-## Environment/config additions
-- Grounding:
-  - `GROUNDING_POLICY=adaptive`
-  - `GROUNDING_SEMANTIC_STANDARD_ENABLED=false`
-  - `GROUNDING_SEMANTIC_ADVANCED_ENABLED=true`
-- Rerank cascade:
-  - `RERANK_CASCADE_ENABLED=true`
-  - `RERANK_SIMPLE_SKIP_CROSS_ENCODER=true`
-  - `RERANK_MIN_CANDIDATES_FOR_CROSS_ENCODER=4`
-  - `RERANK_SCORE_GAP_THRESHOLD=0.2`
-- Advanced adaptive controls:
-  - `ADVANCED_ADAPTIVE_ENABLED=true`
-  - `ADVANCED_FORCE_LLM_GATE=false`
-  - `ADVANCED_FORCE_LLM_CRITIC=false`
-- Compare execution:
-  - `COMPARE_PARALLEL_ENABLED=false`
+  - `tests/indexing/test_vector_factory.py`
+  - `tests/indexing/test_faiss_index.py`
+  - `tests/services/test_index_runtime_faiss_persistence.py`
+  - `tests/services/test_index_runtime_embeddings.py`
 
 ## Validation status (latest)
-- `make test-fast`: pass (`274 passed, 8 deselected`)
-- `mypy app tests`: pass (`Success: no issues found in 134 source files`)
-- `.venv/bin/ruff check app/ tests/`: pass
-- `.venv/bin/python -m ruff format --check app/ tests/`: pass
+- `DATA_DIR=/tmp/rag-test-data CORPUS_DIR=/tmp/rag-test-corpus INDEX_DIR=/tmp/rag-test-indexes OCR_ENABLED=false EMBEDDING_PROVIDER=hash EMBEDDING_HASH_DIMENSION=64 RERANKER_PROVIDER=score_only RERANKER_ENABLED=false LLM_PROVIDER=stub .venv/bin/pytest -q tests/indexing/test_vector_factory.py tests/indexing/test_faiss_index.py tests/services/test_index_runtime_faiss_persistence.py`
+  - Result: `13 passed`
+- `DATA_DIR=/tmp/rag-test-data CORPUS_DIR=/tmp/rag-test-corpus INDEX_DIR=/tmp/rag-test-indexes OCR_ENABLED=false EMBEDDING_PROVIDER=hash EMBEDDING_HASH_DIMENSION=64 RERANKER_PROVIDER=score_only RERANKER_ENABLED=false LLM_PROVIDER=stub .venv/bin/pytest -q tests/services/test_index_runtime_embeddings.py::test_runtime_index_manager_build_path_uses_vector_index_factory`
+  - Result: `1 passed`
+- `.venv/bin/ruff check app/indexing/persistence.py app/services/index_runtime.py tests/services/test_index_runtime_faiss_persistence.py`
+  - Result: `All checks passed`
 
 ## Notes for next session
-- Keep preferring `retrieve_with_timing` / `retrieve_with_timing_async` in retrievers to avoid shared timing diagnostics.
-- If quality/latency tradeoff needs tuning, adjust:
-  - `RERANK_SCORE_GAP_THRESHOLD`
-  - `RERANK_MIN_CANDIDATES_FOR_CROSS_ENCODER`
-  - normal/complex dynamic budgets
-- Optional next step: expose grounding/rerank policy details in frontend trace panels.
+- Continue using `.venv/bin/pytest` for consistent dependency versions.
+- If tests look slow on local machine, ensure heavy runtime env is disabled during test runs (especially OCR).
+- Next logical step: wire FAISS persistence behavior through broader integration suite (`make test-fast` / `make test-integration`) on your target environment.

@@ -2,12 +2,42 @@
 
 from __future__ import annotations
 
+from typing import Protocol, runtime_checkable
+
 import numpy as np
 
 from app.core.cache import QueryCache
 from app.indexing.embeddings import EmbeddingProvider
-from app.indexing.vector_index import InMemoryVectorIndex
+from app.schemas.ingestion import DocumentChunk
 from app.schemas.retrieval import RetrievalResult
+
+
+@runtime_checkable
+class _VectorIndexLike(Protocol):
+    @property
+    def size(self) -> int: ...
+
+    @property
+    def dimension(self) -> int: ...
+
+    @property
+    def revision(self) -> int: ...
+
+    @property
+    def chunks(self) -> list[DocumentChunk]: ...
+
+
+@runtime_checkable
+class _MatrixVectorIndexLike(_VectorIndexLike, Protocol):
+    @property
+    def vectors(self) -> list[list[float]]: ...
+
+
+@runtime_checkable
+class _SearchVectorIndexLike(_VectorIndexLike, Protocol):
+    def search(
+        self, query_vector: list[float], top_k: int = 5
+    ) -> list[tuple[int, float]]: ...
 
 
 def _rank_top_k_indices(scores: np.ndarray, top_k: int) -> np.ndarray:
@@ -52,11 +82,11 @@ def _cosine_similarity_matrix(
 
 
 class DenseRetriever:
-    """Dense retriever backed by in-memory vector index."""
+    """Dense retriever backed by the configured vector index implementation."""
 
     def __init__(
         self,
-        vector_index: InMemoryVectorIndex,
+        vector_index: _VectorIndexLike,
         embedding_provider: EmbeddingProvider,
         *,
         embedding_cache: QueryCache | None = None,
@@ -71,7 +101,22 @@ class DenseRetriever:
         self._vector_matrix = np.empty((0, 0), dtype=np.float64)
         self._vector_norms = np.empty(0, dtype=np.float64)
 
+    def _supports_backend_search(self) -> bool:
+        return isinstance(self.vector_index, _SearchVectorIndexLike)
+
+    def _invalidate_embedding_cache_if_revision_changed(self) -> None:
+        revision = int(self.vector_index.revision)
+        revision_changed = self._cached_revision != revision
+        if revision_changed and self._embedding_cache is not None:
+            self._embedding_cache.invalidate()
+        self._cached_revision = revision
+
     def _refresh_index_cache_if_needed(self) -> None:
+        if not isinstance(self.vector_index, _MatrixVectorIndexLike):
+            raise TypeError(
+                "Vector index backend does not expose vectors for matrix-based retrieval"
+            )
+
         revision_changed = self._cached_revision != self.vector_index.revision
         if (
             not revision_changed
@@ -122,6 +167,29 @@ class DenseRetriever:
             return []
         if self.vector_index.size == 0:
             return []
+
+        if self._supports_backend_search():
+            self._invalidate_embedding_cache_if_revision_changed()
+            query_vector = self._embed_query(query)
+            search_index = self.vector_index
+            assert isinstance(search_index, _SearchVectorIndexLike)
+            ranked = search_index.search(query_vector.tolist(), top_k=top_k)
+            chunks = search_index.chunks
+
+            results: list[RetrievalResult] = []
+            for rank, (idx, score) in enumerate(ranked, start=1):
+                chunk = chunks[idx]
+                dense_score = float(score)
+                results.append(
+                    RetrievalResult.from_chunk(
+                        chunk,
+                        score=dense_score,
+                        dense_score=dense_score,
+                        score_type="dense",
+                        rank=rank,
+                    )
+                )
+            return results
 
         self._refresh_index_cache_if_needed()
         query_vector = self._embed_query(query)

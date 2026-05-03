@@ -3,6 +3,7 @@
 import logging
 import threading
 import time
+import types
 from typing import Literal
 
 import numpy as np
@@ -10,6 +11,7 @@ import pytest
 
 from app.core.cache import QueryCache
 from app.indexing import HashEmbeddingProvider, IndexBuilder
+from app.indexing.faiss_index import FaissVectorIndex
 from app.indexing.vector_index import InMemoryVectorIndex
 from app.ingestion.chunker import Chunker
 from app.ingestion.cleaner import TextCleaner
@@ -40,6 +42,44 @@ class _StaticEmbeddingProvider:
 
     def embed_query(self, text: str) -> list[float]:
         return list(self._query_vector)
+
+
+class _FakeFaissIndexFlatIP:
+    def __init__(self, dimension: int) -> None:
+        self.dimension = int(dimension)
+        self._matrix = np.empty((0, self.dimension), dtype=np.float32)
+
+    def add(self, matrix: np.ndarray) -> None:
+        if matrix.ndim != 2 or matrix.shape[1] != self.dimension:
+            raise ValueError("shape mismatch")
+        if self._matrix.size == 0:
+            self._matrix = matrix.copy()
+            return
+        self._matrix = np.vstack([self._matrix, matrix])
+
+    def search(self, query: np.ndarray, top_k: int) -> tuple[np.ndarray, np.ndarray]:
+        query_count = query.shape[0]
+        scores = np.zeros((query_count, top_k), dtype=np.float32)
+        indices = np.full((query_count, top_k), -1, dtype=np.int64)
+        if self._matrix.size == 0:
+            return scores, indices
+
+        similarities = query @ self._matrix.T
+        for row_idx in range(query_count):
+            row = similarities[row_idx]
+            ranked = np.lexsort((np.arange(row.shape[0]), -row))
+            selected = ranked[:top_k]
+            scores[row_idx, : selected.shape[0]] = row[selected]
+            indices[row_idx, : selected.shape[0]] = selected
+        return scores, indices
+
+
+def _install_fake_faiss(monkeypatch: pytest.MonkeyPatch) -> None:
+    fake_module = types.SimpleNamespace(IndexFlatIP=_FakeFaissIndexFlatIP)
+    monkeypatch.setattr(
+        "app.indexing.faiss_index.importlib.import_module",
+        lambda name: fake_module if name == "faiss" else __import__(name),
+    )
 
 
 def _sample_chunks() -> list[DocumentChunk]:
@@ -143,6 +183,49 @@ def test_dense_retrieval_output_shape() -> None:
     assert first.score_type == "dense"
 
 
+def test_dense_retrieval_inmemory_backend_returns_ranked_results() -> None:
+    chunks = _build_synthetic_chunks(3)
+    vector_index = InMemoryVectorIndex()
+    vector_index.build(
+        chunks,
+        [
+            [1.0, 0.0, 0.0],
+            [0.8, 0.2, 0.0],
+            [0.0, 1.0, 0.0],
+        ],
+    )
+
+    retriever = DenseRetriever(vector_index, _StaticEmbeddingProvider([3.0, 0.0, 0.0]))
+    results = retriever.retrieve("ignored query", top_k=2)
+
+    assert [item.chunk_id for item in results] == ["chunk_0", "chunk_1"]
+    assert all(item.score_type == "dense" for item in results)
+    assert results[0].score > results[1].score
+
+
+def test_dense_retrieval_faiss_backend_returns_ranked_results(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _install_fake_faiss(monkeypatch)
+    chunks = _build_synthetic_chunks(3)
+    vector_index = FaissVectorIndex()
+    vector_index.build(
+        chunks,
+        [
+            [1.0, 0.0, 0.0],
+            [0.8, 0.2, 0.0],
+            [0.0, 1.0, 0.0],
+        ],
+    )
+
+    retriever = DenseRetriever(vector_index, _StaticEmbeddingProvider([3.0, 0.0, 0.0]))
+    results = retriever.retrieve("ignored query", top_k=2)
+
+    assert [item.chunk_id for item in results] == ["chunk_0", "chunk_1"]
+    assert all(item.score_type == "dense" for item in results)
+    assert results[0].score > results[1].score
+
+
 def test_sparse_retrieval_output_shape() -> None:
     _, sparse, _ = _build_retrievers()
     results = sparse.retrieve("bm25 keyword matching", top_k=2)
@@ -167,6 +250,29 @@ def test_hybrid_retrieval_merging() -> None:
     assert all(item.score_type == "hybrid" for item in results)
     chunk_ids = [item.chunk_id for item in results]
     assert len(set(chunk_ids)) == len(chunk_ids)
+
+
+def test_hybrid_retrieval_with_faiss_dense_backend_returns_fused_results(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _install_fake_faiss(monkeypatch)
+    provider = HashEmbeddingProvider(dimension=48)
+    built = IndexBuilder(
+        embedding_provider=provider,
+        vector_index=FaissVectorIndex(),
+    ).build(_sample_chunks())
+
+    dense = DenseRetriever(built.vector_index, provider)
+    sparse = SparseRetriever(built.bm25_index)
+    hybrid = HybridRetriever(dense, sparse)
+
+    results = hybrid.retrieve("retrieval keyword semantic", top_k=3)
+
+    assert results
+    assert len(results) == 3
+    assert all(item.score_type == "hybrid" for item in results)
+    assert any(item.dense_score is not None for item in results)
+    assert any(item.sparse_score is not None for item in results)
 
 
 def test_reciprocal_rank_fusion_combines_dense_and_sparse_rankings() -> None:
