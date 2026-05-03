@@ -178,6 +178,7 @@ export function DocumentsManagementPanel({
   const [searchQuery, setSearchQuery] = useState("");
   const [showFilters, setShowFilters] = useState(false);
   const [openMenuDocId, setOpenMenuDocId] = useState<string | null>(null);
+  const [menuPlacement, setMenuPlacement] = useState<"bottom" | "top">("bottom");
   const [lastSelectedReadyIndex, setLastSelectedReadyIndex] = useState<number | null>(
     null,
   );
@@ -375,6 +376,7 @@ export function DocumentsManagementPanel({
   };
 
   const openContextMenu = (documentId: string) => {
+    setMenuPlacement("bottom");
     setOpenMenuDocId(documentId);
     window.requestAnimationFrame(() => {
       focusMenuItem(0);
@@ -855,12 +857,23 @@ export function DocumentsManagementPanel({
                           ref={(node) => {
                             if (isMenuOpen) {
                               menuContainerRef.current = node;
+                              if (node) {
+                                const rect = node.getBoundingClientRect();
+                                const spaceBelow = window.innerHeight - rect.bottom;
+                                if (spaceBelow < 0) {
+                                  setMenuPlacement("top");
+                                }
+                              }
                             }
                           }}
                           id={`document-menu-${document.id}`}
                           role="menu"
                           aria-label={`Menu cho ${document.filename}`}
-                          className="absolute right-0 top-[calc(100%+6px)] z-30 w-44 rounded-lg border border-border bg-card py-1 shadow-subtle"
+                          className={`absolute right-0 z-30 w-44 rounded-lg border border-border bg-card py-1 shadow-subtle ${
+                            menuPlacement === "top"
+                              ? "bottom-[calc(100%+6px)]"
+                              : "top-[calc(100%+6px)]"
+                          }`}
                           onClick={(event) => event.stopPropagation()}
                           onKeyDown={handleMenuKeyDown}
                         >
