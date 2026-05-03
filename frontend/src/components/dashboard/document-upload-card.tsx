@@ -11,6 +11,7 @@ import {
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { FileTypeIcon } from "@/components/ui/file-type-icon";
 import type { DocumentRecord, ProcessingStage, UploadBatchItem } from "@/types/document";
 import { translations } from "@/lib/translations";
 import {
@@ -365,14 +366,17 @@ export function DocumentUploadCard({
             </div>
             <ul className="space-y-1">
               {uploadBatchItems.map((item) => (
-                <li key={item.id} className="flex items-center justify-between gap-2 rounded-md bg-muted/40 px-2 py-1">
-                  <div className="min-w-0">
-                    <p className="truncate text-xs font-medium text-foreground">{item.filename}</p>
-                    {item.message ? (
-                      <p className="truncate text-[11px] text-muted-foreground">{item.message}</p>
-                    ) : item.status === "uploading" && typeof item.progress === "number" ? (
-                      <p className="text-[11px] text-muted-foreground">{item.progress}%</p>
-                    ) : null}
+                <li key={item.id} className="flex items-center justify-between gap-2 rounded-md bg-muted/40 px-2 py-1.5">
+                  <div className="flex min-w-0 items-center gap-2">
+                    <FileTypeIcon fileName={item.filename} className="h-7 w-7 text-[7px]" />
+                    <div className="min-w-0">
+                      <p className="truncate text-xs font-medium text-foreground">{item.filename}</p>
+                      {item.message ? (
+                        <p className="truncate text-[11px] text-muted-foreground">{item.message}</p>
+                      ) : item.status === "uploading" && typeof item.progress === "number" ? (
+                        <p className="text-[11px] text-muted-foreground">{item.progress}%</p>
+                      ) : null}
+                    </div>
                   </div>
                   <Badge variant="outline" className={`shrink-0 ${uploadBatchStatusClass(item.status)}`}>
                     {uploadBatchStatusLabel(item.status)}

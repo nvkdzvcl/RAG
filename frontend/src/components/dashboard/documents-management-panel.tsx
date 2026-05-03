@@ -2,7 +2,6 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import type { KeyboardEvent as ReactKeyboardEvent } from "react";
 import {
   AlertCircle,
-  FileText,
   FileUp,
   Loader2,
   MoreHorizontal,
@@ -14,6 +13,7 @@ import {
 
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+import { FileTypeIcon } from "@/components/ui/file-type-icon";
 import type { DocumentRecord } from "@/types/document";
 import type { QueryFileTypeFilter, QueryOcrFilter } from "@/components/dashboard/query-filters";
 
@@ -111,6 +111,12 @@ function fileTypeFromFilename(filename: string): QueryFileTypeFilter | "other" {
   }
   if (normalized.endsWith(".docx")) {
     return "docx";
+  }
+  if (normalized.endsWith(".txt")) {
+    return "txt" as QueryFileTypeFilter;
+  }
+  if (normalized.endsWith(".md") || normalized.endsWith(".markdown")) {
+    return "md" as QueryFileTypeFilter;
   }
   return "other";
 }
@@ -770,8 +776,8 @@ export function DocumentsManagementPanel({
                     className="h-4 w-4 accent-primary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background"
                   />
 
-                  <div className="flex min-w-0 flex-1 items-center gap-2">
-                    <FileText className="h-4 w-4 shrink-0 text-muted-foreground" />
+                  <div className="flex min-w-0 flex-1 items-center gap-2.5">
+                    <FileTypeIcon fileName={document.filename} />
                     <div className="min-w-0">
                       <p className="truncate text-sm font-medium text-foreground">{document.filename}</p>
                       <p className="text-xs text-foreground/75">
