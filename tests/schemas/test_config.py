@@ -1,6 +1,7 @@
 """Configuration and schema smoke tests."""
 
 from datetime import datetime, timezone
+from pathlib import Path
 
 from app.core.config import Settings
 from app.schemas.api import QueryRequest
@@ -23,6 +24,13 @@ def test_settings_defaults(monkeypatch) -> None:
         "CHUNK_OVERLAP",
         "RETRIEVAL_MODE",
         "RETRIEVAL_TOP_K",
+        "VECTOR_INDEX_BACKEND",
+        "FAISS_INDEX_FILENAME",
+        "FAISS_METADATA_FILENAME",
+        "FAISS_UPLOADED_INDEX_FILENAME",
+        "FAISS_UPLOADED_METADATA_FILENAME",
+        "FAISS_SEEDED_INDEX_FILENAME",
+        "FAISS_SEEDED_METADATA_FILENAME",
         "EMBEDDING_PROVIDER",
         "EMBEDDING_MODEL",
         "EMBEDDING_DEVICE",
@@ -99,6 +107,34 @@ def test_settings_defaults(monkeypatch) -> None:
     assert settings.chunk_overlap == 100
     assert settings.retrieval_mode == "preset"
     assert settings.retrieval_top_k == 8
+    assert settings.vector_index_backend == "inmemory"
+    assert settings.faiss_index_filename == "vector_index.faiss"
+    assert settings.faiss_metadata_filename == "vector_index.metadata.json"
+    assert settings.faiss_uploaded_index_filename == "uploaded_vector_index.faiss"
+    assert (
+        settings.faiss_uploaded_metadata_filename
+        == "uploaded_vector_index.metadata.json"
+    )
+    assert settings.faiss_seeded_index_filename == "seeded_vector_index.faiss"
+    assert settings.faiss_seeded_metadata_filename == "seeded_vector_index.metadata.json"
+    assert settings.faiss_index_path == Path("data/indexes") / "vector_index.faiss"
+    assert settings.faiss_metadata_path == Path("data/indexes") / "vector_index.metadata.json"
+    assert (
+        settings.faiss_uploaded_index_path
+        == Path("data/indexes") / "uploaded_vector_index.faiss"
+    )
+    assert (
+        settings.faiss_uploaded_metadata_path
+        == Path("data/indexes") / "uploaded_vector_index.metadata.json"
+    )
+    assert (
+        settings.faiss_seeded_index_path
+        == Path("data/indexes") / "seeded_vector_index.faiss"
+    )
+    assert (
+        settings.faiss_seeded_metadata_path
+        == Path("data/indexes") / "seeded_vector_index.metadata.json"
+    )
     assert settings.embedding_provider == "sentence_transformers"
     assert settings.embedding_model == "intfloat/multilingual-e5-base"
     assert settings.embedding_device == "cpu"
@@ -232,3 +268,30 @@ def test_settings_supports_reranker_top_k_and_legacy_top_n(monkeypatch) -> None:
     settings_top_n = Settings(_env_file=None)  # type: ignore[call-arg]
     assert settings_top_n.reranker_top_k == 7
     assert settings_top_n.reranker_top_n == 7
+
+
+def test_vector_index_backend_allows_faiss_and_falls_back_for_invalid_values(
+    monkeypatch,
+) -> None:
+    monkeypatch.setenv("VECTOR_INDEX_BACKEND", "FAISS")
+    settings_faiss = Settings(_env_file=None)  # type: ignore[call-arg]
+    assert settings_faiss.vector_index_backend == "faiss"
+
+    monkeypatch.setenv("VECTOR_INDEX_BACKEND", "unsupported_backend")
+    settings_invalid = Settings(_env_file=None)  # type: ignore[call-arg]
+    assert settings_invalid.vector_index_backend == "inmemory"
+
+
+def test_faiss_filenames_are_sanitized_and_resolved_under_index_dir(monkeypatch) -> None:
+    monkeypatch.setenv("INDEX_DIR", "custom-index-dir")
+    monkeypatch.setenv("FAISS_INDEX_FILENAME", "/tmp/override.faiss")
+    monkeypatch.setenv("FAISS_METADATA_FILENAME", "../override.meta.json")
+    settings = Settings(_env_file=None)  # type: ignore[call-arg]
+
+    assert settings.faiss_index_filename == "override.faiss"
+    assert settings.faiss_metadata_filename == "override.meta.json"
+    assert settings.faiss_index_path == Path("custom-index-dir") / "override.faiss"
+    assert (
+        settings.faiss_metadata_path
+        == Path("custom-index-dir") / "override.meta.json"
+    )

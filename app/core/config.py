@@ -1,6 +1,7 @@
 """Application settings loaded from environment variables."""
 
 from functools import lru_cache
+from pathlib import Path
 
 from pydantic import Field, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
@@ -33,6 +34,27 @@ class Settings(BaseSettings):
     chunk_overlap: int = Field(default=100, alias="CHUNK_OVERLAP")
     retrieval_mode: str = Field(default="preset", alias="RETRIEVAL_MODE")
     retrieval_top_k: int = Field(default=8, alias="RETRIEVAL_TOP_K")
+    vector_index_backend: str = Field(default="inmemory", alias="VECTOR_INDEX_BACKEND")
+    faiss_index_filename: str = Field(
+        default="vector_index.faiss", alias="FAISS_INDEX_FILENAME"
+    )
+    faiss_metadata_filename: str = Field(
+        default="vector_index.metadata.json", alias="FAISS_METADATA_FILENAME"
+    )
+    faiss_uploaded_index_filename: str = Field(
+        default="uploaded_vector_index.faiss", alias="FAISS_UPLOADED_INDEX_FILENAME"
+    )
+    faiss_uploaded_metadata_filename: str = Field(
+        default="uploaded_vector_index.metadata.json",
+        alias="FAISS_UPLOADED_METADATA_FILENAME",
+    )
+    faiss_seeded_index_filename: str = Field(
+        default="seeded_vector_index.faiss", alias="FAISS_SEEDED_INDEX_FILENAME"
+    )
+    faiss_seeded_metadata_filename: str = Field(
+        default="seeded_vector_index.metadata.json",
+        alias="FAISS_SEEDED_METADATA_FILENAME",
+    )
     embedding_provider: str = Field(
         default="sentence_transformers", alias="EMBEDDING_PROVIDER"
     )
@@ -127,9 +149,68 @@ class Settings(BaseSettings):
     cache_llm_maxsize: int = Field(default=64, alias="CACHE_LLM_MAXSIZE")
     cache_rerank_maxsize: int = Field(default=128, alias="CACHE_RERANK_MAXSIZE")
 
+    @staticmethod
+    def _safe_index_filename(value: str, fallback: str) -> str:
+        candidate = Path(str(value).strip()).name
+        return candidate if candidate else fallback
+
+    @property
+    def faiss_index_path(self) -> Path:
+        return Path(self.index_dir) / self.faiss_index_filename
+
+    @property
+    def faiss_metadata_path(self) -> Path:
+        return Path(self.index_dir) / self.faiss_metadata_filename
+
+    @property
+    def faiss_uploaded_index_path(self) -> Path:
+        return Path(self.index_dir) / self.faiss_uploaded_index_filename
+
+    @property
+    def faiss_uploaded_metadata_path(self) -> Path:
+        return Path(self.index_dir) / self.faiss_uploaded_metadata_filename
+
+    @property
+    def faiss_seeded_index_path(self) -> Path:
+        return Path(self.index_dir) / self.faiss_seeded_index_filename
+
+    @property
+    def faiss_seeded_metadata_path(self) -> Path:
+        return Path(self.index_dir) / self.faiss_seeded_metadata_filename
+
     @model_validator(mode="after")
     def _sync_reranker_top_k_legacy_alias(self) -> "Settings":
         """Keep `RERANKER_TOP_K` and legacy `RERANKER_TOP_N` in sync."""
+        backend = str(self.vector_index_backend).strip().lower()
+        if backend not in {"inmemory", "faiss"}:
+            backend = "inmemory"
+        self.vector_index_backend = backend
+
+        self.faiss_index_filename = self._safe_index_filename(
+            self.faiss_index_filename,
+            "vector_index.faiss",
+        )
+        self.faiss_metadata_filename = self._safe_index_filename(
+            self.faiss_metadata_filename,
+            "vector_index.metadata.json",
+        )
+        self.faiss_uploaded_index_filename = self._safe_index_filename(
+            self.faiss_uploaded_index_filename,
+            "uploaded_vector_index.faiss",
+        )
+        self.faiss_uploaded_metadata_filename = self._safe_index_filename(
+            self.faiss_uploaded_metadata_filename,
+            "uploaded_vector_index.metadata.json",
+        )
+        self.faiss_seeded_index_filename = self._safe_index_filename(
+            self.faiss_seeded_index_filename,
+            "seeded_vector_index.faiss",
+        )
+        self.faiss_seeded_metadata_filename = self._safe_index_filename(
+            self.faiss_seeded_metadata_filename,
+            "seeded_vector_index.metadata.json",
+        )
+
         fields_set = self.model_fields_set
         has_top_k = "reranker_top_k" in fields_set
         has_top_n = "reranker_top_n" in fields_set
