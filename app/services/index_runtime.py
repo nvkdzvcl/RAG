@@ -22,6 +22,7 @@ from app.indexing import (
     LocalIndexStore,
     create_embedding_provider,
 )
+from app.indexing.vector_factory import create_vector_index
 from app.ingestion.base_loader import build_doc_id
 from app.ingestion import (
     BaseLoader,
@@ -678,6 +679,7 @@ class RuntimeIndexManager:
 
         self.corpus_dir = Path(corpus_dir)
         self.index_dir = Path(index_dir)
+        self._settings = settings
         self.chunk_size = chunk_size
         self.chunk_overlap = chunk_overlap
         self.embedding_provider = embedding_provider or create_embedding_provider(
@@ -1044,7 +1046,11 @@ class RuntimeIndexManager:
             if chunk.metadata.get("block_type") == "ocr_text"
             or bool(chunk.metadata.get("ocr"))
         )
-        built = IndexBuilder(embedding_provider=self.embedding_provider).build(chunks)
+        vector_index = create_vector_index(self._settings)
+        built = IndexBuilder(
+            embedding_provider=self.embedding_provider,
+            vector_index=vector_index,
+        ).build(chunks)
         self._invalidate_retrieval_cache()
         dense = DenseRetriever(
             built.vector_index,

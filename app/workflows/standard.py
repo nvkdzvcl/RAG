@@ -37,6 +37,7 @@ from app.indexing import (
     LocalIndexStore,
     create_embedding_provider,
 )
+from app.indexing.vector_factory import create_vector_index
 from app.ingestion import Chunker, DirectoryIngestor, TextCleaner
 from app.retrieval import (
     BaseReranker,
@@ -282,7 +283,10 @@ class StandardWorkflow:
             )
             chunks = self._build_chunks_from_corpus()
 
-            built = IndexBuilder(embedding_provider=resolved_provider).build(chunks)
+            built = IndexBuilder(
+                embedding_provider=resolved_provider,
+                vector_index=create_vector_index(settings),
+            ).build(chunks)
             if self.persist_indexes:
                 self._save_indexes(built.vector_index, built.bm25_index)
 

@@ -11,6 +11,7 @@ from app.core.cache import CacheGroup, QueryCache
 from app.core.config import get_settings
 from app.ingestion.base_loader import build_doc_id
 from app.indexing import BaseEmbeddingProvider
+from app.indexing.vector_index import InMemoryVectorIndex
 from app.schemas.ingestion import DocumentChunk
 from app.services.index_runtime import RuntimeIndexManager
 
@@ -176,6 +177,45 @@ def test_runtime_index_manager_uses_configured_provider_factory(
         "normalize": False,
         "fallback_hash_dimension": 79,
     }
+
+
+def test_runtime_index_manager_build_path_uses_vector_index_factory(
+    monkeypatch: Any, tmp_path: Path
+) -> None:
+    corpus_dir = tmp_path / "corpus"
+    index_dir = tmp_path / "indexes"
+    corpus_dir.mkdir(parents=True, exist_ok=True)
+    (corpus_dir / "vector-factory.txt").write_text(
+        "vector-factory-token-2291 appears here.",
+        encoding="utf-8",
+    )
+
+    monkeypatch.setenv("VECTOR_INDEX_BACKEND", "inmemory")
+    get_settings.cache_clear()
+
+    selected_backends: list[str] = []
+
+    def _fake_vector_factory(settings: Any) -> InMemoryVectorIndex:
+        selected_backends.append(
+            str(getattr(settings, "vector_index_backend", "missing"))
+        )
+        return InMemoryVectorIndex()
+
+    monkeypatch.setattr(
+        "app.services.index_runtime.create_vector_index",
+        _fake_vector_factory,
+    )
+
+    manager = RuntimeIndexManager(
+        corpus_dir=corpus_dir,
+        index_dir=index_dir,
+        embedding_provider=_CountingEmbeddingProvider(dimension=8),
+    )
+
+    chunk_count = manager.activate_from_seeded_corpus()
+    assert chunk_count > 0
+    assert selected_backends
+    assert selected_backends[-1] == "inmemory"
 
 
 def test_runtime_index_manager_uses_sentence_transformers_when_configured(
