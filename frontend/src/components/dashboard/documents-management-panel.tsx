@@ -859,8 +859,23 @@ export function DocumentsManagementPanel({
                               menuContainerRef.current = node;
                               if (node) {
                                 const rect = node.getBoundingClientRect();
-                                const spaceBelow = window.innerHeight - rect.bottom;
-                                if (spaceBelow < 0) {
+                                const FLIP_MARGIN = 16;
+                                let availableBottom = window.innerHeight;
+                                let ancestor = node.parentElement;
+                                while (ancestor) {
+                                  const style = getComputedStyle(ancestor);
+                                  if (
+                                    style.overflowY === "auto"
+                                    || style.overflowY === "scroll"
+                                    || style.overflowY === "hidden"
+                                  ) {
+                                    const parentRect = ancestor.getBoundingClientRect();
+                                    availableBottom = Math.min(availableBottom, parentRect.bottom);
+                                    break;
+                                  }
+                                  ancestor = ancestor.parentElement;
+                                }
+                                if (rect.bottom + FLIP_MARGIN > availableBottom) {
                                   setMenuPlacement("top");
                                 }
                               }
