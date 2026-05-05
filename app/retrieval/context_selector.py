@@ -53,6 +53,14 @@ class ContextSelector:
     def select(
         self, docs: list[RetrievalResult], top_k: int | None = None
     ) -> list[RetrievalResult]:
+        def _is_table_chunk(doc: RetrievalResult) -> bool:
+            block_type = str(doc.metadata.get("block_type", "")).strip().lower()
+            if block_type == "table":
+                return True
+            # Defensive fallback for legacy chunks that missed block_type metadata.
+            stripped = doc.content.lstrip()
+            return "|" in stripped and stripped.count("|") >= 4 and "\n" in stripped
+
         limit = top_k if top_k is not None else self.max_chunks
         if limit <= 0:
             return []
@@ -83,6 +91,10 @@ class ContextSelector:
             remaining = self.max_chars - total_chars
             if remaining < self.min_useful_chars:
                 break  # not enough room for any useful content
+
+            # Never truncate table chunks: partial table rows can mislead generation.
+            if _is_table_chunk(doc):
+                continue
 
             truncated_content = _truncate_at_boundary(doc.content, remaining)
             if len(truncated_content) < self.min_useful_chars:

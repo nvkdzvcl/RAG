@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import logging
 from pathlib import Path
+import re
 from typing import Any
 
 from app.core.config import get_settings
@@ -29,6 +30,8 @@ logger = logging.getLogger(__name__)
 
 class PDFParser(BaseDocumentParser):
     """Parse PDF pages into text/table/image blocks."""
+
+    _TOKEN_PATTERN = re.compile(r"[A-Za-zÀ-ỹĐđ0-9]+")
 
     def __init__(
         self,
@@ -133,6 +136,61 @@ class PDFParser(BaseDocumentParser):
             },
         )
 
+    @classmethod
+    def _text_quality_signals(cls, text: str) -> dict[str, float | int]:
+        stripped = text.strip()
+        if not stripped:
+            return {
+                "chars": 0,
+                "token_count": 0,
+                "alnum_ratio": 0.0,
+                "unique_token_ratio": 0.0,
+                "replacement_chars": 0,
+            }
+
+        chars = len(stripped)
+        tokens = cls._TOKEN_PATTERN.findall(stripped)
+        token_count = len(tokens)
+        unique_token_ratio = (
+            len({token.casefold() for token in tokens}) / token_count
+            if token_count > 0
+            else 0.0
+        )
+        alnum_count = sum(1 for char in stripped if char.isalnum())
+        replacement_chars = stripped.count("\uFFFD")
+        return {
+            "chars": chars,
+            "token_count": token_count,
+            "alnum_ratio": round(alnum_count / max(chars, 1), 4),
+            "unique_token_ratio": round(unique_token_ratio, 4),
+            "replacement_chars": replacement_chars,
+        }
+
+    def _should_try_ocr(
+        self,
+        *,
+        page_text: str,
+        image_count: int,
+    ) -> tuple[bool, str, dict[str, float | int]]:
+        signals = self._text_quality_signals(page_text)
+        chars = int(signals["chars"])
+        token_count = int(signals["token_count"])
+        alnum_ratio = float(signals["alnum_ratio"])
+        unique_token_ratio = float(signals["unique_token_ratio"])
+        replacement_chars = int(signals["replacement_chars"])
+
+        if chars < self.ocr_min_text_chars:
+            return True, "below_min_text_chars", signals
+        if replacement_chars > 0:
+            return True, "replacement_chars_detected", signals
+        if image_count > 0 and token_count <= max(6, self.ocr_min_text_chars // 30):
+            return True, "few_tokens_with_images", signals
+        if image_count > 0 and alnum_ratio < 0.45:
+            return True, "low_alnum_ratio_with_images", signals
+        if token_count >= 12 and unique_token_ratio < 0.25:
+            return True, "high_repetition_suspected_noise", signals
+        return False, "text_quality_ok", signals
+
     def parse(self, path: Path) -> list[DocumentBlock]:
         if pdfplumber is None:
             raise RuntimeError("PDF parsing requires the 'pdfplumber' package.")
@@ -162,7 +220,15 @@ class PDFParser(BaseDocumentParser):
 
         with pdfplumber.open(str(path)) as pdf:
             for page_idx, page in enumerate(pdf.pages, start=1):
-                page_text = page.extract_text() or ""
+                try:
+                    page_text = page.extract_text() or ""
+                except Exception:
+                    page_text = ""
+                    logger.warning(
+                        "PDF text extraction failed for page; continuing with fallback signals.",
+                        extra={"path": str(path), "page": page_idx},
+                        exc_info=True,
+                    )
                 paragraphs = split_paragraphs(page_text)
 
                 for paragraph in paragraphs:
@@ -183,7 +249,15 @@ class PDFParser(BaseDocumentParser):
                         )
                     )
 
-                tables = page.extract_tables() or []
+                try:
+                    tables = page.extract_tables() or []
+                except Exception:
+                    tables = []
+                    logger.warning(
+                        "PDF table extraction failed for page; continuing without table blocks.",
+                        extra={"path": str(path), "page": page_idx},
+                        exc_info=True,
+                    )
                 for table in tables:
                     table_text = rows_to_markdown_table(table or [])
                     if not table_text:
@@ -200,7 +274,15 @@ class PDFParser(BaseDocumentParser):
                         )
                     )
 
-                images = page.images or []
+                try:
+                    images = page.images or []
+                except Exception:
+                    images = []
+                    logger.warning(
+                        "PDF image extraction failed for page; continuing without image blocks.",
+                        extra={"path": str(path), "page": page_idx},
+                        exc_info=True,
+                    )
                 for image_idx, image in enumerate(images, start=1):
                     image_name = image.get("name") or f"image_{image_idx}"
                     blocks.append(
@@ -217,17 +299,32 @@ class PDFParser(BaseDocumentParser):
                     )
 
                 page_text_chars = len(page_text.strip())
-                should_try_ocr = ocr_ready and page_text_chars < self.ocr_min_text_chars
+                ocr_reason = "ocr_disabled_or_unavailable"
+                text_signals = self._text_quality_signals(page_text)
+                if ocr_ready:
+                    should_try_ocr, ocr_reason, text_signals = self._should_try_ocr(
+                        page_text=page_text,
+                        image_count=len(images),
+                    )
+                else:
+                    should_try_ocr = False
                 logger.info(
                     (
                         "PDF page extraction stats | path=%s | page=%s | extracted_text_length=%s "
-                        "| ocr_threshold=%s | ocr_ran=%s"
+                        "| ocr_threshold=%s | ocr_ran=%s | ocr_reason=%s | token_count=%s "
+                        "| alnum_ratio=%s | unique_token_ratio=%s | replacement_chars=%s | image_count=%s"
                     ),
                     str(path),
                     page_idx,
                     page_text_chars,
                     self.ocr_min_text_chars,
                     should_try_ocr,
+                    ocr_reason,
+                    int(text_signals["token_count"]),
+                    float(text_signals["alnum_ratio"]),
+                    float(text_signals["unique_token_ratio"]),
+                    int(text_signals["replacement_chars"]),
+                    len(images),
                 )
                 if should_try_ocr:
                     ocr_block = self._extract_ocr_block(

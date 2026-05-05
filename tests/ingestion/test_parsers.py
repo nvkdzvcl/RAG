@@ -371,3 +371,88 @@ def test_pdf_parser_ocr_runtime_error_does_not_crash(monkeypatch) -> None:
     blocks = parser.parse(Path("broken-ocr.pdf"))
 
     assert blocks == []
+
+
+def test_pdf_parser_triggers_ocr_for_suspected_garbled_text(monkeypatch) -> None:
+    garbled_line = ("\uFFFD " * 160).strip()
+
+    class FakePage:
+        images = [{"name": "scan_1", "x0": 1, "top": 1, "x1": 100, "bottom": 100}]
+
+        @staticmethod
+        def extract_text() -> str:
+            return garbled_line
+
+        @staticmethod
+        def extract_tables() -> list[list[list[str]]]:
+            return []
+
+    class FakePDF:
+        def __init__(self) -> None:
+            self.pages = [FakePage()]
+
+        def __enter__(self) -> "FakePDF":
+            return self
+
+        def __exit__(self, exc_type, exc, tb) -> None:
+            _ = exc_type
+            _ = exc
+            _ = tb
+
+    monkeypatch.setattr(
+        "app.ingestion.parsers.pdf_parser.pdfplumber",
+        SimpleNamespace(open=lambda _: FakePDF()),
+    )
+    monkeypatch.setattr(
+        "app.ingestion.parsers.pdf_parser.is_tesseract_available", lambda: True
+    )
+    monkeypatch.setattr(
+        "app.ingestion.parsers.pdf_parser.ocr_pdf_page_with_pymupdf",
+        lambda *args, **kwargs: "OCR clean token: ocr-quality-7788",
+    )
+
+    parser = PDFParser(ocr_enabled=True, ocr_min_text_chars=100)
+    blocks = parser.parse(Path("garbled.pdf"))
+
+    assert any(
+        block.metadata.get("block_type") == "ocr_text"
+        and "ocr-quality-7788" in block.content
+        for block in blocks
+    )
+
+
+def test_pdf_parser_continues_when_page_table_extraction_fails(monkeypatch) -> None:
+    class FakePage:
+        images: list[object] = []
+
+        @staticmethod
+        def extract_text() -> str:
+            return "Text survives even when table extraction crashes."
+
+        @staticmethod
+        def extract_tables() -> list[list[list[str]]]:
+            raise RuntimeError("table parser failed")
+
+    class FakePDF:
+        def __init__(self) -> None:
+            self.pages = [FakePage()]
+
+        def __enter__(self) -> "FakePDF":
+            return self
+
+        def __exit__(self, exc_type, exc, tb) -> None:
+            _ = exc_type
+            _ = exc
+            _ = tb
+
+    monkeypatch.setattr(
+        "app.ingestion.parsers.pdf_parser.pdfplumber",
+        SimpleNamespace(open=lambda _: FakePDF()),
+    )
+
+    parser = PDFParser(ocr_enabled=False, ocr_min_text_chars=100)
+    blocks = parser.parse(Path("table-fail.pdf"))
+
+    assert any(
+        "Text survives" in block.content for block in blocks if block.type == "text"
+    )
